@@ -11,7 +11,9 @@
 
 # Always keep git + core project metadata
 !.gitignore
-!README*
+# Exclude documentation and scripts
+*.md
+*.sh
 !LICENSE*
 !package.json
 !package-lock.json
