@@ -1,0 +1,38 @@
+#
+# Restrictive .gitignore: only track JS files and a few important project files.
+# Everything else is ignored by default.
+#
+
+# Ignore everything
+*
+
+# Allow directories so Git can see files we un-ignore
+!*/
+
+# Always keep git + core project metadata
+!.gitignore
+!README*
+!LICENSE*
+!package.json
+!package-lock.json
+!yarn.lock
+!pnpm-lock.yaml
+
+# Keep main config files (adjust as needed for your stack)
+!serverless.yml
+!serverless.yaml
+!serverless.json
+!tsconfig.json
+!jsconfig.json
+!nodemon.json
+
+# Keep all JavaScript source files
+!*.js
+!*.mjs
+!*.cjs
+
+# Optionally keep JSON/YAML files (for configs, data, etc.)
+!*.json
+!*.yml
+!*.yaml
+
