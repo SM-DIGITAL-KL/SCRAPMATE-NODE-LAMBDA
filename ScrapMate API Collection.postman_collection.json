@@ -1,0 +1,6806 @@
+{
+	"info": {
+		"_postman_id": "35ac1ca4-dd29-4b31-afaa-b76f8918deb5",
+		"name": "ScrapMate API Collection",
+		"description": "Complete API collection for ScrapMate Node.js server with all endpoints including Admin Panel APIs",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "49814136",
+		"_collection_link": "https://scrapmate48-8742325.postman.co/workspace/scrapmate-2025's-Workspace~3d8f8d09-9fa3-4111-80d6-57441edd1d5c/collection/49814136-35ac1ca4-dd29-4b31-afaa-b76f8918deb5?action=share&source=collection_link&creator=49814136"
+	},
+	"item": [
+		{
+			"name": "Public",
+			"item": [
+				{
+					"name": "Index",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								""
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Mobile App",
+			"item": [
+				{
+					"name": "Authentication",
+					"item": [
+						{
+							"name": "Login App",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/login_app/:mob",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"login_app",
+										":mob"
+									],
+									"variable": [
+										{
+											"key": "mob",
+											"value": "1234567890"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Users Register",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"body": {
+									"mode": "formdata",
+									"formdata": []
+								},
+								"url": {
+									"raw": "{{base_url}}/api/users_register",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"users_register"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "User Pro Edit",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/userProEdit",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"userProEdit"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Vendor/Shop",
+					"item": [
+						{
+							"name": "Shop Image List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/shop_image_list/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"shop_image_list",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shop Image Upload",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"body": {
+									"mode": "formdata",
+									"formdata": []
+								},
+								"url": {
+									"raw": "{{base_url}}/api/shop_image_upload",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"shop_image_upload"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shop Image Delete",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/shop_image_delete/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"shop_image_delete",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shop Cat List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/shop_cat_list/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"shop_cat_list",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shop Cat Create",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/shop_cat_create",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"shop_cat_create"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shop Cat Edit",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"body": {
+									"mode": "formdata",
+									"formdata": []
+								},
+								"url": {
+									"raw": "{{base_url}}/api/shop_cat_edit",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"shop_cat_edit"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shop Cat Delete",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/shop_cat_delete/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"shop_cat_delete",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shop Item List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/shop_item_list/:shop_id/:cat_id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"shop_item_list",
+										":shop_id",
+										":cat_id"
+									],
+									"variable": [
+										{
+											"key": "shop_id",
+											"value": "1"
+										},
+										{
+											"key": "cat_id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shop Item Create",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/shop_item_create",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"shop_item_create"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shop Item Edit",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/shop_item_edit/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"shop_item_edit",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shop Item Delete",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/shop_item_delete/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"shop_item_delete",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shop Dash Counts",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/shop_dash_counts/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"shop_dash_counts",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shops List For Sale",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/shops_list_for_sale",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"shops_list_for_sale"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shop Ads Type Edit",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/shop_ads_type_edit",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"shop_ads_type_edit"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Customer",
+					"item": [
+						{
+							"name": "Cust Order Placing",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"body": {
+									"mode": "formdata",
+									"formdata": []
+								},
+								"url": {
+									"raw": "{{base_url}}/api/cust_order_placeing",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"cust_order_placeing"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Cust Ads Type Edit",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/cust_ads_type_edit",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"cust_ads_type_edit"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Items List For Sale",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/items_list_for_sale",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"items_list_for_sale"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Cust Dash Counts",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/cust_dash_counts/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"cust_dash_counts",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Customer Pending Orders",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/customer_pending_orders/:customer_id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"customer_pending_orders",
+										":customer_id"
+									],
+									"variable": [
+										{
+											"key": "customer_id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Cust Order Rating",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/custOrderRating",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"custOrderRating"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Delivery Boy",
+					"item": [
+						{
+							"name": "Delv Boy Add",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"body": {
+									"mode": "formdata",
+									"formdata": []
+								},
+								"url": {
+									"raw": "{{base_url}}/api/delv_boy_add",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"delv_boy_add"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Delivery Boy List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/delivery_boy_list/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"delivery_boy_list",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "User",
+					"item": [
+						{
+							"name": "Users Profile View",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/users_profile_view/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"users_profile_view",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "User Profile Pic Edit",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"body": {
+									"mode": "formdata",
+									"formdata": []
+								},
+								"url": {
+									"raw": "{{base_url}}/api/user_profile_pic_edit",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"user_profile_pic_edit"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get User By ID",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/get_user_by_id/:user_id/:table",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"get_user_by_id",
+										":user_id",
+										":table"
+									],
+									"variable": [
+										{
+											"key": "user_id",
+											"value": "1"
+										},
+										{
+											"key": "table",
+											"value": "users"
+										}
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Product/Category",
+					"item": [
+						{
+							"name": "All Pro Category",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/all_pro_category",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"all_pro_category"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Category Img List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/category_img_list",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"category_img_list"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Utility",
+					"item": [
+						{
+							"name": "Get Table Condition",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/get_table_condition",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"get_table_condition"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Keyword Search",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/keyword_search/:table/:name",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"keyword_search",
+										":table",
+										":name"
+									],
+									"variable": [
+										{
+											"key": "table",
+											"value": "item_keywords"
+										},
+										{
+											"key": "name",
+											"value": "test"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Third Party Credentials",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/thirdPartyCredentials",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"thirdPartyCredentials"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Version Check",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/versionCheck/:version",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"versionCheck",
+										":version"
+									],
+									"variable": [
+										{
+											"key": "version",
+											"value": "1.0.0"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Save Call Log",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/savecallLog",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"savecallLog"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Save Call Log Cust",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/savecallLogCust",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"savecallLogCust"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Permanent Delete",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/PermanentDelete",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"PermanentDelete"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Failed Jobs",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/failedJobs",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"failedJobs"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "FCM",
+					"item": [
+						{
+							"name": "FCM Token Store",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/fcm_token_store",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"fcm_token_store"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "Authentication",
+			"item": [
+				{
+					"name": "Login App",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/login_app/:mob",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"login_app",
+								":mob"
+							],
+							"variable": [
+								{
+									"key": "mob",
+									"value": "1234567890"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Users Register",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "name",
+									"value": "John Doe",
+									"type": "text"
+								},
+								{
+									"key": "email",
+									"value": "john@example.com",
+									"type": "text"
+								},
+								{
+									"key": "mob_num",
+									"value": "1234567890",
+									"type": "text"
+								},
+								{
+									"key": "user_type",
+									"value": "S",
+									"description": "S=Shop, C=Customer, D=DeliveryBoy",
+									"type": "text"
+								},
+								{
+									"key": "profile_photo",
+									"type": "file",
+									"src": []
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/api/users_register",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"users_register"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "User Mobile Verification",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"mob_num\": \"1234567890\",\n  \"otp\": \"123456\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/user_mob_verification",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"user_mob_verification"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Shop",
+			"item": [
+				{
+					"name": "Shop Image Upload",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "shop_id",
+									"value": "1",
+									"type": "text"
+								},
+								{
+									"key": "shop_img",
+									"type": "file",
+									"src": []
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/api/shop_image_upload",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shop_image_upload"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Shop Image Delete",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/shop_image_delete/:id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shop_image_delete",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Shop Image List",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/shop_image_list/:id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shop_image_list",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Shop Cat List",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/shop_cat_list/:id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shop_cat_list",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Shop Orders",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/shop_orders/:shop_id/:status/:offset",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shop_orders",
+								":shop_id",
+								":status",
+								":offset"
+							],
+							"variable": [
+								{
+									"key": "shop_id",
+									"value": "1"
+								},
+								{
+									"key": "status",
+									"value": "",
+									"description": "1=pending, 2=accepted, 3=pickup, 4=completed, 5=cancelled"
+								},
+								{
+									"key": "offset",
+									"value": "0"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Shop Dash Counts",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/shop_dash_counts/:id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shop_dash_counts",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Shop Reviews",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/shopReviews/:shop_id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shopReviews",
+								":shop_id"
+							],
+							"variable": [
+								{
+									"key": "shop_id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Shops List For Sale",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"lat_log\": \"10.1234,76.5678\",\n  \"category\": \"Metal\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/shops_list_for_sale",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shops_list_for_sale"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Shop Ads Type Edit",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"shop_id\": \"1\",\n  \"address\": \"New Address\",\n  \"lat_log\": \"10.1234,76.5678\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/shop_ads_type_edit",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shop_ads_type_edit"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Product & Category",
+			"item": [
+				{
+					"name": "Shop Cat Create",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"shop_id\": \"1\",\n  \"cat_name\": \"Metal\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/shop_cat_create",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shop_cat_create"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Shop Cat Edit",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "id",
+									"value": "1",
+									"type": "text"
+								},
+								{
+									"key": "cat_name",
+									"value": "Updated Category",
+									"type": "text"
+								},
+								{
+									"key": "cat_img",
+									"type": "file",
+									"src": []
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/api/shop_cat_edit",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shop_cat_edit"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Shop Cat Delete",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/shop_cat_delete/:id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shop_cat_delete",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "All Pro Category",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/all_pro_category",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"all_pro_category"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Category Img List",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/category_img_list",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"category_img_list"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Shop Item List",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/shop_item_list/:shop_id/:cat_id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shop_item_list",
+								":shop_id",
+								":cat_id"
+							],
+							"variable": [
+								{
+									"key": "shop_id",
+									"value": "1"
+								},
+								{
+									"key": "cat_id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Shop Item Create",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"shop_id\": \"1\",\n  \"cat_id\": \"1\",\n  \"name\": \"Product Name\",\n  \"description\": \"Product Description\",\n  \"price\": \"100\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/shop_item_create",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shop_item_create"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Shop Item Edit",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Updated Product Name\",\n  \"description\": \"Updated Description\",\n  \"price\": \"150\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/shop_item_edit/:id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shop_item_edit",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Shop Item Delete",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/shop_item_delete/:id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"shop_item_delete",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Items List For Sale",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"shop_id\": \"1\",\n  \"category\": \"Metal,Paper\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/items_list_for_sale",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"items_list_for_sale"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Order",
+			"item": [
+				{
+					"name": "Order Details",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/order_details/:order_no",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"order_details",
+								":order_no"
+							],
+							"variable": [
+								{
+									"key": "order_no",
+									"value": "10000"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Customer Orders",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/customer_orders/:customer_id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"customer_orders",
+								":customer_id"
+							],
+							"variable": [
+								{
+									"key": "customer_id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Customer Pending Orders",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/customer_pending_orders/:customer_id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"customer_pending_orders",
+								":customer_id"
+							],
+							"variable": [
+								{
+									"key": "customer_id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Customer Order Placing",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "customer_id",
+									"value": "1",
+									"type": "text"
+								},
+								{
+									"key": "shop_id",
+									"value": "1",
+									"type": "text"
+								},
+								{
+									"key": "orderdetails",
+									"value": "{\"orders\":{\"Metal\":[{\"name\":\"Iron\",\"approximate_weight\":10,\"amount_per_kg\":\"15\"}]}}",
+									"type": "text"
+								},
+								{
+									"key": "customerdetails",
+									"value": "{\"id\":1,\"name\":\"John\",\"address\":\"123 Main St\"}",
+									"type": "text"
+								},
+								{
+									"key": "shopdetails",
+									"value": "{\"shop_id\":1,\"shop_name\":\"ABC Shop\"}",
+									"type": "text"
+								},
+								{
+									"key": "deliverytype",
+									"value": "pickup",
+									"type": "text"
+								},
+								{
+									"key": "estim_weight",
+									"value": "10",
+									"type": "text"
+								},
+								{
+									"key": "estim_price",
+									"value": "150",
+									"type": "text"
+								},
+								{
+									"key": "distance",
+									"value": "5.5",
+									"type": "text"
+								},
+								{
+									"key": "cust_place",
+									"value": "123 Main St",
+									"type": "text"
+								},
+								{
+									"key": "image1",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "image2",
+									"type": "file",
+									"src": []
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/api/cust_order_placeing",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"cust_order_placeing"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Order Status Change",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"order_number\": \"10000\",\n  \"status\": \"2\",\n  \"delv_id\": \"1\",\n  \"amount\": \"150\",\n  \"quantity\": \"10\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/order_status_change",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"order_status_change"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Customer Order Rating",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"order_no\": \"10000\",\n  \"shop_id\": \"1\",\n  \"customer_id\": \"1\",\n  \"rating\": \"5\",\n  \"comment\": \"Great service!\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/custOrderRating",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"custOrderRating"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Delivery Boy",
+			"item": [
+				{
+					"name": "Delivery Boy Add",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "shop_id",
+									"value": "1",
+									"type": "text"
+								},
+								{
+									"key": "name",
+									"value": "John Doe",
+									"type": "text"
+								},
+								{
+									"key": "dob",
+									"value": "1990-01-01",
+									"type": "text"
+								},
+								{
+									"key": "age",
+									"value": "30",
+									"type": "text"
+								},
+								{
+									"key": "address",
+									"value": "123 Main St",
+									"type": "text"
+								},
+								{
+									"key": "licence_no",
+									"value": "DL123456",
+									"type": "text"
+								},
+								{
+									"key": "profile_img",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "licence_img_front",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "licence_img_back",
+									"type": "file",
+									"src": []
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/api/delv_boy_add",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"delv_boy_add"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delivery Boy List",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/delivery_boy_list/:id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"delivery_boy_list",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delivery Boy Edit",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "del_boy_id",
+									"value": "1",
+									"type": "text"
+								},
+								{
+									"key": "name",
+									"value": "Updated Name",
+									"type": "text"
+								},
+								{
+									"key": "dob",
+									"value": "1990-01-01",
+									"type": "text"
+								},
+								{
+									"key": "age",
+									"value": "30",
+									"type": "text"
+								},
+								{
+									"key": "address",
+									"value": "Updated Address",
+									"type": "text"
+								},
+								{
+									"key": "licence_no",
+									"value": "DL123456",
+									"type": "text"
+								},
+								{
+									"key": "profile_img",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "licence_img_front",
+									"type": "file",
+									"src": []
+								},
+								{
+									"key": "licence_img_back",
+									"type": "file",
+									"src": []
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/api/delivery_boy_edit",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"delivery_boy_edit"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delivery Boy Delete",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/delv_boy_delete/:deliveryBoyID/:shop_id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"delv_boy_delete",
+								":deliveryBoyID",
+								":shop_id"
+							],
+							"variable": [
+								{
+									"key": "deliveryBoyID",
+									"value": "1"
+								},
+								{
+									"key": "shop_id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delivery Orders",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/delv_orders/:delv_boy_id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"delv_orders",
+								":delv_boy_id"
+							],
+							"variable": [
+								{
+									"key": "delv_boy_id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delivery Completed Orders",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/delv_completed_orders/:delv_boy_id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"delv_completed_orders",
+								":delv_boy_id"
+							],
+							"variable": [
+								{
+									"key": "delv_boy_id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Delivery Boy Dash Counts",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/delv_boy_dash_counts/:id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"delv_boy_dash_counts",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "User",
+			"item": [
+				{
+					"name": "Users Profile View",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/users_profile_view/:id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"users_profile_view",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "User Profile Pic Edit",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "user_id",
+									"value": "1",
+									"type": "text"
+								},
+								{
+									"key": "profile_photo",
+									"type": "file",
+									"src": []
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/api/user_profile_pic_edit",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"user_profile_pic_edit"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "User Pro Edit",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"user_id\": \"1\",\n  \"name\": \"Updated Name\",\n  \"email\": \"updated@example.com\",\n  \"address\": \"Updated Address\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/userProEdit",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"userProEdit"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Customer Dash Counts",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/cust_dash_counts/:id",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"cust_dash_counts",
+								":id"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Customer Ads Type Edit",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"customer_id\": \"1\",\n  \"address\": \"New Address\",\n  \"building_no\": \"123\",\n  \"nearby\": \"Near Park\",\n  \"addres_type\": \"H\",\n  \"lat_log\": \"10.1234,76.5678\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/cust_ads_type_edit",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"cust_ads_type_edit"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "FCM Token Store",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"user_id\": \"1\",\n  \"fcm_token\": \"fcm_token_here\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/fcm_token_store",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"fcm_token_store"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "FCM Token Clear",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/fcmTokenClear/:userid",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"fcmTokenClear",
+								":userid"
+							],
+							"variable": [
+								{
+									"key": "userid",
+									"value": "1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "User Delete",
+					"request": {
+						"method": "GET",
+						"header": []
+					},
+					"response": []
+				},
+				{
+					"name": "User Contact",
+					"request": {
+						"method": "GET",
+						"header": []
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Notification",
+			"item": [
+				{
+					"name": "Notification By ID",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/noti_by_id/:id/:offset",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"noti_by_id",
+								":id",
+								":offset"
+							],
+							"variable": [
+								{
+									"key": "id",
+									"value": "1"
+								},
+								{
+									"key": "offset",
+									"value": "0"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Notification Read",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"user_id\": \"1\",\n  \"notification_id\": \"1\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/notif_read",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"notif_read"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Utility",
+			"item": [
+				{
+					"name": "Get Table",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"users\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/get_table",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"get_table"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Table Condition",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"users\",\n  \"where\": \"id\",\n  \"value\": \"1\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/get_table_condition",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"get_table_condition"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Count Row",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/count_row/:table_name",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"count_row",
+								":table_name"
+							],
+							"variable": [
+								{
+									"key": "table_name",
+									"value": "users"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Keyword Search",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/keyword_search/:table/:name",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"keyword_search",
+								":table",
+								":name"
+							],
+							"variable": [
+								{
+									"key": "table",
+									"value": "users"
+								},
+								{
+									"key": "name",
+									"value": "john"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get User By ID",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/get_user_by_id/:user_id/:table",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"get_user_by_id",
+								":user_id",
+								":table"
+							],
+							"variable": [
+								{
+									"key": "user_id",
+									"value": "1"
+								},
+								{
+									"key": "table",
+									"value": "users"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get All Tables",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/get_all_tables",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"get_all_tables"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Save Call Log",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"order_id\": \"1\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/savecallLog",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"savecallLog"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Save Call Log Customer",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"order_id\": \"1\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/savecallLogCust",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"savecallLogCust"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Search Shop Call Log Save",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"shop_id\": \"1\",\n  \"search_term\": \"metal\",\n  \"call_type\": \"search\",\n  \"duration\": \"30\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/searchShopCallLogSave",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"searchShopCallLogSave"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "State Allow",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/stateAllow",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"stateAllow"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Packages Sub",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/packagesSub",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"packagesSub"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Save User Packages",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"user_id\": \"1\",\n  \"package_id\": \"1\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/saveUserPackages",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"saveUserPackages"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Payment History",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"user_id\": \"1\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/paymentHistory",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"paymentHistory"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Third Party Credentials",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/thirdPartyCredentials",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"thirdPartyCredentials"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Version Check",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/versionCheck/:version",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"versionCheck",
+								":version"
+							],
+							"variable": [
+								{
+									"key": "version",
+									"value": "1.0.0"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "SMS Testing",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/smstesting",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"smstesting"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Permanent Delete",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"user_id\": \"1\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/PermanentDelete",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"PermanentDelete"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Failed Jobs",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/failedJobs",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"failedJobs"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Test",
+			"item": [
+				{
+					"name": "Test 1",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"user_id\": \"1\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/test1",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"test1"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Test For Map",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/testformap",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"testformap"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Admin Panel",
+			"item": [
+				{
+					"name": "Admin",
+					"item": [
+						{
+							"name": "Dashboard",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/admin/dashboard",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"dashboard"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Users",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/admin/users",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"users"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get User By ID",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/admin/users/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"users",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Delete User",
+							"request": {
+								"method": "DELETE",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/admin/users/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"users",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "View Users",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/admin/view_users",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"view_users"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Manage Users (Create)",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"password\": \"password123\",\n  \"user_type\": \"U\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/admin/manage_users",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"manage_users"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Manage Users (Update)",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Updated Name\",\n  \"email\": \"updated@example.com\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/admin/manage_users/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"manage_users",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "User Password Reset",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"password\": \"newpassword123\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/admin/user_password_reset/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"user_password_reset",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Set Permission",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/admin/set_permission",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"set_permission"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Set Permission By ID",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/admin/set_permission/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"set_permission",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Store User Permission",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"user_id\": \"1\",\n  \"permissions\": []\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/admin/store_user_per",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"store_user_per"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Check Distance",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"lat1\": \"10.1234\",\n  \"lon1\": \"76.5678\",\n  \"lat2\": \"10.2345\",\n  \"lon2\": \"76.6789\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/admin/check_distance",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"check_distance"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Call Log Search",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/admin/callLogSearch",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"callLogSearch"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get Call Log Search",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/admin/getcallLogSearch?draw=1&start=0&length=10",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"getcallLogSearch"
+									],
+									"query": [
+										{
+											"key": "draw",
+											"value": "1"
+										},
+										{
+											"key": "start",
+											"value": "0"
+										},
+										{
+											"key": "length",
+											"value": "10"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Sign Up Report",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/admin/signUpReport?start_date=2024-01-01&end_date=2024-12-31&user_type=S",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"signUpReport"
+									],
+									"query": [
+										{
+											"key": "start_date",
+											"value": "2024-01-01"
+										},
+										{
+											"key": "end_date",
+											"value": "2024-12-31"
+										},
+										{
+											"key": "user_type",
+											"value": "S"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Customer Notification",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/admin/custNotification",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"custNotification"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Vendor Notification",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/admin/vendorNotification",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"vendorNotification"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Send Customer Notification",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"customer_id\": \"1\",\n  \"title\": \"Notification\",\n  \"message\": \"Test message\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/admin/sendCustNotification",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"sendCustNotification"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Send Vendor Notification",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"vendor_id\": \"1\",\n  \"title\": \"Notification\",\n  \"message\": \"Test message\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/admin/sendVendorNotification",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"admin",
+										"sendVendorNotification"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Vendor",
+					"item": [
+						{
+							"name": "Vendor List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/vendor/list",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"vendor",
+										"list"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get Vendor By ID",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/vendor/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"vendor",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Vendor",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"shopname\": \"Test Shop\",\n  \"email\": \"shop@example.com\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/vendor",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"vendor"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Update Vendor",
+							"request": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"shopname\": \"Updated Shop\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/vendor/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"vendor",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Delete Vendor",
+							"request": {
+								"method": "DELETE",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/vendor/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"vendor",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Agent",
+					"item": [
+						{
+							"name": "Agent List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/agent/list",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent",
+										"list"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Agent Leads",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/agent/leads",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent",
+										"leads"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "View Shops",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/agent/shops?shop_type_id=",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent",
+										"shops"
+									],
+									"query": [
+										{
+											"key": "shop_type_id",
+											"value": ""
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Agent Report",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/agent/report",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent",
+										"report"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Commission Track",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/agent/commission-track",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent",
+										"commission-track"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shop View By ID",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/agent/shop/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent",
+										"shop",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "View Delivery Boy",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/agent/delivery-boy/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent",
+										"delivery-boy",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get Categories For Shop",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/agent/categories/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent",
+										"categories",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shop Images",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/agent/shop-images/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent",
+										"shop-images",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Agent",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"shopname\": \"New Shop\",\n  \"email\": \"shop@example.com\",\n  \"password\": \"password123\",\n  \"ownername\": \"Owner\",\n  \"contact\": \"1234567890\",\n  \"address\": \"Address\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/agent",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Category",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"category\": \"1\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/agent/category/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent",
+										"category",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Item",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"item\": \"Item Name\",\n  \"amount\": \"100\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/agent/item/:shopid/:catid",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent",
+										"item",
+										":shopid",
+										":catid"
+									],
+									"variable": [
+										{
+											"key": "shopid",
+											"value": "1"
+										},
+										{
+											"key": "catid",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Shop Status Change",
+							"request": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/agent/shop-status/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent",
+										"shop-status",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Delete Shop",
+							"request": {
+								"method": "DELETE",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/agent/shop/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent",
+										"shop",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get Agent By ID",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/agent/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Update Agent",
+							"request": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"shopname\": \"Updated Shop\",\n  \"ownername\": \"Updated Owner\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/agent/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"agent",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Customer",
+					"item": [
+						{
+							"name": "Customer List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/customer/list",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"customer",
+										"list"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Orders",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/customer/orders",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"customer",
+										"orders"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "View Customers",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/customer/view-customers",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"customer",
+										"view-customers"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "View Orders",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/customer/view-orders?status_id=",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"customer",
+										"view-orders"
+									],
+									"query": [
+										{
+											"key": "status_id",
+											"value": ""
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Recent Orders",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/customer/recent-orders",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"customer",
+										"recent-orders"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Recent Orders By ID",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/customer/recent-orders/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"customer",
+										"recent-orders",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "View Order Details",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/customer/order/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"customer",
+										"order",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Delete Customer",
+							"request": {
+								"method": "DELETE",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/customer/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"customer",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get Customer By ID",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/customer/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"customer",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Student",
+					"item": [
+						{
+							"name": "Student List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/student/list",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"student",
+										"list"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get Student By ID",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/student/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"student",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Student Payment",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/student/payment",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"student",
+										"payment"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Student Activation",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/student/activation",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"student",
+										"activation"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Student",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Student Name\",\n  \"email\": \"student@example.com\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/student",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"student"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Update Student",
+							"request": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Updated Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/student/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"student",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Subschool",
+					"item": [
+						{
+							"name": "Subschool List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/subschool/list",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"subschool",
+										"list"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get Subschool By ID",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/subschool/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"subschool",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Subschool",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Subschool Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/subschool",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"subschool"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Update Subschool",
+							"request": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Updated Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/subschool/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"subschool",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Course",
+					"item": [
+						{
+							"name": "Course Categories",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/course/categories",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										"categories"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Course List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/course/list",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										"list"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get Course By ID",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/course/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Course Report",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/course/report",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										"report"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Sub Topic List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/course/sub-topics",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										"sub-topics"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Videos",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/course/videos",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										"videos"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Notes",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/course/notes",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										"notes"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Audios",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/course/audios",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										"audios"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Assignment",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/course/assignment",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										"assignment"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Category",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Category Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/course/category",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										"category"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Course",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Course Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/course",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Update Course",
+							"request": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Updated Course\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/course/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Subject",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Subject Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/course/subject",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										"subject"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Topic",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Topic Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/course/topic",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										"topic"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Video",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Video Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/course/video",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										"video"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Note",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Note Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/course/note",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										"note"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Audio",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Audio Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/course/audio",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										"audio"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Assignment",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Assignment Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/course/assignment",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"course",
+										"assignment"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Store",
+					"item": [
+						{
+							"name": "Store Category",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/store/categories",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"store",
+										"categories"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get Store Category By ID",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/store/category/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"store",
+										"category",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "View Store Category",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/store/view-categories",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"store",
+										"view-categories"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Store Report",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/store/report",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"store",
+										"report"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Store List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/store/list",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"store",
+										"list"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get Store By ID",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/store/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"store",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Store Category",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Category Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/store/category",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"store",
+										"category"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Update Store Category",
+							"request": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Updated Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/store/category/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"store",
+										"category",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Delete Store Category",
+							"request": {
+								"method": "DELETE",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/store/category/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"store",
+										"category",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Store",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Store Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/store",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"store"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Product",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Product Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/store/product",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"store",
+										"product"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Exam",
+					"item": [
+						{
+							"name": "Exam List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/exam/list",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"exam",
+										"list"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get Exam By ID",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/exam/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"exam",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Questions",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/exam/questions",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"exam",
+										"questions"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Assessment",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/exam/assessment",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"exam",
+										"assessment"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Exam",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Exam Name\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/exam",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"exam"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Update Exam",
+							"request": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Updated Exam\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/exam/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"exam",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Question",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"question\": \"Question Text\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/exam/question",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"exam",
+										"question"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Update Question",
+							"request": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"question\": \"Updated Question\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/exam/question/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"exam",
+										"question",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Import Questions",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"questions\": []\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/exam/import-questions",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"exam",
+										"import-questions"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Report",
+					"item": [
+						{
+							"name": "Report",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/report",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"report"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Site",
+					"item": [
+						{
+							"name": "Get Site",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/site",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"site"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Update Site",
+							"request": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Site Name\",\n  \"email\": \"admin@example.com\",\n  \"contact\": \"1234567890\",\n  \"address\": \"Address\",\n  \"location\": \"Location\",\n  \"logo\": \"logo_url\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/site",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"site"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get App Version",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/site/app-version",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"site",
+										"app-version"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Update App Version",
+							"request": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"version\": \"1.0.0\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/site/app-version",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"site",
+										"app-version"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				},
+				{
+					"name": "Accounts",
+					"item": [
+						{
+							"name": "Sub Packages",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/accounts/sub-packages",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"accounts",
+										"sub-packages"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Get Sub Package By ID",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/accounts/sub-package/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"accounts",
+										"sub-package",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Subscribers List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/accounts/subscribers",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"accounts",
+										"subscribers"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "View Subscribers List",
+							"request": {
+								"method": "GET",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/accounts/view-subscribers",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"accounts",
+										"view-subscribers"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Create Sub Package",
+							"request": {
+								"method": "POST",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Package Name\",\n  \"displayname\": \"Display Name\",\n  \"type\": \"1\",\n  \"orders\": \"100\",\n  \"price\": \"999\",\n  \"duration\": \"30\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/accounts/sub-package",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"accounts",
+										"sub-package"
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Update Sub Package",
+							"request": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"name\": \"Updated Package\",\n  \"price\": \"1299\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/accounts/sub-package/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"accounts",
+										"sub-package",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Delete Sub Package",
+							"request": {
+								"method": "DELETE",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									}
+								],
+								"url": {
+									"raw": "{{base_url}}/api/accounts/sub-package/:id",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"accounts",
+										"sub-package",
+										":id"
+									],
+									"variable": [
+										{
+											"key": "id",
+											"value": "1"
+										}
+									]
+								}
+							},
+							"response": []
+						},
+						{
+							"name": "Update Sub Package Status",
+							"request": {
+								"method": "PUT",
+								"header": [
+									{
+										"key": "api-key",
+										"value": "{{api_key}}"
+									},
+									{
+										"key": "Content-Type",
+										"value": "application/json"
+									}
+								],
+								"body": {
+									"mode": "raw",
+									"raw": "{\n  \"planId\": \"1\"\n}"
+								},
+								"url": {
+									"raw": "{{base_url}}/api/accounts/sub-package-status",
+									"host": [
+										"{{base_url}}"
+									],
+									"path": [
+										"api",
+										"accounts",
+										"sub-package-status"
+									]
+								}
+							},
+							"response": []
+						}
+					]
+				}
+			]
+		},
+		{
+			"name": "mEtrics",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "Redis clean",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "Category image change",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "New Request",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "New Request",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:3000",
+			"type": "string"
+		},
+		{
+			"key": "api_key",
+			"value": "zyubkfzeumeoviaqzcsrvfwdzbiwnlnn",
+			"type": "string"
+		}
+	]
+}

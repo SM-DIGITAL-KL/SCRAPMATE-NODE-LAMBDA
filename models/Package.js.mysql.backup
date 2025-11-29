@@ -1,0 +1,55 @@
+const db = require('../config/database');
+const Invoice = require('./Invoice');
+
+class Package {
+  static async findByType(type) {
+    return new Promise((resolve, reject) => {
+      const query = 'SELECT * FROM packages WHERE type = ? AND status = 1 LIMIT 1';
+      db.query(query, [type], (err, results) => {
+        if (err) return reject(err);
+        resolve(results[0] || null);
+      });
+    });
+  }
+
+  static async setPackage(userId) {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const packageData = await this.findByType(1);
+        if (packageData) {
+          const fromDate = new Date().toISOString().split('T')[0];
+          const toDate = new Date();
+          toDate.setDate(toDate.getDate() + packageData.duration);
+          const toDateStr = toDate.toISOString().split('T')[0];
+
+          await Invoice.create({
+            user_id: userId,
+            from_date: fromDate,
+            to_date: toDateStr,
+            name: packageData.name,
+            displayname: packageData.displayname,
+            type: 'Free',
+            price: packageData.price,
+            duration: packageData.duration
+          });
+        }
+        resolve(true);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  static async getAll() {
+    return new Promise((resolve, reject) => {
+      const query = 'SELECT * FROM packages WHERE status = 1';
+      db.query(query, [], (err, results) => {
+        if (err) return reject(err);
+        resolve(results);
+      });
+    });
+  }
+}
+
+module.exports = Package;
+

@@ -1,0 +1,41 @@
+const db = require('../config/database');
+
+class Invoice {
+  static async findByUserId(userId) {
+    return new Promise((resolve, reject) => {
+      const query = 'SELECT * FROM invoices WHERE user_id = ? ORDER BY created_at DESC';
+      db.query(query, [userId], (err, results) => {
+        if (err) return reject(err);
+        resolve(results);
+      });
+    });
+  }
+
+  static async findLatestByUserId(userId) {
+    return new Promise((resolve, reject) => {
+      const query = 'SELECT * FROM invoices WHERE user_id = ? ORDER BY created_at DESC LIMIT 1';
+      db.query(query, [userId], (err, results) => {
+        if (err) return reject(err);
+        resolve(results[0] || null);
+      });
+    });
+  }
+
+  static async create(data) {
+    return new Promise((resolve, reject) => {
+      const query = `INSERT INTO invoices (user_id, from_date, to_date, name, displayname, type, price, duration) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+      const values = [
+        data.user_id, data.from_date, data.to_date, data.name,
+        data.displayname, data.type, data.price, data.duration
+      ];
+      db.query(query, values, (err, result) => {
+        if (err) return reject(err);
+        resolve({ id: result.insertId, ...data });
+      });
+    });
+  }
+}
+
+module.exports = Invoice;
+

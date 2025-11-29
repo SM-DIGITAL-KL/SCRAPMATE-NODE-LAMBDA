@@ -1,0 +1,74 @@
+const db = require('../config/database');
+
+class Notifications {
+  static async findByUserId(userId, offset = 0, limit = 10) {
+    return new Promise((resolve, reject) => {
+      let query = 'SELECT * FROM notifications WHERE notifiable_id = ? ORDER BY notification_id DESC';
+      const params = [userId];
+      
+      if (offset > 0) {
+        query += ' LIMIT ? OFFSET ?';
+        params.push(limit, offset * limit);
+      } else {
+        query += ' LIMIT ?';
+        params.push(limit);
+      }
+      
+      db.query(query, params, (err, results) => {
+        if (err) return reject(err);
+        resolve(results);
+      });
+    });
+  }
+
+  // Get by notification_id
+  static async getById(notificationId) {
+    return new Promise((resolve, reject) => {
+      const query = 'SELECT * FROM notifications WHERE notification_id = ?';
+      db.query(query, [notificationId], (err, results) => {
+        if (err) return reject(err);
+        resolve(results[0] || null);
+      });
+    });
+  }
+
+  // Set read_at
+  static async setReadAt(notificationId) {
+    return new Promise((resolve, reject) => {
+      const query = 'UPDATE notifications SET read_at = ? WHERE notification_id = ?';
+      const readAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      db.query(query, [readAt, notificationId], (err, result) => {
+        if (err) return reject(err);
+        resolve(result);
+      });
+    });
+  }
+
+  static async create(data) {
+    return new Promise((resolve, reject) => {
+      const query = `INSERT INTO notifications (user_id, title, message, type, read_status) 
+                     VALUES (?, ?, ?, ?, ?)`;
+      const values = [
+        data.user_id, data.title, data.message,
+        data.type || 'general', data.read_status || 0
+      ];
+      db.query(query, values, (err, result) => {
+        if (err) return reject(err);
+        resolve({ id: result.insertId, ...data });
+      });
+    });
+  }
+
+  static async markAsRead(userId, notificationId) {
+    return new Promise((resolve, reject) => {
+      const query = 'UPDATE notifications SET read_status = 1 WHERE id = ? AND user_id = ?';
+      db.query(query, [notificationId, userId], (err, result) => {
+        if (err) return reject(err);
+        resolve(result);
+      });
+    });
+  }
+}
+
+module.exports = Notifications;
+

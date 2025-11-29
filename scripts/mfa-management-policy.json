@@ -1,0 +1,19 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:ListMFADevices",
+        "iam:DeactivateMFADevice",
+        "iam:DeleteVirtualMFADevice",
+        "iam:ListVirtualMFADevices"
+      ],
+      "Resource": [
+        "arn:aws:iam::191022261400:user/scrapmate",
+        "arn:aws:iam::191022261400:mfa/*"
+      ]
+    }
+  ]
+}
+

@@ -1,0 +1,41 @@
+const db = require('../config/database');
+
+class OrderRatings {
+  static async findByOrderNo(orderNo) {
+    return new Promise((resolve, reject) => {
+      const query = 'SELECT * FROM order_rating WHERE order_no = ?';
+      db.query(query, [orderNo], (err, results) => {
+        if (err) return reject(err);
+        resolve(results[0] || null);
+      });
+    });
+  }
+
+  static async findByShopId(shopId) {
+    return new Promise((resolve, reject) => {
+      const query = 'SELECT * FROM order_rating WHERE shop_id = ?';
+      db.query(query, [shopId], (err, results) => {
+        if (err) return reject(err);
+        resolve(results);
+      });
+    });
+  }
+
+  static async create(data) {
+    return new Promise((resolve, reject) => {
+      const query = `INSERT INTO order_rating (order_no, shop_id, customer_id, rating, comment) 
+                     VALUES (?, ?, ?, ?, ?)`;
+      const values = [
+        data.order_no, data.shop_id, data.customer_id,
+        data.rating, data.comment || ''
+      ];
+      db.query(query, values, (err, result) => {
+        if (err) return reject(err);
+        resolve({ id: result.insertId, ...data });
+      });
+    });
+  }
+}
+
+module.exports = OrderRatings;
+

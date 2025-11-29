@@ -1,0 +1,437 @@
+{
+	"info": {
+		"_postman_id": "v2-api-collection-001",
+		"name": "ScrapMate V2 API Collection",
+		"description": "Complete API collection for ScrapMate V2 endpoints",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "Login - Send OTP",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has OTP\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.data).to.have.property('otp');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "api-key",
+								"value": "{{api_key}}",
+								"type": "text",
+								"description": "API Key for authentication"
+							},
+							{
+								"key": "ngrok-skip-browser-warning",
+								"value": "true",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"phoneNumber\": \"9876543210\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"auth",
+								"login"
+							]
+						},
+						"description": "Send OTP to phone number for login. Returns OTP, isNewUser flag, and userType if user exists."
+					},
+					"response": []
+				},
+				{
+					"name": "Verify OTP - Complete Login",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has token\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.data).to.have.property('token');",
+									"});",
+									"",
+									"pm.test(\"Response has dashboardType\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.data).to.have.property('dashboardType');",
+									"});",
+									"",
+									"// Save token to environment variable",
+									"if (pm.response.code === 200) {",
+									"    var jsonData = pm.response.json();",
+									"    if (jsonData.data && jsonData.data.token) {",
+									"        pm.environment.set(\"auth_token\", jsonData.data.token);",
+									"        pm.environment.set(\"user_id\", jsonData.data.user.id);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "api-key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "ngrok-skip-browser-warning",
+								"value": "true",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"phoneNumber\": \"9876543210\",\n    \"otp\": \"123456\",\n    \"joinType\": \"b2c\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/auth/verify-otp",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"auth",
+								"verify-otp"
+							]
+						},
+						"description": "Verify OTP and complete login. For new users, joinType is required ('b2b', 'b2c', or 'delivery'). Returns user data, JWT token, and dashboardType."
+					},
+					"response": []
+				}
+			],
+			"description": "Authentication endpoints for V2 API"
+		},
+		{
+			"name": "Shop Types",
+			"item": [
+				{
+					"name": "Get All Shop Types",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has shop types\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.data).to.be.an('array');",
+									"    pm.expect(jsonData.data.length).to.be.greaterThan(0);",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "ngrok-skip-browser-warning",
+								"value": "true",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v2/shop-types",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"shop-types"
+							]
+						},
+						"description": "Get all available shop types with their dashboard types."
+					},
+					"response": []
+				}
+			],
+			"description": "Shop type management endpoints"
+		},
+		{
+			"name": "Dashboard Management",
+			"item": [
+				{
+					"name": "Get User Dashboards",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has allowedDashboards\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.data).to.have.property('allowedDashboards');",
+									"    pm.expect(jsonData.data.allowedDashboards).to.be.an('array');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "api-key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "ngrok-skip-browser-warning",
+								"value": "true",
+								"type": "text"
+							}
+						],
+						"url": {
+							"raw": "{{base_url}}/api/v2/user/dashboards/:userId",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"user",
+								"dashboards",
+								":userId"
+							],
+							"variable": [
+								{
+									"key": "userId",
+									"value": "{{user_id}}",
+									"description": "User ID"
+								}
+							]
+						},
+						"description": "Get user's allowed dashboards based on shop type and user type."
+					},
+					"response": []
+				},
+				{
+					"name": "Validate Dashboard Access",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"pm.test(\"Response has canAccess\", function () {",
+									"    var jsonData = pm.response.json();",
+									"    pm.expect(jsonData.data).to.have.property('canAccess');",
+									"    pm.expect(jsonData.data.canAccess).to.be.a('boolean');",
+									"});"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "api-key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "ngrok-skip-browser-warning",
+								"value": "true",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"userId\": 1234567890,\n    \"dashboardType\": \"b2c\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/user/validate-dashboard",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"user",
+								"validate-dashboard"
+							]
+						},
+						"description": "Validate if user can access a specific dashboard. Dashboard types: 'b2b', 'b2c', 'delivery'."
+					},
+					"response": []
+				},
+				{
+					"name": "Switch Dashboard",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Status code is 200 or 403\", function () {",
+									"    pm.expect([200, 403]).to.include(pm.response.code);",
+									"});",
+									"",
+									"if (pm.response.code === 200) {",
+									"    pm.test(\"Response has currentDashboard\", function () {",
+									"        var jsonData = pm.response.json();",
+									"        pm.expect(jsonData.data).to.have.property('currentDashboard');",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							},
+							{
+								"key": "api-key",
+								"value": "{{api_key}}",
+								"type": "text"
+							},
+							{
+								"key": "ngrok-skip-browser-warning",
+								"value": "true",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"userId\": 1234567890,\n    \"targetDashboard\": \"b2b\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/api/v2/user/switch-dashboard",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"v2",
+								"user",
+								"switch-dashboard"
+							]
+						},
+						"description": "Switch user's current dashboard. Valid dashboard types: 'b2b', 'b2c', 'delivery'."
+					},
+					"response": []
+				}
+			],
+			"description": "Dashboard management endpoints for user dashboard access control"
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "https://6dc2e7973f38.ngrok-free.app",
+			"type": "string"
+		},
+		{
+			"key": "api_key",
+			"value": "",
+			"type": "string",
+			"description": "API Key for authentication"
+		},
+		{
+			"key": "auth_token",
+			"value": "",
+			"type": "string",
+			"description": "JWT token from login"
+		},
+		{
+			"key": "user_id",
+			"value": "",
+			"type": "string",
+			"description": "User ID from login response"
+		}
+	]
+}
+

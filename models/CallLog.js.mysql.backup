@@ -1,0 +1,21 @@
+const db = require('../config/database');
+
+class CallLog {
+  static async create(data) {
+    return new Promise((resolve, reject) => {
+      const query = `INSERT INTO call_logs (user_id, shop_id, customer_id, call_type, duration, timestamp) 
+                     VALUES (?, ?, ?, ?, ?, ?)`;
+      const values = [
+        data.user_id || null, data.shop_id || null, data.customer_id || null,
+        data.call_type || '', data.duration || 0, data.timestamp || new Date()
+      ];
+      db.query(query, values, (err, result) => {
+        if (err) return reject(err);
+        resolve({ id: result.insertId, ...data });
+      });
+    });
+  }
+}
+
+module.exports = CallLog;
+

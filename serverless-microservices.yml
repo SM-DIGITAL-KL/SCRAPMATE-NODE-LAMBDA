@@ -1,0 +1,395 @@
+service: scrapmate-microservices
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: ${opt:region, 'ap-south-1'}
+  stage: ${opt:stage, 'dev'}
+  memorySize: 512
+  timeout: 30
+  deploymentBucket:
+    name: scrapmate-images
+    blockPublicAccess: true
+  environment:
+    NODE_ENV: production
+    AWS_REGION: ${self:provider.region}
+    API_KEY: ${env:API_KEY, 'zyubkfzeumeoviaqzcsrvfwdzbiwnlnn'}
+    SESSION_SECRET: ${env:SESSION_SECRET, 'scrapmate-session-secret-change-in-production'}
+    JWT_SECRET: ${env:JWT_SECRET, 'scrapmate-jwt-secret-change-in-production'}
+    S3_BUCKET_NAME: ${env:S3_BUCKET_NAME, 'scrapmate-images'}
+    REDIS_URL: ${env:REDIS_URL, ''}
+    REDIS_TOKEN: ${env:REDIS_TOKEN, ''}
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:*
+            - s3:*
+            - ssm:GetParameter
+            - ssm:GetParameters
+            - secretsmanager:GetSecretValue
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource: "*"
+  logs:
+    httpApi:
+      accessLogging: false
+  httpApi:
+    cors:
+      allowedOrigins:
+        - '*'
+      allowedHeaders:
+        - Content-Type
+        - api-key
+        - Authorization
+        - X-Requested-With
+      allowedMethods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - PATCH
+        - OPTIONS
+      allowCredentials: false
+
+functions:
+  # ==================== AUTH SERVICE ====================
+  auth-service:
+    handler: services/auth/handler.handler
+    description: Authentication and user registration service
+    memorySize: 512
+    timeout: 30
+    events:
+      - httpApi:
+          path: /api/auth/{proxy+}
+          method: ANY
+      - httpApi:
+          path: /api/login
+          method: POST
+      - httpApi:
+          path: /api/dologin
+          method: POST
+      - httpApi:
+          path: /api/users_register
+          method: POST
+      - httpApi:
+          path: /api/user_mob_verification
+          method: POST
+      - httpApi:
+          path: /api/login_app/{mob}
+          method: GET
+
+  # ==================== SHOP SERVICE ====================
+  shop-service:
+    handler: services/shop/handler.handler
+    description: Shop management service
+    memorySize: 512
+    timeout: 30
+    events:
+      - httpApi:
+          path: /api/shop/{proxy+}
+          method: ANY
+      - httpApi:
+          path: /api/shop_image_upload
+          method: POST
+      - httpApi:
+          path: /api/shop_image_delete/{id}
+          method: GET
+      - httpApi:
+          path: /api/shop_image_list/{id}
+          method: GET
+      - httpApi:
+          path: /api/shop_cat_list/{id}
+          method: GET
+      - httpApi:
+          path: /api/shop_orders/{shop_id}
+          method: GET
+      - httpApi:
+          path: /api/shop_orders/{shop_id}/{status}
+          method: GET
+      - httpApi:
+          path: /api/shop_dash_counts/{id}
+          method: GET
+      - httpApi:
+          path: /api/shopReviews/{shop_id}
+          method: GET
+      - httpApi:
+          path: /api/shops_list_for_sale
+          method: POST
+      - httpApi:
+          path: /api/shop_ads_type_edit
+          method: POST
+
+  # ==================== PRODUCT SERVICE ====================
+  product-service:
+    handler: services/product/handler.handler
+    description: Product and category management service
+    memorySize: 512
+    timeout: 30
+    events:
+      - httpApi:
+          path: /api/product/{proxy+}
+          method: ANY
+      - httpApi:
+          path: /api/shop_cat_create
+          method: POST
+      - httpApi:
+          path: /api/shop_cat_edit
+          method: POST
+      - httpApi:
+          path: /api/shop_cat_delete/{id}
+          method: GET
+      - httpApi:
+          path: /api/all_pro_category
+          method: GET
+      - httpApi:
+          path: /api/category_img_list
+          method: GET
+      - httpApi:
+          path: /api/shop_item_create
+          method: POST
+      - httpApi:
+          path: /api/shop_item_edit/{id}
+          method: POST
+      - httpApi:
+          path: /api/shop_item_delete/{id}
+          method: GET
+      - httpApi:
+          path: /api/shop_item_list/{shop_id}/{cat_id}
+          method: GET
+      - httpApi:
+          path: /api/items_list_for_sale
+          method: POST
+
+  # ==================== ORDER SERVICE ====================
+  order-service:
+    handler: services/order/handler.handler
+    description: Order management service
+    memorySize: 1024
+    timeout: 30
+    events:
+      - httpApi:
+          path: /api/order/{proxy+}
+          method: ANY
+      - httpApi:
+          path: /api/order_details/{order_no}
+          method: GET
+      - httpApi:
+          path: /api/customer_orders/{customer_id}
+          method: GET
+      - httpApi:
+          path: /api/customer_pending_orders/{customer_id}
+          method: GET
+      - httpApi:
+          path: /api/cust_order_placeing
+          method: POST
+      - httpApi:
+          path: /api/order_status_change
+          method: POST
+      - httpApi:
+          path: /api/custOrderRating
+          method: POST
+
+  # ==================== DELIVERY SERVICE ====================
+  delivery-service:
+    handler: services/delivery/handler.handler
+    description: Delivery boy management service
+    memorySize: 512
+    timeout: 30
+    events:
+      - httpApi:
+          path: /api/delivery/{proxy+}
+          method: ANY
+      - httpApi:
+          path: /api/delv_boy_add
+          method: POST
+      - httpApi:
+          path: /api/delivery_boy_list/{id}
+          method: GET
+      - httpApi:
+          path: /api/delivery_boy_edit
+          method: POST
+      - httpApi:
+          path: /api/delv_boy_delete/{deliveryBoyID}/{shop_id}
+          method: GET
+      - httpApi:
+          path: /api/delv_orders/{delv_boy_id}
+          method: GET
+      - httpApi:
+          path: /api/delv_completed_orders/{delv_boy_id}
+          method: GET
+      - httpApi:
+          path: /api/delv_boy_dash_counts/{id}
+          method: GET
+
+  # ==================== USER SERVICE ====================
+  user-service:
+    handler: services/user/handler.handler
+    description: User profile and FCM token management service
+    memorySize: 512
+    timeout: 30
+    events:
+      - httpApi:
+          path: /api/user/{proxy+}
+          method: ANY
+      - httpApi:
+          path: /api/users_profile_view/{id}
+          method: GET
+      - httpApi:
+          path: /api/get_user_by_name/{name}
+          method: GET
+      - httpApi:
+          path: /api/user_profile_pic_edit
+          method: POST
+      - httpApi:
+          path: /api/userProEdit
+          method: POST
+      - httpApi:
+          path: /api/cust_dash_counts/{id}
+          method: GET
+      - httpApi:
+          path: /api/cust_ads_type_edit
+          method: POST
+      - httpApi:
+          path: /api/fcm_token_store
+          method: POST
+      - httpApi:
+          path: /api/fcmTokenClear/{userid}
+          method: GET
+
+  # ==================== NOTIFICATION SERVICE ====================
+  notification-service:
+    handler: services/notification/handler.handler
+    description: Notification management service
+    memorySize: 256
+    timeout: 30
+    events:
+      - httpApi:
+          path: /api/notification/{proxy+}
+          method: ANY
+      - httpApi:
+          path: /api/noti_by_id/{id}
+          method: GET
+      - httpApi:
+          path: /api/noti_by_id/{id}/{offset}
+          method: GET
+      - httpApi:
+          path: /api/notif_read
+          method: POST
+
+  # ==================== UTILITY SERVICE ====================
+  utility-service:
+    handler: services/utility/handler.handler
+    description: Utility and helper functions service
+    memorySize: 512
+    timeout: 30
+    events:
+      - httpApi:
+          path: /api/utility/{proxy+}
+          method: ANY
+      - httpApi:
+          path: /api/get_table
+          method: POST
+      - httpApi:
+          path: /api/get_table_condition
+          method: POST
+      - httpApi:
+          path: /api/count_row/{table_name}
+          method: GET
+      - httpApi:
+          path: /api/keyword_search/{table}/{name}
+          method: GET
+      - httpApi:
+          path: /api/get_user_by_id/{user_id}/{table}
+          method: GET
+      - httpApi:
+          path: /api/get_all_tables
+          method: GET
+      - httpApi:
+          path: /api/savecallLog
+          method: POST
+      - httpApi:
+          path: /api/savecallLogCust
+          method: POST
+      - httpApi:
+          path: /api/searchShopCallLogSave
+          method: POST
+      - httpApi:
+          path: /api/stateAllow
+          method: GET
+      - httpApi:
+          path: /api/packagesSub
+          method: GET
+      - httpApi:
+          path: /api/saveUserPackages
+          method: POST
+      - httpApi:
+          path: /api/paymentHistory
+          method: POST
+      - httpApi:
+          path: /api/thirdPartyCredentials
+          method: GET
+      - httpApi:
+          path: /api/versionCheck/{version}
+          method: GET
+      - httpApi:
+          path: /api/smstesting
+          method: GET
+      - httpApi:
+          path: /api/PermanentDelete
+          method: POST
+      - httpApi:
+          path: /api/failedJobs
+          method: POST
+      - httpApi:
+          path: /api/clear_redis_cache
+          method: POST
+      - httpApi:
+          path: /api/metrics
+          method: GET
+
+  # ==================== HEALTH CHECK ====================
+  health-service:
+    handler: services/health/handler.handler
+    description: Health check and test endpoints
+    memorySize: 128
+    timeout: 10
+    events:
+      - httpApi:
+          path: /api/health
+          method: GET
+      - httpApi:
+          path: /api/test
+          method: GET
+
+plugins:
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    httpPort: 3000
+    noPrependStageInUrl: true
+
+package:
+  patterns:
+    - '!node_modules/**'
+    - '!public/**'
+    - '!.git/**'
+    - '!*.md'
+    - '!*.txt'
+    - '!.env*'
+    - '!aws.txt'
+    - '!scripts/**'
+    - '!dist/**'
+    - '!.DS_Store'
+    - '!test-*.js'
+    - '!Postman_*.json'
+    - '!nginx.conf'
+    - '!nodemon.json'
+  individually: true
+  excludeDevDependencies: true
+

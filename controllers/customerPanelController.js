@@ -1,0 +1,309 @@
+const Customer = require('../models/Customer');
+const Order = require('../models/Order');
+const User = require('../models/User');
+const RedisCache = require('../utils/redisCache');
+
+class CustomerPanelController {
+  static async customers(req, res) {
+    try {
+      console.log('🟢 CustomerPanelController.customers called');
+      res.json({
+        status: 'success',
+        msg: 'Customers page data',
+        data: { pagename: 'Customers' }
+      });
+    } catch (error) {
+      console.error('❌ customers error:', error);
+      res.status(500).json({ status: 'error', msg: 'Error loading customers page', data: { pagename: 'Customers' } });
+    }
+  }
+
+  static async getCustomerById(req, res) {
+    try {
+      const { id } = req.params;
+      console.log('🟢 CustomerPanelController.getCustomerById called', { id });
+      
+      // Check Redis cache first
+      const cacheKey = RedisCache.customerKey(id);
+      try {
+        const cached = await RedisCache.get(cacheKey);
+        if (cached) {
+          console.log('⚡ Customer cache hit:', cacheKey);
+          return res.json({ status: 'success', msg: 'Customer retrieved', data: cached });
+        }
+      } catch (err) {
+        console.error('Redis get error:', err);
+      }
+      
+      // Use Customer model
+      const customerData = await Customer.findById(id);
+      console.log(`✅ getCustomerById: Found customer:`, customerData ? 'Yes' : 'No');
+      
+      // Cache customer data for 30 minutes
+      if (customerData) {
+        try {
+          await RedisCache.set(cacheKey, customerData, '30days');
+          console.log('💾 Customer data cached:', cacheKey);
+        } catch (err) {
+          console.error('Redis cache set error:', err);
+        }
+      }
+      
+      res.json({ status: 'success', msg: 'Customer retrieved', data: customerData });
+    } catch (error) {
+      console.error('❌ getCustomerById error:', error);
+      res.status(500).json({ status: 'error', msg: 'Error fetching customer', data: null });
+    }
+  }
+
+  static async orders(req, res) {
+    try {
+      console.log('🟢 CustomerPanelController.orders called - returning page data');
+      console.log('   Request method:', req.method);
+      console.log('   Request path:', req.path);
+      res.json({
+        status: 'success',
+        msg: 'Orders page data',
+        data: { pagename: 'orders' }
+      });
+    } catch (error) {
+      console.error('❌ orders error:', error);
+      console.error('   Error stack:', error.stack);
+      res.status(500).json({ status: 'error', msg: 'Error loading orders page', data: { pagename: 'orders' } });
+    }
+  }
+
+  static async viewCustomers(req, res) {
+    try {
+      console.log('🟢 CustomerPanelController.viewCustomers called');
+      
+      // Check Redis cache first
+      const cacheKey = RedisCache.listKey('customer_list');
+      try {
+        const cached = await RedisCache.get(cacheKey);
+        if (cached) {
+          console.log('⚡ View customers cache hit');
+          return res.json({ 
+            status: 'success',
+            msg: 'Customers retrieved',
+            data: cached 
+          });
+        }
+      } catch (err) {
+        console.error('Redis get error:', err);
+      }
+      
+      // Use Customer model to get all customers
+      const results = await Customer.getAll();
+      console.log(`✅ viewCustomers: Found ${results.length} customers`);
+      
+      // Cache customers list for 10 minutes
+      try {
+        await RedisCache.set(cacheKey, results, '30days');
+        console.log('💾 Customers list cached');
+      } catch (err) {
+        console.error('Redis cache set error:', err);
+      }
+      
+      res.json({ 
+        status: 'success',
+        msg: 'Customers retrieved',
+        data: results 
+      });
+    } catch (error) {
+      console.error('❌ viewCustomers error:', error);
+      res.json({ 
+        status: 'error',
+        msg: 'Error fetching customers',
+        data: [] 
+      });
+    }
+  }
+
+  static async viewOrders(req, res) {
+    try {
+      const status_id = req.query.status_id;
+      console.log('🟢 CustomerPanelController.viewOrders called');
+      console.log('   Query params:', req.query);
+      console.log('   Status ID:', status_id || 'none');
+      
+      // Check Redis cache first
+      const cacheKey = RedisCache.listKey('customer_orders', { status_id: status_id || 'all' });
+      try {
+        const cached = await RedisCache.get(cacheKey);
+        if (cached) {
+          console.log('⚡ View orders cache hit');
+          return res.json(cached);
+        }
+      } catch (err) {
+        console.error('Redis get error:', err);
+      }
+      
+      // Use Order model to get all orders (optionally filtered by status)
+      const statusId = status_id ? parseInt(status_id) : null;
+      const results = await Order.getAll(statusId);
+      console.log(`✅ viewOrders: Found ${results.length} orders`);
+      if (results.length > 0) {
+        console.log('   Sample order:', {
+          id: results[0].id,
+          order_number: results[0].order_number,
+          status: results[0].status,
+          customer_id: results[0].customer_id,
+          shop_id: results[0].shop_id
+        });
+      }
+      
+      const response = {
+        status: 'success',
+        msg: 'Orders retrieved',
+        data: results 
+      };
+      
+      // Cache orders list for 5 minutes
+      try {
+        await RedisCache.set(cacheKey, response, '30days');
+        console.log('💾 Orders list cached');
+      } catch (err) {
+        console.error('Redis cache set error:', err);
+      }
+      
+      res.json(response);
+    } catch (error) {
+      console.error('❌ viewOrders error:', error);
+      console.error('   Error stack:', error.stack);
+      res.json({ 
+        status: 'error',
+        msg: 'Error fetching orders',
+        data: [] 
+      });
+    }
+  }
+
+  static async viewOrderDetails(req, res) {
+    try {
+      const { id } = req.params;
+      console.log('🟢 CustomerPanelController.viewOrderDetails called', { id });
+      
+      // Check Redis cache first
+      const cacheKey = RedisCache.orderKey(id);
+      try {
+        const cached = await RedisCache.get(cacheKey);
+        if (cached) {
+          console.log('⚡ Order details cache hit:', cacheKey);
+          return res.json({ status: 'success', msg: 'Order retrieved', data: cached });
+        }
+      } catch (err) {
+        console.error('Redis get error:', err);
+      }
+      
+      // Use Order model
+      const orderData = await Order.getById(id);
+      console.log(`✅ viewOrderDetails: Found order:`, orderData ? 'Yes' : 'No');
+      
+      // Cache order data for 10 minutes
+      if (orderData) {
+        try {
+          await RedisCache.set(cacheKey, orderData, '30days');
+          console.log('💾 Order data cached:', cacheKey);
+        } catch (err) {
+          console.error('Redis cache set error:', err);
+        }
+      }
+      
+      res.json({ status: 'success', msg: 'Order retrieved', data: orderData });
+    } catch (error) {
+      console.error('❌ viewOrderDetails error:', error);
+      res.status(500).json({ status: 'error', msg: 'Error fetching order', data: null });
+    }
+  }
+
+  static async showRecentOrders(req, res) {
+    try {
+      const id = req.params.id || req.query.id;
+      console.log('🟢 CustomerPanelController.showRecentOrders called', { id });
+      
+      if (!id) {
+        console.log('⚠️ showRecentOrders: No customer ID provided');
+        return res.json({ status: 'success', msg: 'No orders', data: [] });
+      }
+      
+      // Check Redis cache first
+      const cacheKey = RedisCache.listKey('customer_recent_orders', { customer_id: id });
+      try {
+        const cached = await RedisCache.get(cacheKey);
+        if (cached) {
+          console.log('⚡ Recent orders cache hit');
+          return res.json(cached);
+        }
+      } catch (err) {
+        console.error('Redis get error:', err);
+      }
+      
+      // Use Order model to get recent orders with shop names
+      console.log('🟢 showRecentOrders: Fetching recent orders for customer:', id);
+      const results = await Order.findByCustomerIdWithShopNames(id, 5);
+      console.log(`✅ showRecentOrders: Found ${results.length} recent orders`);
+      
+      const response = {
+        status: 'success',
+        msg: 'Recent orders retrieved',
+        data: results || []
+      };
+      
+      // Cache recent orders for 5 minutes
+      try {
+        await RedisCache.set(cacheKey, response, '30days');
+        console.log('💾 Recent orders cached');
+      } catch (err) {
+        console.error('Redis cache set error:', err);
+      }
+      
+      res.json(response);
+    } catch (error) {
+      console.error('❌ showRecentOrders error:', error);
+      res.status(500).json({ status: 'error', msg: 'Error fetching orders', data: [] });
+    }
+  }
+
+  static async deleteCustomer(req, res) {
+    try {
+      const { id } = req.params;
+      console.log('🟢 CustomerPanelController.deleteCustomer called', { id });
+      // Get customer to find user_id
+      console.log('🟢 deleteCustomer: Finding customer');
+      const customer = await Customer.findById(id);
+      if (!customer) {
+        console.error('❌ deleteCustomer: Customer not found');
+        return res.json({ status: 'error', msg: 'Customer not found', data: null });
+      }
+
+      const userId = customer.user_id;
+      console.log(`✅ deleteCustomer: Found customer with user_id: ${userId}`);
+
+      // TODO: Delete user - User model doesn't have delete method yet
+      // For now, just delete the customer
+      console.log('🟢 deleteCustomer: Deleting customer');
+      await Customer.delete(id);
+      console.log('✅ deleteCustomer: Customer deleted successfully');
+
+      // Invalidate related caches
+      try {
+        await RedisCache.invalidateTableCache('customer');
+        await RedisCache.invalidateTableCache('users');
+        await RedisCache.delete(RedisCache.customerKey(id));
+        await RedisCache.delete(RedisCache.listKey('customer_list'));
+        console.log('🗑️  Invalidated customer caches after delete');
+      } catch (err) {
+        console.error('Redis cache invalidation error:', err);
+      }
+
+      res.json({ status: 'success', msg: 'Customer deleted successfully', data: null });
+    } catch (error) {
+      console.error('❌ deleteCustomer error:', error);
+      res.status(500).json({ status: 'error', msg: 'Error deleting customer', data: null });
+    }
+  }
+}
+
+module.exports = CustomerPanelController;
+

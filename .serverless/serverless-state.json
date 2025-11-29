@@ -1,0 +1,3776 @@
+{
+  "service": {
+    "service": "scrapmate-microservices",
+    "serviceObject": {
+      "name": "scrapmate-microservices"
+    },
+    "provider": {
+      "name": "aws",
+      "runtime": "nodejs20.x",
+      "region": "ap-south-1",
+      "stage": "dev",
+      "memorySize": 512,
+      "timeout": 30,
+      "deploymentBucket": "scrapmate-images",
+      "environment": {
+        "NODE_ENV": "production",
+        "AWS_REGION": "ap-south-1",
+        "API_KEY": "zyubkfzeumeoviaqzcsrvfwdzbiwnlnn",
+        "SESSION_SECRET": "scrapmate-session-secret-change-in-production",
+        "JWT_SECRET": "scrapmate-jwt-secret-change-in-production",
+        "S3_BUCKET_NAME": "scrapmate-images",
+        "REDIS_URL": "",
+        "REDIS_TOKEN": ""
+      },
+      "iam": {
+        "role": {
+          "statements": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "dynamodb:*",
+                "s3:*",
+                "ssm:GetParameter",
+                "ssm:GetParameters",
+                "secretsmanager:GetSecretValue",
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+      },
+      "logs": {
+        "httpApi": {
+          "accessLogging": false
+        }
+      },
+      "httpApi": {
+        "cors": {
+          "allowedOrigins": [
+            "*"
+          ],
+          "allowedHeaders": [
+            "Content-Type",
+            "api-key",
+            "Authorization",
+            "X-Requested-With"
+          ],
+          "allowedMethods": [
+            "GET",
+            "POST",
+            "PUT",
+            "DELETE",
+            "PATCH",
+            "OPTIONS"
+          ],
+          "allowCredentials": false
+        }
+      },
+      "versionFunctions": true,
+      "deploymentBucketObject": {
+        "name": "scrapmate-images",
+        "blockPublicAccess": true
+      },
+      "compiledCloudFormationTemplate": {
+        "AWSTemplateFormatVersion": "2010-09-09",
+        "Description": "The AWS CloudFormation template for this Serverless application",
+        "Resources": {
+          "AuthDashserviceLogGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "Properties": {
+              "LogGroupName": "/aws/lambda/scrapmate-microservices-dev-auth-service"
+            }
+          },
+          "ShopDashserviceLogGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "Properties": {
+              "LogGroupName": "/aws/lambda/scrapmate-microservices-dev-shop-service"
+            }
+          },
+          "ProductDashserviceLogGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "Properties": {
+              "LogGroupName": "/aws/lambda/scrapmate-microservices-dev-product-service"
+            }
+          },
+          "OrderDashserviceLogGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "Properties": {
+              "LogGroupName": "/aws/lambda/scrapmate-microservices-dev-order-service"
+            }
+          },
+          "DeliveryDashserviceLogGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "Properties": {
+              "LogGroupName": "/aws/lambda/scrapmate-microservices-dev-delivery-service"
+            }
+          },
+          "UserDashserviceLogGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "Properties": {
+              "LogGroupName": "/aws/lambda/scrapmate-microservices-dev-user-service"
+            }
+          },
+          "NotificationDashserviceLogGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "Properties": {
+              "LogGroupName": "/aws/lambda/scrapmate-microservices-dev-notification-service"
+            }
+          },
+          "UtilityDashserviceLogGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "Properties": {
+              "LogGroupName": "/aws/lambda/scrapmate-microservices-dev-utility-service"
+            }
+          },
+          "HealthDashserviceLogGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "Properties": {
+              "LogGroupName": "/aws/lambda/scrapmate-microservices-dev-health-service"
+            }
+          },
+          "IamRoleLambdaExecution": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+              "AssumeRolePolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Principal": {
+                      "Service": [
+                        "lambda.amazonaws.com"
+                      ]
+                    },
+                    "Action": [
+                      "sts:AssumeRole"
+                    ]
+                  }
+                ]
+              },
+              "Policies": [
+                {
+                  "PolicyName": {
+                    "Fn::Join": [
+                      "-",
+                      [
+                        "scrapmate-microservices",
+                        "dev",
+                        "lambda"
+                      ]
+                    ]
+                  },
+                  "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "logs:CreateLogStream",
+                          "logs:CreateLogGroup",
+                          "logs:TagResource"
+                        ],
+                        "Resource": [
+                          {
+                            "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/scrapmate-microservices-dev*:*"
+                          }
+                        ]
+                      },
+                      {
+                        "Effect": "Allow",
+                        "Action": [
+                          "logs:PutLogEvents"
+                        ],
+                        "Resource": [
+                          {
+                            "Fn::Sub": "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/scrapmate-microservices-dev*:*:*"
+                          }
+                        ]
+                      },
+                      {
+                        "$ref": "$[\"service\"][\"provider\"][\"iam\"][\"role\"][\"statements\"][0]"
+                      }
+                    ]
+                  }
+                }
+              ],
+              "Path": "/",
+              "RoleName": {
+                "Fn::Join": [
+                  "-",
+                  [
+                    "scrapmate-microservices",
+                    "dev",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    "lambdaRole"
+                  ]
+                ]
+              }
+            }
+          },
+          "AuthDashserviceLambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+              "Code": {
+                "S3Bucket": "scrapmate-images",
+                "S3Key": "serverless/scrapmate-microservices/dev/1763461294476-2025-11-18T10:21:34.476Z/auth-service.zip"
+              },
+              "Handler": "services/auth/handler.handler",
+              "Runtime": "nodejs20.x",
+              "FunctionName": "scrapmate-microservices-dev-auth-service",
+              "MemorySize": 512,
+              "Timeout": 30,
+              "Description": "Authentication and user registration service",
+              "Environment": {
+                "Variables": {
+                  "NODE_ENV": "production",
+                  "AWS_REGION": "ap-south-1",
+                  "API_KEY": "zyubkfzeumeoviaqzcsrvfwdzbiwnlnn",
+                  "SESSION_SECRET": "scrapmate-session-secret-change-in-production",
+                  "JWT_SECRET": "scrapmate-jwt-secret-change-in-production",
+                  "S3_BUCKET_NAME": "scrapmate-images",
+                  "REDIS_URL": "",
+                  "REDIS_TOKEN": ""
+                }
+              },
+              "Role": {
+                "Fn::GetAtt": [
+                  "IamRoleLambdaExecution",
+                  "Arn"
+                ]
+              }
+            },
+            "DependsOn": [
+              "AuthDashserviceLogGroup"
+            ]
+          },
+          "ShopDashserviceLambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+              "Code": {
+                "S3Bucket": "scrapmate-images",
+                "S3Key": "serverless/scrapmate-microservices/dev/1763461294476-2025-11-18T10:21:34.476Z/shop-service.zip"
+              },
+              "Handler": "services/shop/handler.handler",
+              "Runtime": "nodejs20.x",
+              "FunctionName": "scrapmate-microservices-dev-shop-service",
+              "MemorySize": 512,
+              "Timeout": 30,
+              "Description": "Shop management service",
+              "Environment": {
+                "Variables": {
+                  "NODE_ENV": "production",
+                  "AWS_REGION": "ap-south-1",
+                  "API_KEY": "zyubkfzeumeoviaqzcsrvfwdzbiwnlnn",
+                  "SESSION_SECRET": "scrapmate-session-secret-change-in-production",
+                  "JWT_SECRET": "scrapmate-jwt-secret-change-in-production",
+                  "S3_BUCKET_NAME": "scrapmate-images",
+                  "REDIS_URL": "",
+                  "REDIS_TOKEN": ""
+                }
+              },
+              "Role": {
+                "Fn::GetAtt": [
+                  "IamRoleLambdaExecution",
+                  "Arn"
+                ]
+              }
+            },
+            "DependsOn": [
+              "ShopDashserviceLogGroup"
+            ]
+          },
+          "ProductDashserviceLambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+              "Code": {
+                "S3Bucket": "scrapmate-images",
+                "S3Key": "serverless/scrapmate-microservices/dev/1763461294476-2025-11-18T10:21:34.476Z/product-service.zip"
+              },
+              "Handler": "services/product/handler.handler",
+              "Runtime": "nodejs20.x",
+              "FunctionName": "scrapmate-microservices-dev-product-service",
+              "MemorySize": 512,
+              "Timeout": 30,
+              "Description": "Product and category management service",
+              "Environment": {
+                "Variables": {
+                  "NODE_ENV": "production",
+                  "AWS_REGION": "ap-south-1",
+                  "API_KEY": "zyubkfzeumeoviaqzcsrvfwdzbiwnlnn",
+                  "SESSION_SECRET": "scrapmate-session-secret-change-in-production",
+                  "JWT_SECRET": "scrapmate-jwt-secret-change-in-production",
+                  "S3_BUCKET_NAME": "scrapmate-images",
+                  "REDIS_URL": "",
+                  "REDIS_TOKEN": ""
+                }
+              },
+              "Role": {
+                "Fn::GetAtt": [
+                  "IamRoleLambdaExecution",
+                  "Arn"
+                ]
+              }
+            },
+            "DependsOn": [
+              "ProductDashserviceLogGroup"
+            ]
+          },
+          "OrderDashserviceLambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+              "Code": {
+                "S3Bucket": "scrapmate-images",
+                "S3Key": "serverless/scrapmate-microservices/dev/1763461294476-2025-11-18T10:21:34.476Z/order-service.zip"
+              },
+              "Handler": "services/order/handler.handler",
+              "Runtime": "nodejs20.x",
+              "FunctionName": "scrapmate-microservices-dev-order-service",
+              "MemorySize": 1024,
+              "Timeout": 30,
+              "Description": "Order management service",
+              "Environment": {
+                "Variables": {
+                  "NODE_ENV": "production",
+                  "AWS_REGION": "ap-south-1",
+                  "API_KEY": "zyubkfzeumeoviaqzcsrvfwdzbiwnlnn",
+                  "SESSION_SECRET": "scrapmate-session-secret-change-in-production",
+                  "JWT_SECRET": "scrapmate-jwt-secret-change-in-production",
+                  "S3_BUCKET_NAME": "scrapmate-images",
+                  "REDIS_URL": "",
+                  "REDIS_TOKEN": ""
+                }
+              },
+              "Role": {
+                "Fn::GetAtt": [
+                  "IamRoleLambdaExecution",
+                  "Arn"
+                ]
+              }
+            },
+            "DependsOn": [
+              "OrderDashserviceLogGroup"
+            ]
+          },
+          "DeliveryDashserviceLambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+              "Code": {
+                "S3Bucket": "scrapmate-images",
+                "S3Key": "serverless/scrapmate-microservices/dev/1763461294476-2025-11-18T10:21:34.476Z/delivery-service.zip"
+              },
+              "Handler": "services/delivery/handler.handler",
+              "Runtime": "nodejs20.x",
+              "FunctionName": "scrapmate-microservices-dev-delivery-service",
+              "MemorySize": 512,
+              "Timeout": 30,
+              "Description": "Delivery boy management service",
+              "Environment": {
+                "Variables": {
+                  "NODE_ENV": "production",
+                  "AWS_REGION": "ap-south-1",
+                  "API_KEY": "zyubkfzeumeoviaqzcsrvfwdzbiwnlnn",
+                  "SESSION_SECRET": "scrapmate-session-secret-change-in-production",
+                  "JWT_SECRET": "scrapmate-jwt-secret-change-in-production",
+                  "S3_BUCKET_NAME": "scrapmate-images",
+                  "REDIS_URL": "",
+                  "REDIS_TOKEN": ""
+                }
+              },
+              "Role": {
+                "Fn::GetAtt": [
+                  "IamRoleLambdaExecution",
+                  "Arn"
+                ]
+              }
+            },
+            "DependsOn": [
+              "DeliveryDashserviceLogGroup"
+            ]
+          },
+          "UserDashserviceLambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+              "Code": {
+                "S3Bucket": "scrapmate-images",
+                "S3Key": "serverless/scrapmate-microservices/dev/1763461294476-2025-11-18T10:21:34.476Z/user-service.zip"
+              },
+              "Handler": "services/user/handler.handler",
+              "Runtime": "nodejs20.x",
+              "FunctionName": "scrapmate-microservices-dev-user-service",
+              "MemorySize": 512,
+              "Timeout": 30,
+              "Description": "User profile and FCM token management service",
+              "Environment": {
+                "Variables": {
+                  "NODE_ENV": "production",
+                  "AWS_REGION": "ap-south-1",
+                  "API_KEY": "zyubkfzeumeoviaqzcsrvfwdzbiwnlnn",
+                  "SESSION_SECRET": "scrapmate-session-secret-change-in-production",
+                  "JWT_SECRET": "scrapmate-jwt-secret-change-in-production",
+                  "S3_BUCKET_NAME": "scrapmate-images",
+                  "REDIS_URL": "",
+                  "REDIS_TOKEN": ""
+                }
+              },
+              "Role": {
+                "Fn::GetAtt": [
+                  "IamRoleLambdaExecution",
+                  "Arn"
+                ]
+              }
+            },
+            "DependsOn": [
+              "UserDashserviceLogGroup"
+            ]
+          },
+          "NotificationDashserviceLambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+              "Code": {
+                "S3Bucket": "scrapmate-images",
+                "S3Key": "serverless/scrapmate-microservices/dev/1763461294476-2025-11-18T10:21:34.476Z/notification-service.zip"
+              },
+              "Handler": "services/notification/handler.handler",
+              "Runtime": "nodejs20.x",
+              "FunctionName": "scrapmate-microservices-dev-notification-service",
+              "MemorySize": 256,
+              "Timeout": 30,
+              "Description": "Notification management service",
+              "Environment": {
+                "Variables": {
+                  "NODE_ENV": "production",
+                  "AWS_REGION": "ap-south-1",
+                  "API_KEY": "zyubkfzeumeoviaqzcsrvfwdzbiwnlnn",
+                  "SESSION_SECRET": "scrapmate-session-secret-change-in-production",
+                  "JWT_SECRET": "scrapmate-jwt-secret-change-in-production",
+                  "S3_BUCKET_NAME": "scrapmate-images",
+                  "REDIS_URL": "",
+                  "REDIS_TOKEN": ""
+                }
+              },
+              "Role": {
+                "Fn::GetAtt": [
+                  "IamRoleLambdaExecution",
+                  "Arn"
+                ]
+              }
+            },
+            "DependsOn": [
+              "NotificationDashserviceLogGroup"
+            ]
+          },
+          "UtilityDashserviceLambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+              "Code": {
+                "S3Bucket": "scrapmate-images",
+                "S3Key": "serverless/scrapmate-microservices/dev/1763461294476-2025-11-18T10:21:34.476Z/utility-service.zip"
+              },
+              "Handler": "services/utility/handler.handler",
+              "Runtime": "nodejs20.x",
+              "FunctionName": "scrapmate-microservices-dev-utility-service",
+              "MemorySize": 512,
+              "Timeout": 30,
+              "Description": "Utility and helper functions service",
+              "Environment": {
+                "Variables": {
+                  "NODE_ENV": "production",
+                  "AWS_REGION": "ap-south-1",
+                  "API_KEY": "zyubkfzeumeoviaqzcsrvfwdzbiwnlnn",
+                  "SESSION_SECRET": "scrapmate-session-secret-change-in-production",
+                  "JWT_SECRET": "scrapmate-jwt-secret-change-in-production",
+                  "S3_BUCKET_NAME": "scrapmate-images",
+                  "REDIS_URL": "",
+                  "REDIS_TOKEN": ""
+                }
+              },
+              "Role": {
+                "Fn::GetAtt": [
+                  "IamRoleLambdaExecution",
+                  "Arn"
+                ]
+              }
+            },
+            "DependsOn": [
+              "UtilityDashserviceLogGroup"
+            ]
+          },
+          "HealthDashserviceLambdaFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+              "Code": {
+                "S3Bucket": "scrapmate-images",
+                "S3Key": "serverless/scrapmate-microservices/dev/1763461294476-2025-11-18T10:21:34.476Z/health-service.zip"
+              },
+              "Handler": "services/health/handler.handler",
+              "Runtime": "nodejs20.x",
+              "FunctionName": "scrapmate-microservices-dev-health-service",
+              "MemorySize": 128,
+              "Timeout": 10,
+              "Description": "Health check and test endpoints",
+              "Environment": {
+                "Variables": {
+                  "NODE_ENV": "production",
+                  "AWS_REGION": "ap-south-1",
+                  "API_KEY": "zyubkfzeumeoviaqzcsrvfwdzbiwnlnn",
+                  "SESSION_SECRET": "scrapmate-session-secret-change-in-production",
+                  "JWT_SECRET": "scrapmate-jwt-secret-change-in-production",
+                  "S3_BUCKET_NAME": "scrapmate-images",
+                  "REDIS_URL": "",
+                  "REDIS_TOKEN": ""
+                }
+              },
+              "Role": {
+                "Fn::GetAtt": [
+                  "IamRoleLambdaExecution",
+                  "Arn"
+                ]
+              }
+            },
+            "DependsOn": [
+              "HealthDashserviceLogGroup"
+            ]
+          },
+          "AuthDashserviceLambdaVersionSnWdklXkWielmTtGksg7xrHJRW8KVOf4KuZFQNlws": {
+            "Type": "AWS::Lambda::Version",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+              "FunctionName": {
+                "Ref": "AuthDashserviceLambdaFunction"
+              },
+              "CodeSha256": "j9JuiNk8rHt91eVYrNW7HlBZ8d1srxQkh3LapbHP5Xo=",
+              "Description": "Authentication and user registration service"
+            }
+          },
+          "ProductDashserviceLambdaVersionKF54mHXni2oW6XxDEnI7lIOxD1BGq7fpgcZyW4tP4g": {
+            "Type": "AWS::Lambda::Version",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+              "FunctionName": {
+                "Ref": "ProductDashserviceLambdaFunction"
+              },
+              "CodeSha256": "j9JuiNk8rHt91eVYrNW7HlBZ8d1srxQkh3LapbHP5Xo=",
+              "Description": "Product and category management service"
+            }
+          },
+          "ShopDashserviceLambdaVersionPtA1SZSSl02uLkiJCKK53h9c1UaLzTPRv5ZLKSHCflM": {
+            "Type": "AWS::Lambda::Version",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+              "FunctionName": {
+                "Ref": "ShopDashserviceLambdaFunction"
+              },
+              "CodeSha256": "j9JuiNk8rHt91eVYrNW7HlBZ8d1srxQkh3LapbHP5Xo=",
+              "Description": "Shop management service"
+            }
+          },
+          "OrderDashserviceLambdaVersionMi9XaQ2zB5iCeHvpYOBE5bMujLpmGC9vuunohUxgk": {
+            "Type": "AWS::Lambda::Version",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+              "FunctionName": {
+                "Ref": "OrderDashserviceLambdaFunction"
+              },
+              "CodeSha256": "j9JuiNk8rHt91eVYrNW7HlBZ8d1srxQkh3LapbHP5Xo=",
+              "Description": "Order management service"
+            }
+          },
+          "DeliveryDashserviceLambdaVersionuqIAXLPkgelVRbR5YQDk8AUFNxYdgvJd45P2WNGQ": {
+            "Type": "AWS::Lambda::Version",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+              "FunctionName": {
+                "Ref": "DeliveryDashserviceLambdaFunction"
+              },
+              "CodeSha256": "j9JuiNk8rHt91eVYrNW7HlBZ8d1srxQkh3LapbHP5Xo=",
+              "Description": "Delivery boy management service"
+            }
+          },
+          "UtilityDashserviceLambdaVersionfG4ixgWUCSAp4Fyg95oa65x6mTpWyXf61bmY9Q2LKo": {
+            "Type": "AWS::Lambda::Version",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+              "FunctionName": {
+                "Ref": "UtilityDashserviceLambdaFunction"
+              },
+              "CodeSha256": "j9JuiNk8rHt91eVYrNW7HlBZ8d1srxQkh3LapbHP5Xo=",
+              "Description": "Utility and helper functions service"
+            }
+          },
+          "UserDashserviceLambdaVersionbyT9A12FqOA0zqP9czuFkEWfU4tVnFX3INuPr1mwjQI": {
+            "Type": "AWS::Lambda::Version",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+              "FunctionName": {
+                "Ref": "UserDashserviceLambdaFunction"
+              },
+              "CodeSha256": "j9JuiNk8rHt91eVYrNW7HlBZ8d1srxQkh3LapbHP5Xo=",
+              "Description": "User profile and FCM token management service"
+            }
+          },
+          "NotificationDashserviceLambdaVersionENQPpRdgeTaZ1SAET2nwZqwKOLwv8G7Xi3JbOIS0": {
+            "Type": "AWS::Lambda::Version",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+              "FunctionName": {
+                "Ref": "NotificationDashserviceLambdaFunction"
+              },
+              "CodeSha256": "j9JuiNk8rHt91eVYrNW7HlBZ8d1srxQkh3LapbHP5Xo=",
+              "Description": "Notification management service"
+            }
+          },
+          "HealthDashserviceLambdaVersionkMxTOu4C3ulAX86C9PcgWJ3w8Ty28PXGcfHNFmYZB34": {
+            "Type": "AWS::Lambda::Version",
+            "DeletionPolicy": "Retain",
+            "Properties": {
+              "FunctionName": {
+                "Ref": "HealthDashserviceLambdaFunction"
+              },
+              "CodeSha256": "j9JuiNk8rHt91eVYrNW7HlBZ8d1srxQkh3LapbHP5Xo=",
+              "Description": "Health check and test endpoints"
+            }
+          },
+          "HttpApi": {
+            "Type": "AWS::ApiGatewayV2::Api",
+            "Properties": {
+              "Name": "dev-scrapmate-microservices",
+              "ProtocolType": "HTTP",
+              "CorsConfiguration": {
+                "AllowHeaders": [
+                  "Content-Type",
+                  "api-key",
+                  "Authorization",
+                  "X-Requested-With"
+                ],
+                "AllowMethods": [
+                  "GET",
+                  "POST",
+                  "PUT",
+                  "DELETE",
+                  "PATCH",
+                  "OPTIONS"
+                ],
+                "AllowOrigins": [
+                  "*"
+                ]
+              }
+            }
+          },
+          "HttpApiLogGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "Properties": {
+              "LogGroupName": "/aws/http-api/scrapmate-microservices-dev"
+            }
+          },
+          "HttpApiStage": {
+            "Type": "AWS::ApiGatewayV2::Stage",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "StageName": "$default",
+              "AutoDeploy": true,
+              "DefaultRouteSettings": {
+                "DetailedMetricsEnabled": false
+              },
+              "AccessLogSettings": {
+                "DestinationArn": {
+                  "Fn::GetAtt": [
+                    "HttpApiLogGroup",
+                    "Arn"
+                  ]
+                },
+                "Format": "{\"requestId\":\"$context.requestId\",\"ip\":\"$context.identity.sourceIp\",\"requestTime\":\"$context.requestTime\",\"httpMethod\":\"$context.httpMethod\",\"routeKey\":\"$context.routeKey\",\"status\":\"$context.status\",\"protocol\":\"$context.protocol\",\"responseLength\":\"$context.responseLength\"}"
+              }
+            },
+            "DependsOn": "HttpApiLogGroup"
+          },
+          "AuthDashserviceLambdaPermissionHttpApi": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+              "FunctionName": {
+                "Fn::GetAtt": [
+                  "AuthDashserviceLambdaFunction",
+                  "Arn"
+                ]
+              },
+              "Action": "lambda:InvokeFunction",
+              "Principal": "apigateway.amazonaws.com",
+              "SourceArn": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":execute-api:",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId"
+                    },
+                    ":",
+                    {
+                      "Ref": "HttpApi"
+                    },
+                    "/*"
+                  ]
+                ]
+              }
+            }
+          },
+          "HttpApiIntegrationAuthDashservice": {
+            "Type": "AWS::ApiGatewayV2::Integration",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "IntegrationType": "AWS_PROXY",
+              "IntegrationUri": {
+                "$ref": "$[\"service\"][\"provider\"][\"compiledCloudFormationTemplate\"][\"Resources\"][\"AuthDashserviceLambdaPermissionHttpApi\"][\"Properties\"][\"FunctionName\"]"
+              },
+              "PayloadFormatVersion": "2.0",
+              "TimeoutInMillis": 30000
+            }
+          },
+          "HttpApiRouteAnyApiAuthProxyVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "ANY /api/auth/{proxy+}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationAuthDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationAuthDashservice"
+          },
+          "HttpApiRoutePostApiLogin": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/login",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationAuthDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationAuthDashservice"
+          },
+          "HttpApiRoutePostApiDologin": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/dologin",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationAuthDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationAuthDashservice"
+          },
+          "HttpApiRoutePostApiUsersregister": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/users_register",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationAuthDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationAuthDashservice"
+          },
+          "HttpApiRoutePostApiUsermobverification": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/user_mob_verification",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationAuthDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationAuthDashservice"
+          },
+          "HttpApiRouteGetApiLoginappMobVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/login_app/{mob}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationAuthDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationAuthDashservice"
+          },
+          "ShopDashserviceLambdaPermissionHttpApi": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+              "FunctionName": {
+                "Fn::GetAtt": [
+                  "ShopDashserviceLambdaFunction",
+                  "Arn"
+                ]
+              },
+              "Action": "lambda:InvokeFunction",
+              "Principal": "apigateway.amazonaws.com",
+              "SourceArn": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":execute-api:",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId"
+                    },
+                    ":",
+                    {
+                      "Ref": "HttpApi"
+                    },
+                    "/*"
+                  ]
+                ]
+              }
+            }
+          },
+          "HttpApiIntegrationShopDashservice": {
+            "Type": "AWS::ApiGatewayV2::Integration",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "IntegrationType": "AWS_PROXY",
+              "IntegrationUri": {
+                "$ref": "$[\"service\"][\"provider\"][\"compiledCloudFormationTemplate\"][\"Resources\"][\"ShopDashserviceLambdaPermissionHttpApi\"][\"Properties\"][\"FunctionName\"]"
+              },
+              "PayloadFormatVersion": "2.0",
+              "TimeoutInMillis": 30000
+            }
+          },
+          "HttpApiRouteAnyApiShopProxyVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "ANY /api/shop/{proxy+}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationShopDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationShopDashservice"
+          },
+          "HttpApiRoutePostApiShopimageupload": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/shop_image_upload",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationShopDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationShopDashservice"
+          },
+          "HttpApiRouteGetApiShopimagedeleteIdVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/shop_image_delete/{id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationShopDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationShopDashservice"
+          },
+          "HttpApiRouteGetApiShopimagelistIdVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/shop_image_list/{id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationShopDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationShopDashservice"
+          },
+          "HttpApiRouteGetApiShopcatlistIdVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/shop_cat_list/{id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationShopDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationShopDashservice"
+          },
+          "HttpApiRouteGetApiShopordersShopidVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/shop_orders/{shop_id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationShopDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationShopDashservice"
+          },
+          "HttpApiRouteGetApiShopordersShopidVarStatusVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/shop_orders/{shop_id}/{status}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationShopDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationShopDashservice"
+          },
+          "HttpApiRouteGetApiShopdashcountsIdVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/shop_dash_counts/{id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationShopDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationShopDashservice"
+          },
+          "HttpApiRouteGetApiShopreviewsShopidVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/shopReviews/{shop_id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationShopDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationShopDashservice"
+          },
+          "HttpApiRoutePostApiShopslistforsale": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/shops_list_for_sale",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationShopDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationShopDashservice"
+          },
+          "HttpApiRoutePostApiShopadstypeedit": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/shop_ads_type_edit",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationShopDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationShopDashservice"
+          },
+          "ProductDashserviceLambdaPermissionHttpApi": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+              "FunctionName": {
+                "Fn::GetAtt": [
+                  "ProductDashserviceLambdaFunction",
+                  "Arn"
+                ]
+              },
+              "Action": "lambda:InvokeFunction",
+              "Principal": "apigateway.amazonaws.com",
+              "SourceArn": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":execute-api:",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId"
+                    },
+                    ":",
+                    {
+                      "Ref": "HttpApi"
+                    },
+                    "/*"
+                  ]
+                ]
+              }
+            }
+          },
+          "HttpApiIntegrationProductDashservice": {
+            "Type": "AWS::ApiGatewayV2::Integration",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "IntegrationType": "AWS_PROXY",
+              "IntegrationUri": {
+                "$ref": "$[\"service\"][\"provider\"][\"compiledCloudFormationTemplate\"][\"Resources\"][\"ProductDashserviceLambdaPermissionHttpApi\"][\"Properties\"][\"FunctionName\"]"
+              },
+              "PayloadFormatVersion": "2.0",
+              "TimeoutInMillis": 30000
+            }
+          },
+          "HttpApiRouteAnyApiProductProxyVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "ANY /api/product/{proxy+}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationProductDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationProductDashservice"
+          },
+          "HttpApiRoutePostApiShopcatcreate": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/shop_cat_create",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationProductDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationProductDashservice"
+          },
+          "HttpApiRoutePostApiShopcatedit": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/shop_cat_edit",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationProductDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationProductDashservice"
+          },
+          "HttpApiRouteGetApiShopcatdeleteIdVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/shop_cat_delete/{id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationProductDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationProductDashservice"
+          },
+          "HttpApiRouteGetApiAllprocategory": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/all_pro_category",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationProductDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationProductDashservice"
+          },
+          "HttpApiRouteGetApiCategoryimglist": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/category_img_list",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationProductDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationProductDashservice"
+          },
+          "HttpApiRoutePostApiShopitemcreate": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/shop_item_create",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationProductDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationProductDashservice"
+          },
+          "HttpApiRoutePostApiShopitemeditIdVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/shop_item_edit/{id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationProductDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationProductDashservice"
+          },
+          "HttpApiRouteGetApiShopitemdeleteIdVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/shop_item_delete/{id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationProductDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationProductDashservice"
+          },
+          "HttpApiRouteGetApiShopitemlistShopidVarCatidVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/shop_item_list/{shop_id}/{cat_id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationProductDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationProductDashservice"
+          },
+          "HttpApiRoutePostApiItemslistforsale": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/items_list_for_sale",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationProductDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationProductDashservice"
+          },
+          "OrderDashserviceLambdaPermissionHttpApi": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+              "FunctionName": {
+                "Fn::GetAtt": [
+                  "OrderDashserviceLambdaFunction",
+                  "Arn"
+                ]
+              },
+              "Action": "lambda:InvokeFunction",
+              "Principal": "apigateway.amazonaws.com",
+              "SourceArn": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":execute-api:",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId"
+                    },
+                    ":",
+                    {
+                      "Ref": "HttpApi"
+                    },
+                    "/*"
+                  ]
+                ]
+              }
+            }
+          },
+          "HttpApiIntegrationOrderDashservice": {
+            "Type": "AWS::ApiGatewayV2::Integration",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "IntegrationType": "AWS_PROXY",
+              "IntegrationUri": {
+                "$ref": "$[\"service\"][\"provider\"][\"compiledCloudFormationTemplate\"][\"Resources\"][\"OrderDashserviceLambdaPermissionHttpApi\"][\"Properties\"][\"FunctionName\"]"
+              },
+              "PayloadFormatVersion": "2.0",
+              "TimeoutInMillis": 30000
+            }
+          },
+          "HttpApiRouteAnyApiOrderProxyVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "ANY /api/order/{proxy+}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationOrderDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationOrderDashservice"
+          },
+          "HttpApiRouteGetApiOrderdetailsOrdernoVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/order_details/{order_no}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationOrderDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationOrderDashservice"
+          },
+          "HttpApiRouteGetApiCustomerordersCustomeridVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/customer_orders/{customer_id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationOrderDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationOrderDashservice"
+          },
+          "HttpApiRouteGetApiCustomerpendingordersCustomeridVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/customer_pending_orders/{customer_id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationOrderDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationOrderDashservice"
+          },
+          "HttpApiRoutePostApiCustorderplaceing": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/cust_order_placeing",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationOrderDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationOrderDashservice"
+          },
+          "HttpApiRoutePostApiOrderstatuschange": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/order_status_change",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationOrderDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationOrderDashservice"
+          },
+          "HttpApiRoutePostApiCustorderrating": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/custOrderRating",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationOrderDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationOrderDashservice"
+          },
+          "DeliveryDashserviceLambdaPermissionHttpApi": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+              "FunctionName": {
+                "Fn::GetAtt": [
+                  "DeliveryDashserviceLambdaFunction",
+                  "Arn"
+                ]
+              },
+              "Action": "lambda:InvokeFunction",
+              "Principal": "apigateway.amazonaws.com",
+              "SourceArn": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":execute-api:",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId"
+                    },
+                    ":",
+                    {
+                      "Ref": "HttpApi"
+                    },
+                    "/*"
+                  ]
+                ]
+              }
+            }
+          },
+          "HttpApiIntegrationDeliveryDashservice": {
+            "Type": "AWS::ApiGatewayV2::Integration",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "IntegrationType": "AWS_PROXY",
+              "IntegrationUri": {
+                "$ref": "$[\"service\"][\"provider\"][\"compiledCloudFormationTemplate\"][\"Resources\"][\"DeliveryDashserviceLambdaPermissionHttpApi\"][\"Properties\"][\"FunctionName\"]"
+              },
+              "PayloadFormatVersion": "2.0",
+              "TimeoutInMillis": 30000
+            }
+          },
+          "HttpApiRouteAnyApiDeliveryProxyVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "ANY /api/delivery/{proxy+}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationDeliveryDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationDeliveryDashservice"
+          },
+          "HttpApiRoutePostApiDelvboyadd": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/delv_boy_add",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationDeliveryDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationDeliveryDashservice"
+          },
+          "HttpApiRouteGetApiDeliveryboylistIdVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/delivery_boy_list/{id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationDeliveryDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationDeliveryDashservice"
+          },
+          "HttpApiRoutePostApiDeliveryboyedit": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/delivery_boy_edit",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationDeliveryDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationDeliveryDashservice"
+          },
+          "HttpApiRouteGetApiDelvboydeleteDeliveryboyidVarShopidVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/delv_boy_delete/{deliveryBoyID}/{shop_id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationDeliveryDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationDeliveryDashservice"
+          },
+          "HttpApiRouteGetApiDelvordersDelvboyidVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/delv_orders/{delv_boy_id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationDeliveryDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationDeliveryDashservice"
+          },
+          "HttpApiRouteGetApiDelvcompletedordersDelvboyidVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/delv_completed_orders/{delv_boy_id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationDeliveryDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationDeliveryDashservice"
+          },
+          "HttpApiRouteGetApiDelvboydashcountsIdVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/delv_boy_dash_counts/{id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationDeliveryDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationDeliveryDashservice"
+          },
+          "UserDashserviceLambdaPermissionHttpApi": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+              "FunctionName": {
+                "Fn::GetAtt": [
+                  "UserDashserviceLambdaFunction",
+                  "Arn"
+                ]
+              },
+              "Action": "lambda:InvokeFunction",
+              "Principal": "apigateway.amazonaws.com",
+              "SourceArn": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":execute-api:",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId"
+                    },
+                    ":",
+                    {
+                      "Ref": "HttpApi"
+                    },
+                    "/*"
+                  ]
+                ]
+              }
+            }
+          },
+          "HttpApiIntegrationUserDashservice": {
+            "Type": "AWS::ApiGatewayV2::Integration",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "IntegrationType": "AWS_PROXY",
+              "IntegrationUri": {
+                "$ref": "$[\"service\"][\"provider\"][\"compiledCloudFormationTemplate\"][\"Resources\"][\"UserDashserviceLambdaPermissionHttpApi\"][\"Properties\"][\"FunctionName\"]"
+              },
+              "PayloadFormatVersion": "2.0",
+              "TimeoutInMillis": 30000
+            }
+          },
+          "HttpApiRouteAnyApiUserProxyVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "ANY /api/user/{proxy+}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUserDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUserDashservice"
+          },
+          "HttpApiRouteGetApiUsersprofileviewIdVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/users_profile_view/{id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUserDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUserDashservice"
+          },
+          "HttpApiRouteGetApiGetuserbynameNameVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/get_user_by_name/{name}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUserDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUserDashservice"
+          },
+          "HttpApiRoutePostApiUserprofilepicedit": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/user_profile_pic_edit",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUserDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUserDashservice"
+          },
+          "HttpApiRoutePostApiUserproedit": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/userProEdit",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUserDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUserDashservice"
+          },
+          "HttpApiRouteGetApiCustdashcountsIdVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/cust_dash_counts/{id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUserDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUserDashservice"
+          },
+          "HttpApiRoutePostApiCustadstypeedit": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/cust_ads_type_edit",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUserDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUserDashservice"
+          },
+          "HttpApiRoutePostApiFcmtokenstore": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/fcm_token_store",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUserDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUserDashservice"
+          },
+          "HttpApiRouteGetApiFcmtokenclearUseridVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/fcmTokenClear/{userid}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUserDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUserDashservice"
+          },
+          "NotificationDashserviceLambdaPermissionHttpApi": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+              "FunctionName": {
+                "Fn::GetAtt": [
+                  "NotificationDashserviceLambdaFunction",
+                  "Arn"
+                ]
+              },
+              "Action": "lambda:InvokeFunction",
+              "Principal": "apigateway.amazonaws.com",
+              "SourceArn": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":execute-api:",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId"
+                    },
+                    ":",
+                    {
+                      "Ref": "HttpApi"
+                    },
+                    "/*"
+                  ]
+                ]
+              }
+            }
+          },
+          "HttpApiIntegrationNotificationDashservice": {
+            "Type": "AWS::ApiGatewayV2::Integration",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "IntegrationType": "AWS_PROXY",
+              "IntegrationUri": {
+                "$ref": "$[\"service\"][\"provider\"][\"compiledCloudFormationTemplate\"][\"Resources\"][\"NotificationDashserviceLambdaPermissionHttpApi\"][\"Properties\"][\"FunctionName\"]"
+              },
+              "PayloadFormatVersion": "2.0",
+              "TimeoutInMillis": 30000
+            }
+          },
+          "HttpApiRouteAnyApiNotificationProxyVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "ANY /api/notification/{proxy+}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationNotificationDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationNotificationDashservice"
+          },
+          "HttpApiRouteGetApiNotibyidIdVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/noti_by_id/{id}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationNotificationDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationNotificationDashservice"
+          },
+          "HttpApiRouteGetApiNotibyidIdVarOffsetVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/noti_by_id/{id}/{offset}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationNotificationDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationNotificationDashservice"
+          },
+          "HttpApiRoutePostApiNotifread": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/notif_read",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationNotificationDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationNotificationDashservice"
+          },
+          "UtilityDashserviceLambdaPermissionHttpApi": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+              "FunctionName": {
+                "Fn::GetAtt": [
+                  "UtilityDashserviceLambdaFunction",
+                  "Arn"
+                ]
+              },
+              "Action": "lambda:InvokeFunction",
+              "Principal": "apigateway.amazonaws.com",
+              "SourceArn": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":execute-api:",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId"
+                    },
+                    ":",
+                    {
+                      "Ref": "HttpApi"
+                    },
+                    "/*"
+                  ]
+                ]
+              }
+            }
+          },
+          "HttpApiIntegrationUtilityDashservice": {
+            "Type": "AWS::ApiGatewayV2::Integration",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "IntegrationType": "AWS_PROXY",
+              "IntegrationUri": {
+                "$ref": "$[\"service\"][\"provider\"][\"compiledCloudFormationTemplate\"][\"Resources\"][\"UtilityDashserviceLambdaPermissionHttpApi\"][\"Properties\"][\"FunctionName\"]"
+              },
+              "PayloadFormatVersion": "2.0",
+              "TimeoutInMillis": 30000
+            }
+          },
+          "HttpApiRouteAnyApiUtilityProxyVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "ANY /api/utility/{proxy+}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRoutePostApiGettable": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/get_table",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRoutePostApiGettablecondition": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/get_table_condition",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRouteGetApiCountrowTablenameVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/count_row/{table_name}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRouteGetApiKeywordsearchTableVarNameVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/keyword_search/{table}/{name}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRouteGetApiGetuserbyidUseridVarTableVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/get_user_by_id/{user_id}/{table}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRouteGetApiGetalltables": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/get_all_tables",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRoutePostApiSavecalllog": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/savecallLog",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRoutePostApiSavecalllogcust": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/savecallLogCust",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRoutePostApiSearchshopcalllogsave": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/searchShopCallLogSave",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRouteGetApiStateallow": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/stateAllow",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRouteGetApiPackagessub": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/packagesSub",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRoutePostApiSaveuserpackages": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/saveUserPackages",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRoutePostApiPaymenthistory": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/paymentHistory",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRouteGetApiThirdpartycredentials": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/thirdPartyCredentials",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRouteGetApiVersioncheckVersionVar": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/versionCheck/{version}",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRouteGetApiSmstesting": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/smstesting",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRoutePostApiPermanentdelete": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/PermanentDelete",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRoutePostApiFailedjobs": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/failedJobs",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRoutePostApiClearrediscache": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "POST /api/clear_redis_cache",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HttpApiRouteGetApiMetrics": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/metrics",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationUtilityDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationUtilityDashservice"
+          },
+          "HealthDashserviceLambdaPermissionHttpApi": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+              "FunctionName": {
+                "Fn::GetAtt": [
+                  "HealthDashserviceLambdaFunction",
+                  "Arn"
+                ]
+              },
+              "Action": "lambda:InvokeFunction",
+              "Principal": "apigateway.amazonaws.com",
+              "SourceArn": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:",
+                    {
+                      "Ref": "AWS::Partition"
+                    },
+                    ":execute-api:",
+                    {
+                      "Ref": "AWS::Region"
+                    },
+                    ":",
+                    {
+                      "Ref": "AWS::AccountId"
+                    },
+                    ":",
+                    {
+                      "Ref": "HttpApi"
+                    },
+                    "/*"
+                  ]
+                ]
+              }
+            }
+          },
+          "HttpApiIntegrationHealthDashservice": {
+            "Type": "AWS::ApiGatewayV2::Integration",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "IntegrationType": "AWS_PROXY",
+              "IntegrationUri": {
+                "$ref": "$[\"service\"][\"provider\"][\"compiledCloudFormationTemplate\"][\"Resources\"][\"HealthDashserviceLambdaPermissionHttpApi\"][\"Properties\"][\"FunctionName\"]"
+              },
+              "PayloadFormatVersion": "2.0",
+              "TimeoutInMillis": 30000
+            }
+          },
+          "HttpApiRouteGetApiHealth": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/health",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationHealthDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationHealthDashservice"
+          },
+          "HttpApiRouteGetApiTest": {
+            "Type": "AWS::ApiGatewayV2::Route",
+            "Properties": {
+              "ApiId": {
+                "Ref": "HttpApi"
+              },
+              "RouteKey": "GET /api/test",
+              "Target": {
+                "Fn::Join": [
+                  "/",
+                  [
+                    "integrations",
+                    {
+                      "Ref": "HttpApiIntegrationHealthDashservice"
+                    }
+                  ]
+                ]
+              }
+            },
+            "DependsOn": "HttpApiIntegrationHealthDashservice"
+          }
+        },
+        "Outputs": {
+          "ServerlessDeploymentBucketName": {
+            "Value": "scrapmate-images",
+            "Export": {
+              "Name": "sls-scrapmate-microservices-dev-ServerlessDeploymentBucketName"
+            }
+          },
+          "AuthDashserviceLambdaFunctionQualifiedArn": {
+            "Description": "Current Lambda function version",
+            "Value": {
+              "Ref": "AuthDashserviceLambdaVersionSnWdklXkWielmTtGksg7xrHJRW8KVOf4KuZFQNlws"
+            },
+            "Export": {
+              "Name": "sls-scrapmate-microservices-dev-AuthDashserviceLambdaFunctionQualifiedArn"
+            }
+          },
+          "ProductDashserviceLambdaFunctionQualifiedArn": {
+            "Description": "Current Lambda function version",
+            "Value": {
+              "Ref": "ProductDashserviceLambdaVersionKF54mHXni2oW6XxDEnI7lIOxD1BGq7fpgcZyW4tP4g"
+            },
+            "Export": {
+              "Name": "sls-scrapmate-microservices-dev-ProductDashserviceLambdaFunctionQualifiedArn"
+            }
+          },
+          "ShopDashserviceLambdaFunctionQualifiedArn": {
+            "Description": "Current Lambda function version",
+            "Value": {
+              "Ref": "ShopDashserviceLambdaVersionPtA1SZSSl02uLkiJCKK53h9c1UaLzTPRv5ZLKSHCflM"
+            },
+            "Export": {
+              "Name": "sls-scrapmate-microservices-dev-ShopDashserviceLambdaFunctionQualifiedArn"
+            }
+          },
+          "OrderDashserviceLambdaFunctionQualifiedArn": {
+            "Description": "Current Lambda function version",
+            "Value": {
+              "Ref": "OrderDashserviceLambdaVersionMi9XaQ2zB5iCeHvpYOBE5bMujLpmGC9vuunohUxgk"
+            },
+            "Export": {
+              "Name": "sls-scrapmate-microservices-dev-OrderDashserviceLambdaFunctionQualifiedArn"
+            }
+          },
+          "DeliveryDashserviceLambdaFunctionQualifiedArn": {
+            "Description": "Current Lambda function version",
+            "Value": {
+              "Ref": "DeliveryDashserviceLambdaVersionuqIAXLPkgelVRbR5YQDk8AUFNxYdgvJd45P2WNGQ"
+            },
+            "Export": {
+              "Name": "sls-scrapmate-microservices-dev-DeliveryDashserviceLambdaFunctionQualifiedArn"
+            }
+          },
+          "UtilityDashserviceLambdaFunctionQualifiedArn": {
+            "Description": "Current Lambda function version",
+            "Value": {
+              "Ref": "UtilityDashserviceLambdaVersionfG4ixgWUCSAp4Fyg95oa65x6mTpWyXf61bmY9Q2LKo"
+            },
+            "Export": {
+              "Name": "sls-scrapmate-microservices-dev-UtilityDashserviceLambdaFunctionQualifiedArn"
+            }
+          },
+          "UserDashserviceLambdaFunctionQualifiedArn": {
+            "Description": "Current Lambda function version",
+            "Value": {
+              "Ref": "UserDashserviceLambdaVersionbyT9A12FqOA0zqP9czuFkEWfU4tVnFX3INuPr1mwjQI"
+            },
+            "Export": {
+              "Name": "sls-scrapmate-microservices-dev-UserDashserviceLambdaFunctionQualifiedArn"
+            }
+          },
+          "NotificationDashserviceLambdaFunctionQualifiedArn": {
+            "Description": "Current Lambda function version",
+            "Value": {
+              "Ref": "NotificationDashserviceLambdaVersionENQPpRdgeTaZ1SAET2nwZqwKOLwv8G7Xi3JbOIS0"
+            },
+            "Export": {
+              "Name": "sls-scrapmate-microservices-dev-NotificationDashserviceLambdaFunctionQualifiedArn"
+            }
+          },
+          "HealthDashserviceLambdaFunctionQualifiedArn": {
+            "Description": "Current Lambda function version",
+            "Value": {
+              "Ref": "HealthDashserviceLambdaVersionkMxTOu4C3ulAX86C9PcgWJ3w8Ty28PXGcfHNFmYZB34"
+            },
+            "Export": {
+              "Name": "sls-scrapmate-microservices-dev-HealthDashserviceLambdaFunctionQualifiedArn"
+            }
+          },
+          "HttpApiId": {
+            "Description": "Id of the HTTP API",
+            "Value": {
+              "Ref": "HttpApi"
+            },
+            "Export": {
+              "Name": "sls-scrapmate-microservices-dev-HttpApiId"
+            }
+          },
+          "HttpApiUrl": {
+            "Description": "URL of the HTTP API",
+            "Value": {
+              "Fn::Join": [
+                "",
+                [
+                  "https://",
+                  {
+                    "Ref": "HttpApi"
+                  },
+                  ".execute-api.",
+                  {
+                    "Ref": "AWS::Region"
+                  },
+                  ".",
+                  {
+                    "Ref": "AWS::URLSuffix"
+                  }
+                ]
+              ]
+            },
+            "Export": {
+              "Name": "sls-scrapmate-microservices-dev-HttpApiUrl"
+            }
+          }
+        }
+      },
+      "vpc": {}
+    },
+    "custom": {
+      "serverless-offline": {
+        "httpPort": 3000,
+        "noPrependStageInUrl": true
+      }
+    },
+    "plugins": [
+      "serverless-offline"
+    ],
+    "pluginsData": {},
+    "functions": {
+      "auth-service": {
+        "handler": "services/auth/handler.handler",
+        "description": "Authentication and user registration service",
+        "memorySize": 512,
+        "timeout": 30,
+        "events": [
+          {
+            "httpApi": {
+              "path": "/api/auth/{proxy+}",
+              "method": "ANY"
+            },
+            "resolvedMethod": "ANY",
+            "resolvedPath": "/api/auth/{proxy+}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/login",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/login"
+          },
+          {
+            "httpApi": {
+              "path": "/api/dologin",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/dologin"
+          },
+          {
+            "httpApi": {
+              "path": "/api/users_register",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/users_register"
+          },
+          {
+            "httpApi": {
+              "path": "/api/user_mob_verification",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/user_mob_verification"
+          },
+          {
+            "httpApi": {
+              "path": "/api/login_app/{mob}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/login_app/{mob}"
+          }
+        ],
+        "name": "scrapmate-microservices-dev-auth-service",
+        "package": {
+          "artifact": "/Users/shijo/Documents/GitHub/SCRAPMATE-NODE-LAMBDA/.serverless/auth-service.zip"
+        },
+        "memory": 512,
+        "runtime": "nodejs20.x",
+        "vpc": {},
+        "versionLogicalId": "AuthDashserviceLambdaVersionSnWdklXkWielmTtGksg7xrHJRW8KVOf4KuZFQNlws"
+      },
+      "shop-service": {
+        "handler": "services/shop/handler.handler",
+        "description": "Shop management service",
+        "memorySize": 512,
+        "timeout": 30,
+        "events": [
+          {
+            "httpApi": {
+              "path": "/api/shop/{proxy+}",
+              "method": "ANY"
+            },
+            "resolvedMethod": "ANY",
+            "resolvedPath": "/api/shop/{proxy+}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shop_image_upload",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/shop_image_upload"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shop_image_delete/{id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/shop_image_delete/{id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shop_image_list/{id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/shop_image_list/{id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shop_cat_list/{id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/shop_cat_list/{id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shop_orders/{shop_id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/shop_orders/{shop_id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shop_orders/{shop_id}/{status}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/shop_orders/{shop_id}/{status}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shop_dash_counts/{id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/shop_dash_counts/{id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shopReviews/{shop_id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/shopReviews/{shop_id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shops_list_for_sale",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/shops_list_for_sale"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shop_ads_type_edit",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/shop_ads_type_edit"
+          }
+        ],
+        "name": "scrapmate-microservices-dev-shop-service",
+        "package": {
+          "artifact": "/Users/shijo/Documents/GitHub/SCRAPMATE-NODE-LAMBDA/.serverless/shop-service.zip"
+        },
+        "memory": 512,
+        "runtime": "nodejs20.x",
+        "vpc": {},
+        "versionLogicalId": "ShopDashserviceLambdaVersionPtA1SZSSl02uLkiJCKK53h9c1UaLzTPRv5ZLKSHCflM"
+      },
+      "product-service": {
+        "handler": "services/product/handler.handler",
+        "description": "Product and category management service",
+        "memorySize": 512,
+        "timeout": 30,
+        "events": [
+          {
+            "httpApi": {
+              "path": "/api/product/{proxy+}",
+              "method": "ANY"
+            },
+            "resolvedMethod": "ANY",
+            "resolvedPath": "/api/product/{proxy+}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shop_cat_create",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/shop_cat_create"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shop_cat_edit",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/shop_cat_edit"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shop_cat_delete/{id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/shop_cat_delete/{id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/all_pro_category",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/all_pro_category"
+          },
+          {
+            "httpApi": {
+              "path": "/api/category_img_list",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/category_img_list"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shop_item_create",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/shop_item_create"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shop_item_edit/{id}",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/shop_item_edit/{id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shop_item_delete/{id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/shop_item_delete/{id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/shop_item_list/{shop_id}/{cat_id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/shop_item_list/{shop_id}/{cat_id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/items_list_for_sale",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/items_list_for_sale"
+          }
+        ],
+        "name": "scrapmate-microservices-dev-product-service",
+        "package": {
+          "artifact": "/Users/shijo/Documents/GitHub/SCRAPMATE-NODE-LAMBDA/.serverless/product-service.zip"
+        },
+        "memory": 512,
+        "runtime": "nodejs20.x",
+        "vpc": {},
+        "versionLogicalId": "ProductDashserviceLambdaVersionKF54mHXni2oW6XxDEnI7lIOxD1BGq7fpgcZyW4tP4g"
+      },
+      "order-service": {
+        "handler": "services/order/handler.handler",
+        "description": "Order management service",
+        "memorySize": 1024,
+        "timeout": 30,
+        "events": [
+          {
+            "httpApi": {
+              "path": "/api/order/{proxy+}",
+              "method": "ANY"
+            },
+            "resolvedMethod": "ANY",
+            "resolvedPath": "/api/order/{proxy+}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/order_details/{order_no}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/order_details/{order_no}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/customer_orders/{customer_id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/customer_orders/{customer_id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/customer_pending_orders/{customer_id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/customer_pending_orders/{customer_id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/cust_order_placeing",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/cust_order_placeing"
+          },
+          {
+            "httpApi": {
+              "path": "/api/order_status_change",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/order_status_change"
+          },
+          {
+            "httpApi": {
+              "path": "/api/custOrderRating",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/custOrderRating"
+          }
+        ],
+        "name": "scrapmate-microservices-dev-order-service",
+        "package": {
+          "artifact": "/Users/shijo/Documents/GitHub/SCRAPMATE-NODE-LAMBDA/.serverless/order-service.zip"
+        },
+        "memory": 1024,
+        "runtime": "nodejs20.x",
+        "vpc": {},
+        "versionLogicalId": "OrderDashserviceLambdaVersionMi9XaQ2zB5iCeHvpYOBE5bMujLpmGC9vuunohUxgk"
+      },
+      "delivery-service": {
+        "handler": "services/delivery/handler.handler",
+        "description": "Delivery boy management service",
+        "memorySize": 512,
+        "timeout": 30,
+        "events": [
+          {
+            "httpApi": {
+              "path": "/api/delivery/{proxy+}",
+              "method": "ANY"
+            },
+            "resolvedMethod": "ANY",
+            "resolvedPath": "/api/delivery/{proxy+}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/delv_boy_add",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/delv_boy_add"
+          },
+          {
+            "httpApi": {
+              "path": "/api/delivery_boy_list/{id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/delivery_boy_list/{id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/delivery_boy_edit",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/delivery_boy_edit"
+          },
+          {
+            "httpApi": {
+              "path": "/api/delv_boy_delete/{deliveryBoyID}/{shop_id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/delv_boy_delete/{deliveryBoyID}/{shop_id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/delv_orders/{delv_boy_id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/delv_orders/{delv_boy_id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/delv_completed_orders/{delv_boy_id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/delv_completed_orders/{delv_boy_id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/delv_boy_dash_counts/{id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/delv_boy_dash_counts/{id}"
+          }
+        ],
+        "name": "scrapmate-microservices-dev-delivery-service",
+        "package": {
+          "artifact": "/Users/shijo/Documents/GitHub/SCRAPMATE-NODE-LAMBDA/.serverless/delivery-service.zip"
+        },
+        "memory": 512,
+        "runtime": "nodejs20.x",
+        "vpc": {},
+        "versionLogicalId": "DeliveryDashserviceLambdaVersionuqIAXLPkgelVRbR5YQDk8AUFNxYdgvJd45P2WNGQ"
+      },
+      "user-service": {
+        "handler": "services/user/handler.handler",
+        "description": "User profile and FCM token management service",
+        "memorySize": 512,
+        "timeout": 30,
+        "events": [
+          {
+            "httpApi": {
+              "path": "/api/user/{proxy+}",
+              "method": "ANY"
+            },
+            "resolvedMethod": "ANY",
+            "resolvedPath": "/api/user/{proxy+}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/users_profile_view/{id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/users_profile_view/{id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/get_user_by_name/{name}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/get_user_by_name/{name}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/user_profile_pic_edit",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/user_profile_pic_edit"
+          },
+          {
+            "httpApi": {
+              "path": "/api/userProEdit",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/userProEdit"
+          },
+          {
+            "httpApi": {
+              "path": "/api/cust_dash_counts/{id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/cust_dash_counts/{id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/cust_ads_type_edit",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/cust_ads_type_edit"
+          },
+          {
+            "httpApi": {
+              "path": "/api/fcm_token_store",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/fcm_token_store"
+          },
+          {
+            "httpApi": {
+              "path": "/api/fcmTokenClear/{userid}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/fcmTokenClear/{userid}"
+          }
+        ],
+        "name": "scrapmate-microservices-dev-user-service",
+        "package": {
+          "artifact": "/Users/shijo/Documents/GitHub/SCRAPMATE-NODE-LAMBDA/.serverless/user-service.zip"
+        },
+        "memory": 512,
+        "runtime": "nodejs20.x",
+        "vpc": {},
+        "versionLogicalId": "UserDashserviceLambdaVersionbyT9A12FqOA0zqP9czuFkEWfU4tVnFX3INuPr1mwjQI"
+      },
+      "notification-service": {
+        "handler": "services/notification/handler.handler",
+        "description": "Notification management service",
+        "memorySize": 256,
+        "timeout": 30,
+        "events": [
+          {
+            "httpApi": {
+              "path": "/api/notification/{proxy+}",
+              "method": "ANY"
+            },
+            "resolvedMethod": "ANY",
+            "resolvedPath": "/api/notification/{proxy+}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/noti_by_id/{id}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/noti_by_id/{id}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/noti_by_id/{id}/{offset}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/noti_by_id/{id}/{offset}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/notif_read",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/notif_read"
+          }
+        ],
+        "name": "scrapmate-microservices-dev-notification-service",
+        "package": {
+          "artifact": "/Users/shijo/Documents/GitHub/SCRAPMATE-NODE-LAMBDA/.serverless/notification-service.zip"
+        },
+        "memory": 256,
+        "runtime": "nodejs20.x",
+        "vpc": {},
+        "versionLogicalId": "NotificationDashserviceLambdaVersionENQPpRdgeTaZ1SAET2nwZqwKOLwv8G7Xi3JbOIS0"
+      },
+      "utility-service": {
+        "handler": "services/utility/handler.handler",
+        "description": "Utility and helper functions service",
+        "memorySize": 512,
+        "timeout": 30,
+        "events": [
+          {
+            "httpApi": {
+              "path": "/api/utility/{proxy+}",
+              "method": "ANY"
+            },
+            "resolvedMethod": "ANY",
+            "resolvedPath": "/api/utility/{proxy+}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/get_table",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/get_table"
+          },
+          {
+            "httpApi": {
+              "path": "/api/get_table_condition",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/get_table_condition"
+          },
+          {
+            "httpApi": {
+              "path": "/api/count_row/{table_name}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/count_row/{table_name}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/keyword_search/{table}/{name}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/keyword_search/{table}/{name}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/get_user_by_id/{user_id}/{table}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/get_user_by_id/{user_id}/{table}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/get_all_tables",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/get_all_tables"
+          },
+          {
+            "httpApi": {
+              "path": "/api/savecallLog",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/savecallLog"
+          },
+          {
+            "httpApi": {
+              "path": "/api/savecallLogCust",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/savecallLogCust"
+          },
+          {
+            "httpApi": {
+              "path": "/api/searchShopCallLogSave",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/searchShopCallLogSave"
+          },
+          {
+            "httpApi": {
+              "path": "/api/stateAllow",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/stateAllow"
+          },
+          {
+            "httpApi": {
+              "path": "/api/packagesSub",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/packagesSub"
+          },
+          {
+            "httpApi": {
+              "path": "/api/saveUserPackages",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/saveUserPackages"
+          },
+          {
+            "httpApi": {
+              "path": "/api/paymentHistory",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/paymentHistory"
+          },
+          {
+            "httpApi": {
+              "path": "/api/thirdPartyCredentials",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/thirdPartyCredentials"
+          },
+          {
+            "httpApi": {
+              "path": "/api/versionCheck/{version}",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/versionCheck/{version}"
+          },
+          {
+            "httpApi": {
+              "path": "/api/smstesting",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/smstesting"
+          },
+          {
+            "httpApi": {
+              "path": "/api/PermanentDelete",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/PermanentDelete"
+          },
+          {
+            "httpApi": {
+              "path": "/api/failedJobs",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/failedJobs"
+          },
+          {
+            "httpApi": {
+              "path": "/api/clear_redis_cache",
+              "method": "POST"
+            },
+            "resolvedMethod": "POST",
+            "resolvedPath": "/api/clear_redis_cache"
+          },
+          {
+            "httpApi": {
+              "path": "/api/metrics",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/metrics"
+          }
+        ],
+        "name": "scrapmate-microservices-dev-utility-service",
+        "package": {
+          "artifact": "/Users/shijo/Documents/GitHub/SCRAPMATE-NODE-LAMBDA/.serverless/utility-service.zip"
+        },
+        "memory": 512,
+        "runtime": "nodejs20.x",
+        "vpc": {},
+        "versionLogicalId": "UtilityDashserviceLambdaVersionfG4ixgWUCSAp4Fyg95oa65x6mTpWyXf61bmY9Q2LKo"
+      },
+      "health-service": {
+        "handler": "services/health/handler.handler",
+        "description": "Health check and test endpoints",
+        "memorySize": 128,
+        "timeout": 10,
+        "events": [
+          {
+            "httpApi": {
+              "path": "/api/health",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/health"
+          },
+          {
+            "httpApi": {
+              "path": "/api/test",
+              "method": "GET"
+            },
+            "resolvedMethod": "GET",
+            "resolvedPath": "/api/test"
+          }
+        ],
+        "name": "scrapmate-microservices-dev-health-service",
+        "package": {
+          "artifact": "/Users/shijo/Documents/GitHub/SCRAPMATE-NODE-LAMBDA/.serverless/health-service.zip"
+        },
+        "memory": 128,
+        "runtime": "nodejs20.x",
+        "vpc": {},
+        "versionLogicalId": "HealthDashserviceLambdaVersionkMxTOu4C3ulAX86C9PcgWJ3w8Ty28PXGcfHNFmYZB34"
+      }
+    },
+    "configValidationMode": "warn",
+    "serviceFilename": "serverless-microservices.yml",
+    "initialServerlessConfig": {
+      "service": "scrapmate-microservices",
+      "frameworkVersion": "3",
+      "provider": {
+        "$ref": "$[\"service\"][\"provider\"]"
+      },
+      "functions": {
+        "$ref": "$[\"service\"][\"functions\"]"
+      },
+      "plugins": {
+        "$ref": "$[\"service\"][\"plugins\"]"
+      },
+      "custom": {
+        "$ref": "$[\"service\"][\"custom\"]"
+      },
+      "package": {
+        "patterns": [
+          "!node_modules/**",
+          "!public/**",
+          "!.git/**",
+          "!*.md",
+          "!*.txt",
+          "!.env*",
+          "!aws.txt",
+          "!scripts/**",
+          "!dist/**",
+          "!.DS_Store",
+          "!test-*.js",
+          "!Postman_*.json",
+          "!nginx.conf",
+          "!nodemon.json"
+        ],
+        "individually": true,
+        "excludeDevDependencies": true,
+        "artifactsS3KeyDirname": "serverless/scrapmate-microservices/dev/code-artifacts",
+        "deploymentBucket": "scrapmate-images",
+        "artifactDirectoryName": "serverless/scrapmate-microservices/dev/1763461294476-2025-11-18T10:21:34.476Z"
+      }
+    },
+    "layers": {},
+    "isDashboardMonitoringPreconfigured": false
+  },
+  "package": {
+    "individually": true,
+    "artifactDirectoryName": "serverless/scrapmate-microservices/dev/1763461294476-2025-11-18T10:21:34.476Z",
+    "artifact": ""
+  }
+}

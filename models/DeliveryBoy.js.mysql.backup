@@ -1,0 +1,81 @@
+const db = require('../config/database');
+
+class DeliveryBoy {
+  static async findById(id) {
+    return new Promise((resolve, reject) => {
+      const query = 'SELECT * FROM delivery_boy WHERE id = ?';
+      db.query(query, [id], (err, results) => {
+        if (err) return reject(err);
+        resolve(results[0] || null);
+      });
+    });
+  }
+
+  static async findByShopId(shopId) {
+    return new Promise((resolve, reject) => {
+      const query = 'SELECT * FROM delivery_boy WHERE shop_id = ?';
+      db.query(query, [shopId], (err, results) => {
+        if (err) return reject(err);
+        resolve(results);
+      });
+    });
+  }
+
+  static async findByUserId(userId) {
+    return new Promise((resolve, reject) => {
+      const query = 'SELECT * FROM delivery_boy WHERE user_id = ?';
+      db.query(query, [userId], (err, results) => {
+        if (err) return reject(err);
+        resolve(results[0] || null);
+      });
+    });
+  }
+
+  static async create(data) {
+    return new Promise((resolve, reject) => {
+      const query = `INSERT INTO delivery_boy (user_id, shop_id, name, dob, age, email, phone, address, licence_no, licence_img_front, licence_img_back, profile_img, filesize) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      const values = [
+        data.user_id, data.shop_id, data.name, data.dob, data.age,
+        data.email, data.phone, data.address, data.licence_no,
+        data.licence_img_front, data.licence_img_back, data.profile_img, data.filesize
+      ];
+      db.query(query, values, (err, result) => {
+        if (err) return reject(err);
+        resolve({ id: result.insertId, ...data });
+      });
+    });
+  }
+
+  static async update(id, data) {
+    return new Promise((resolve, reject) => {
+      const fields = [];
+      const values = [];
+      Object.keys(data).forEach(key => {
+        if (data[key] !== undefined) {
+          fields.push(`${key} = ?`);
+          values.push(data[key]);
+        }
+      });
+      values.push(id);
+      const query = `UPDATE delivery_boy SET ${fields.join(', ')} WHERE id = ?`;
+      db.query(query, values, (err, result) => {
+        if (err) return reject(err);
+        resolve(result);
+      });
+    });
+  }
+
+  static async delete(id, shopId) {
+    return new Promise((resolve, reject) => {
+      const query = 'DELETE FROM delivery_boy WHERE id = ? AND shop_id = ?';
+      db.query(query, [id, shopId], (err, result) => {
+        if (err) return reject(err);
+        resolve(result);
+      });
+    });
+  }
+}
+
+module.exports = DeliveryBoy;
+

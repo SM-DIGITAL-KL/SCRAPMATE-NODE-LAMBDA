@@ -1,0 +1,48 @@
+const db = require('../config/database');
+
+class ShopImages {
+  static async findByShopId(shopId) {
+    return new Promise((resolve, reject) => {
+      const query = 'SELECT * FROM shop_images WHERE shop_id = ?';
+      db.query(query, [shopId], (err, results) => {
+        if (err) return reject(err);
+        resolve(results);
+      });
+    });
+  }
+
+  static async findById(id) {
+    return new Promise((resolve, reject) => {
+      const query = 'SELECT * FROM shop_images WHERE id = ?';
+      db.query(query, [id], (err, results) => {
+        if (err) return reject(err);
+        resolve(results[0] || null);
+      });
+    });
+  }
+
+  static async create(data) {
+    return new Promise((resolve, reject) => {
+      const query = `INSERT INTO shop_images (shop_id, shop_img, filesize) 
+                     VALUES (?, ?, ?)`;
+      const values = [data.shop_id, data.shop_img, data.filesize || ''];
+      db.query(query, values, (err, result) => {
+        if (err) return reject(err);
+        resolve({ id: result.insertId, ...data });
+      });
+    });
+  }
+
+  static async delete(id) {
+    return new Promise((resolve, reject) => {
+      const query = 'DELETE FROM shop_images WHERE id = ?';
+      db.query(query, [id], (err, result) => {
+        if (err) return reject(err);
+        resolve(result);
+      });
+    });
+  }
+}
+
+module.exports = ShopImages;
+

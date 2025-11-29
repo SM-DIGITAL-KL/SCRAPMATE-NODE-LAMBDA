@@ -1,0 +1,114 @@
+service: scrapmate-node-api
+# If you have a failed stack, you can change the service name temporarily:
+# service: scrapmate-node-api-v2
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: ${opt:region, 'ap-south-1'}
+  stage: ${opt:stage, 'dev'}
+  memorySize: 1024
+  timeout: 30
+  # Use existing S3 bucket for deployment artifacts
+  # Serverless will create a subfolder in this bucket for deployments
+  deploymentBucket:
+    name: scrapmate-images
+    blockPublicAccess: true
+    # Skip bucket check if you don't have s3:GetBucketLocation permission
+    # Note: You still need s3:PutObject, s3:GetObject, s3:ListBucket permissions
+  environment:
+    NODE_ENV: production
+    AWS_REGION: ${self:provider.region}
+    # Environment variables - using direct values for initial deployment
+    # For production, move these to SSM Parameter Store and update the lines below
+    API_KEY: ${env:API_KEY, 'zyubkfzeumeoviaqzcsrvfwdzbiwnlnn'}
+    SESSION_SECRET: ${env:SESSION_SECRET, 'scrapmate-session-secret-change-in-production'}
+    JWT_SECRET: ${env:JWT_SECRET, 'scrapmate-jwt-secret-change-in-production'}
+    # AWS credentials are available via IAM role in Lambda, but can be set here if needed
+    # AWS_ACCESS_KEY_ID: ${env:AWS_ACCESS_KEY_ID, ''}
+    # AWS_SECRET_ACCESS_KEY: ${env:AWS_SECRET_ACCESS_KEY, ''}
+    # Optional: Redis (will be empty if not set)
+    REDIS_URL: ${env:REDIS_URL, ''}
+    REDIS_TOKEN: ${env:REDIS_TOKEN, ''}
+    # S3 Bucket name
+    S3_BUCKET_NAME: ${env:S3_BUCKET_NAME, 'scrapmate-images'}
+    
+    # Option: Use SSM Parameter Store (uncomment after setting up parameters)
+    # API_KEY: ${ssm:/scrapmate/${self:provider.stage}/API_KEY~true}
+    # SESSION_SECRET: ${ssm:/scrapmate/${self:provider.stage}/SESSION_SECRET~true}
+    # JWT_SECRET: ${ssm:/scrapmate/${self:provider.stage}/JWT_SECRET~true}
+    # AWS_ACCESS_KEY_ID: ${ssm:/scrapmate/${self:provider.stage}/AWS_ACCESS_KEY_ID~true}
+    # AWS_SECRET_ACCESS_KEY: ${ssm:/scrapmate/${self:provider.stage}/AWS_SECRET_ACCESS_KEY~true}
+    # REDIS_URL: ${ssm:/scrapmate/${self:provider.stage}/REDIS_URL~true}
+    # REDIS_TOKEN: ${ssm:/scrapmate/${self:provider.stage}/REDIS_TOKEN~true}
+    # S3_BUCKET_NAME: ${ssm:/scrapmate/${self:provider.stage}/S3_BUCKET_NAME~true}
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:*
+            - s3:*
+            - ssm:GetParameter
+            - ssm:GetParameters
+            - secretsmanager:GetSecretValue
+          Resource: "*"
+  httpApi:
+    cors:
+      allowedOrigins:
+        - '*'
+      allowedHeaders:
+        - Content-Type
+        - api-key
+        - Authorization
+        - X-Requested-With
+      allowedMethods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - PATCH
+        - OPTIONS
+      allowCredentials: false
+
+functions:
+  api:
+    handler: lambda.handler
+    events:
+      - httpApi:
+          path: /{proxy+}
+          method: ANY
+      - httpApi:
+          path: /
+          method: ANY
+    description: Main API handler for all routes
+
+plugins:
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    httpPort: 3000
+    noPrependStageInUrl: true
+
+package:
+  patterns:
+    - '!node_modules/**'
+    - '!public/**'
+    - '!.git/**'
+    - '!*.md'
+    - '!*.txt'
+    - '!.env*'
+    - '!aws.txt'
+    - '!scripts/**'
+    - '!dist/**'
+    - '!.DS_Store'
+    - '!test-*.js'
+    - '!Postman_*.json'
+    - '!nginx.conf'
+    - '!nodemon.json'
+  individually: false
+  excludeDevDependencies: true
+
