@@ -3,6 +3,16 @@ const router = express.Router();
 const { apiKeyCheck } = require('../../middleware/apiKeyMiddleware');
 const UtilityController = require('../../controllers/utilityController');
 
+// Request logging middleware for utility service
+router.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  console.log(`\n🔧 [UTILITY SERVICE] ${req.method} ${req.path || req.url} [${timestamp}]`);
+  console.log(`   Query:`, req.query);
+  console.log(`   Params:`, req.params);
+  console.log(`   Body keys:`, req.body ? Object.keys(req.body) : 'no body');
+  next();
+});
+
 router.use(apiKeyCheck);
 
 // ==================== UTILITY ROUTES ====================

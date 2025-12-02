@@ -99,6 +99,36 @@ class UserController {
 
       if (!profileData) {
         console.log(`❌ Profile data not found for user_id: ${user.id}, user_type: ${user.user_type}`);
+        // For B2B/B2C users without shop data, return basic user info instead of error
+        if (user.user_type === 'S' || user.user_type === 'R' || user.user_type === 'SR' || user.user_type === 'N') {
+          console.log(`⚠️  User type ${user.user_type} but no shop data - returning basic user info (user may not have completed signup)`);
+          const basicProfile = {
+            id: user.id,
+            name: user.name || '',
+            email: user.email || '',
+            mob_num: user.mob_num || '',
+            user_type: user.user_type,
+            app_type: user.app_type || 'vendor_app',
+            app_version: user.app_version || 'v1',
+            profile_photo: '',
+            image: ''
+          };
+          
+          // Cache basic profile too
+          try {
+            await RedisCache.set(cacheKey, basicProfile, 'short');
+            console.log(`💾 Redis cache set for basic profile: ${cacheKey}`);
+          } catch (redisErr) {
+            console.error('Redis cache error:', redisErr);
+          }
+          
+          return res.json({
+            status: 'success',
+            msg: 'User Details',
+            data: basicProfile
+          });
+        }
+        
         return res.status(201).json({
           status: 'error',
           msg: 'Profile data not found',
@@ -463,9 +493,34 @@ class UserController {
   // Customer ads type edit
   static async custAdsTypeEdit(req, res) {
     try {
-      const { customer_id, address, building_no, nearby, addres_type, lat_log } = req.body;
+      console.log('🔍 [custAdsTypeEdit] Request received');
+      console.log('   Content-Type:', req.headers['content-type'] || req.headers['Content-Type']);
+      console.log('   Raw body:', typeof req.body, req.body);
+      console.log('   Body keys:', req.body ? Object.keys(req.body) : 'no body');
+      
+      // Handle both JSON and form data
+      let customer_id, address, building_no, nearby, addres_type, lat_log, landmark;
+      
+      if (req.body) {
+        customer_id = req.body.customer_id || req.body.customerId;
+        address = req.body.address;
+        building_no = req.body.building_no || req.body.buildingNo;
+        nearby = req.body.nearby || req.body.landmark; // Flutter sends 'landmark' but API expects 'nearby'
+        addres_type = req.body.addres_type || req.body.addresType || req.body.address_type;
+        lat_log = req.body.lat_log || req.body.latLog || req.body.lat_log;
+        landmark = req.body.landmark; // Also accept landmark as separate field
+      }
+
+      console.log('   Parsed values:');
+      console.log('     customer_id:', customer_id);
+      console.log('     address:', address);
+      console.log('     building_no:', building_no);
+      console.log('     nearby/landmark:', nearby || landmark);
+      console.log('     addres_type:', addres_type);
+      console.log('     lat_log:', lat_log);
 
       if (!customer_id) {
+        console.log('❌ [custAdsTypeEdit] Missing customer_id');
         return res.status(201).json({
           status: 'error',
           msg: 'empty param',
@@ -483,11 +538,15 @@ class UserController {
       }
 
       const updateData = {};
-      if (address !== undefined) updateData.address = address;
-      if (building_no !== undefined) updateData.building_no = building_no;
-      if (nearby !== undefined) updateData.nearby = nearby;
-      if (addres_type !== undefined) updateData.addres_type = addres_type;
-      if (lat_log !== undefined) updateData.lat_log = lat_log;
+      if (address !== undefined && address !== null && address !== '') updateData.address = address;
+      if (building_no !== undefined && building_no !== null && building_no !== '') updateData.building_no = building_no;
+      if ((nearby !== undefined && nearby !== null && nearby !== '') || (landmark !== undefined && landmark !== null && landmark !== '')) {
+        updateData.nearby = nearby || landmark;
+      }
+      if (addres_type !== undefined && addres_type !== null && addres_type !== '') updateData.addres_type = addres_type;
+      if (lat_log !== undefined && lat_log !== null && lat_log !== '') updateData.lat_log = lat_log;
+      
+      console.log('   Update data:', updateData);
 
       await Customer.update(customer_id, updateData);
 

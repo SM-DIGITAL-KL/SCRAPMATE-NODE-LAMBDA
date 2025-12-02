@@ -10,6 +10,19 @@ const profileUpload = profileUploadMulter.single('profile_photo');
 const v2ProfileUpload = profileUploadMulter;
 const v2DocumentUpload = documentUploadMulter;
 
+// Request logging middleware for user service
+router.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  console.log(`\n👤 [USER SERVICE] ${req.method} ${req.path || req.url} [${timestamp}]`);
+  console.log(`   Query:`, req.query);
+  console.log(`   Params:`, req.params);
+  console.log(`   Body keys:`, req.body ? Object.keys(req.body) : 'no body');
+  if (req.file) {
+    console.log(`   File: ${req.file.originalname} (${req.file.size} bytes)`);
+  }
+  next();
+});
+
 router.use(apiKeyCheck);
 
 // ==================== USER ROUTES ====================

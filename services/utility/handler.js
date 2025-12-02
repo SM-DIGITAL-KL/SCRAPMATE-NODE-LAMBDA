@@ -54,7 +54,6 @@ app.use((req, res, next) => {
 // Cache middleware - GET requests cached for 365 days
 const { cacheGetMiddleware } = require('../../middleware/cacheMiddleware');
 app.use(cacheGetMiddleware);
-
 // Middleware to extract path parameters for API Gateway HTTP API v2
 app.use((req, res, next) => {
   // If pathParameters exist in the Lambda event, merge them into req.params
@@ -128,6 +127,13 @@ app.use((req, res, next) => {
 });
 
 const utilityRoutes = require('./routes');
+// Mount v2 API routes for microservices gateway as well
+// This lets /api/v2/... work on the microservices API Gateway, not only on the monolithic Lambda URL
+const v2Routes = require('../../routes/v2Routes');
+
+// v2 routes must be mounted BEFORE generic /api routes so they don't fall through to utility 404
+app.use('/api/v2', v2Routes);
+
 app.use('/api', utilityRoutes);
 app.use('/', utilityRoutes);  // Also mount at root for API Gateway path handling
 
@@ -142,7 +148,10 @@ app.use((req, res, next) => {
 });
 
 app.use((err, req, res, next) => {
-  console.error('Utility Service Error:', err);
+  console.error('❌ Utility Service Error:', err);
+  console.error('❌ Error stack:', err.stack);
+  console.error('❌ Request path:', req.path);
+  console.error('❌ Request params:', req.params);
   res.status(err.status || 500).json({
     status: 'error',
     msg: err.message || 'Internal server error',

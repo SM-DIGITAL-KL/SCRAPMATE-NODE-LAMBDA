@@ -33,6 +33,10 @@ class RedisCache {
    */
   static async get(key) {
     try {
+      if (!redis) {
+        return null;
+      }
+      
       const cached = await redis.get(key);
       if (cached) {
         console.log(`⚡ Redis cache hit: ${key}`);
@@ -54,6 +58,11 @@ class RedisCache {
    */
   static async set(key, value, ttl = 'default') {
     try {
+      if (!redis) {
+        console.warn(`⚠️  Redis client not available. Skipping cache set for key: ${key}`);
+        return false;
+      }
+      
       // If ttl is a string, treat it as a cache type and get TTL from env
       const ttlSeconds = typeof ttl === 'string' ? this.getTTL(ttl) : ttl;
       
@@ -74,6 +83,10 @@ class RedisCache {
    */
   static async delete(key) {
     try {
+      if (!redis) {
+        return false;
+      }
+      
       await redis.del(key);
       console.log(`🗑️  Redis cache deleted: ${key}`);
       return true;
@@ -262,18 +275,17 @@ class RedisCache {
 
   /**
    * Invalidate B2B users cache
-   * Deletes common cache key combinations for B2B users list
+   * Deletes all cache keys matching the B2B users pattern
    * @returns {Promise<number>} - Number of keys deleted
    */
   static async invalidateB2BUsersCache() {
     try {
-      // Common page/limit combinations used in admin panel
-      const commonLimits = [10, 20, 50, 100];
-      const commonPages = [1, 2, 3, 4, 5];
-      
       let deleted = 0;
       
-      // Delete cache keys for common page/limit combinations
+      // Delete common page/limit combinations (most common case)
+      const commonLimits = [10, 20, 50, 100];
+      const commonPages = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; // Extended to cover more pages
+      
       for (const limit of commonLimits) {
         for (const page of commonPages) {
           const cacheKey = this.adminKey('b2b_users', null, { page, limit });
@@ -287,10 +299,68 @@ class RedisCache {
       const baseResult = await this.delete(baseCacheKey);
       if (baseResult) deleted++;
       
+      // Try to delete with search parameter variations
+      const searchVariations = ['', null, undefined];
+      for (const search of searchVariations) {
+        for (const limit of commonLimits) {
+          for (const page of commonPages) {
+            const cacheKey = this.adminKey('b2b_users', search, { page, limit });
+            const result = await this.delete(cacheKey);
+            if (result) deleted++;
+          }
+        }
+      }
+      
       console.log(`🗑️  Invalidated B2B users cache: ${deleted} keys`);
       return deleted;
     } catch (err) {
       console.error('Redis invalidate B2B users cache error:', err);
+      return 0;
+    }
+  }
+
+  /**
+   * Invalidate B2C users cache
+   * Deletes all cache keys matching the B2C users pattern
+   * @returns {Promise<number>} - Number of keys deleted
+   */
+  static async invalidateB2CUsersCache() {
+    try {
+      let deleted = 0;
+      
+      // Delete common page/limit combinations (most common case)
+      const commonLimits = [10, 20, 50, 100];
+      const commonPages = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; // Extended to cover more pages
+      
+      for (const limit of commonLimits) {
+        for (const page of commonPages) {
+          const cacheKey = this.adminKey('b2c_users', null, { page, limit });
+          const result = await this.delete(cacheKey);
+          if (result) deleted++;
+        }
+      }
+      
+      // Also try to delete without search parameter (most common case)
+      const baseCacheKey = this.adminKey('b2c_users', null, {});
+      const baseResult = await this.delete(baseCacheKey);
+      if (baseResult) deleted++;
+      
+      // Try to delete with search parameter variations
+      const searchVariations = ['', null, undefined];
+      for (const search of searchVariations) {
+        for (const limit of commonLimits) {
+          for (const page of commonPages) {
+            const cacheKey = this.adminKey('b2c_users', search, { page, limit });
+            const result = await this.delete(cacheKey);
+            if (result) deleted++;
+          }
+        }
+      }
+      
+      console.log(`🗑️  Invalidated B2C users cache: ${deleted} keys`);
+      return deleted;
+    } catch (err) {
+      console.error('Redis invalidate B2C users cache error:', err);
       return 0;
     }
   }

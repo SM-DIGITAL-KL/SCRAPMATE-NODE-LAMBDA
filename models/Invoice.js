@@ -249,6 +249,16 @@ class Invoice {
       throw err;
     }
   }
+
+  // Find latest invoice by user_id
+  static async findLatestByUserId(userId) {
+    try {
+      const invoices = await this.findByUserId(userId);
+      return invoices.length > 0 ? invoices[0] : null;
+    } catch (err) {
+      throw err;
+    }
+  }
 }
 
 module.exports = Invoice;

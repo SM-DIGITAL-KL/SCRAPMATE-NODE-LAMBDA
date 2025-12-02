@@ -61,6 +61,7 @@ class V2ProfileService {
               address_proof_url: shop.address_proof_url || '',
               kyc_owner_url: shop.kyc_owner_url || '',
               approval_status: shop.approval_status || null,
+              rejection_reason: shop.rejection_reason || null,
             };
             
             // For B2B users, use company_name as the display name
@@ -116,7 +117,14 @@ class V2ProfileService {
               is_online: deliveryBoy.is_online !== undefined ? deliveryBoy.is_online : false, // Default to false if not set
               aadhar_card: deliveryBoy.aadhar_card || null,
               driving_license: deliveryBoy.driving_license || null,
+              vehicle_type: deliveryBoy.vehicle_type || null,
+              vehicle_model: deliveryBoy.vehicle_model || null,
+              vehicle_registration_number: deliveryBoy.vehicle_registration_number || null,
+              approval_status: deliveryBoy.approval_status || null,
+              rejection_reason: deliveryBoy.rejection_reason || null,
             };
+            // Also add as delivery_boy for backward compatibility
+            profileData.delivery_boy = profileData.delivery;
             
             // For Delivery users, use delivery person name as the display name
             if (deliveryBoy.name && deliveryBoy.name.trim() !== '') {
@@ -136,7 +144,14 @@ class V2ProfileService {
               is_online: false, // Default to offline if record doesn't exist
               aadhar_card: null,
               driving_license: null,
+              vehicle_type: null,
+              vehicle_model: null,
+              vehicle_registration_number: null,
+              approval_status: null,
+              rejection_reason: null,
             };
+            // Also add as delivery_boy for backward compatibility
+            profileData.delivery_boy = profileData.delivery;
             console.log(`⚠️ Delivery boy record not found, using empty delivery object`);
           }
         } catch (err) {
@@ -203,11 +218,18 @@ class V2ProfileService {
         await User.updateProfile(userId, userUpdateData);
       }
 
-      // Update shop data for B2B/B2C users
-      if ((user.user_type === 'S' || user.user_type === 'R' || user.user_type === 'SR') && updateData.shop) {
+      // Update shop data for B2B/B2C users (including new users 'N' who are completing signup)
+      if ((user.user_type === 'S' || user.user_type === 'R' || user.user_type === 'SR' || user.user_type === 'N') && updateData.shop) {
         try {
+          console.log(`📦 [updateProfile] Shop update data received:`, JSON.stringify(updateData.shop, null, 2));
           let shop = await Shop.findByUserId(userId);
           console.log(`🔍 Shop lookup for user ${userId}:`, shop ? `Found shop ${shop.id}` : 'Not found');
+          
+          // For B2C users (R): Check if required documents are uploaded before saving
+          // For v1 or new users: Don't save if Aadhar card is not uploaded
+          const isV1User = !user.app_version || user.app_version === 'v1' || user.app_version === 'v1.0';
+          const isB2CUser = user.user_type === 'R';
+          const isNewUser = !shop || !shop.id;
           
           // Create shop if it doesn't exist
           if (!shop) {
@@ -217,19 +239,82 @@ class V2ProfileService {
               email: user.email || '',
               shopname: user.name || '',
               address: updateData.shop.address || '',
+              contact: updateData.shop.contact || '',
             };
+            
+            // Determine shop_type based on user type and signup context
+            // For B2C signup (user_type N or R), set shop_type = 3 (Retailer B2C)
+            // For B2B signup (user_type S), set shop_type = 1 (Industrial) or 4 (Wholesaler)
+            // For v1 users, shop_type = 2 (Retailer/Door Step Buyer)
+            if (user.user_type === 'N' || user.user_type === 'R') {
+              // B2C signup - use shop_type 3 (Retailer B2C) for v2 users
+              if (!isV1User) {
+                shopData.shop_type = 3; // Retailer B2C
+                console.log(`📝 Setting shop_type = 3 (Retailer B2C) for B2C signup`);
+              } else {
+                shopData.shop_type = 2; // Retailer/Door Step Buyer for v1
+                console.log(`📝 Setting shop_type = 2 (Retailer/Door Step Buyer) for v1 B2C signup`);
+              }
+            } else if (user.user_type === 'S' || user.user_type === 'SR') {
+              // B2B signup - use shop_type 1 (Industrial) by default, or from updateData if provided
+              shopData.shop_type = updateData.shop.shop_type || 1;
+              console.log(`📝 Setting shop_type = ${shopData.shop_type} (B2B) for B2B signup`);
+            } else {
+              // Default to shop_type from updateData or 1
+              shopData.shop_type = updateData.shop.shop_type || 1;
+              console.log(`📝 Setting shop_type = ${shopData.shop_type} (default)`);
+            }
+            
+            // Include documents if provided
+            if (updateData.shop.aadhar_card) {
+              shopData.aadhar_card = updateData.shop.aadhar_card;
+            }
+            if (updateData.shop.driving_license) {
+              shopData.driving_license = updateData.shop.driving_license;
+            }
             shop = await Shop.create(shopData);
-            console.log(`✅ Shop created with ID ${shop.id}, address:`, shop.address);
-          } else {
-            // Update existing shop
+            console.log(`✅ Shop created with ID ${shop.id}, shop_type: ${shop.shop_type}, address:`, shop.address);
+          }
+          
+          // Update existing shop
+          if (shop && shop.id) {
             const shopUpdateData = {};
             if (updateData.shop.shopname !== undefined) shopUpdateData.shopname = updateData.shop.shopname;
             if (updateData.shop.ownername !== undefined) shopUpdateData.ownername = updateData.shop.ownername;
-            if (updateData.shop.address !== undefined) {
-              shopUpdateData.address = updateData.shop.address;
-              console.log(`📝 Updating shop ${shop.id} address to:`, updateData.shop.address);
+            if (updateData.shop.address !== undefined && updateData.shop.address !== null && updateData.shop.address.trim() !== '') {
+              shopUpdateData.address = updateData.shop.address.trim();
+              console.log(`📝 Updating shop ${shop.id} address to:`, shopUpdateData.address);
+            } else if (updateData.shop.address !== undefined) {
+              console.log(`⚠️ Skipping empty address update for shop ${shop.id}`);
             }
-            if (updateData.shop.contact !== undefined) shopUpdateData.contact = updateData.shop.contact;
+            if (updateData.shop.contact !== undefined && updateData.shop.contact !== null && updateData.shop.contact !== '') {
+              shopUpdateData.contact = updateData.shop.contact;
+              console.log(`📝 Updating shop ${shop.id} contact to:`, shopUpdateData.contact);
+            } else if (updateData.shop.contact !== undefined) {
+              console.log(`⚠️ Skipping empty contact update for shop ${shop.id}`);
+            }
+            if (updateData.shop.aadhar_card !== undefined && updateData.shop.aadhar_card !== null && updateData.shop.aadhar_card !== '') {
+              shopUpdateData.aadhar_card = updateData.shop.aadhar_card;
+              console.log(`📝 Updating shop ${shop.id} aadhar_card:`, shopUpdateData.aadhar_card);
+            } else if (updateData.shop.aadhar_card !== undefined) {
+              console.log(`⚠️ Skipping empty aadhar_card update for shop ${shop.id}`);
+            }
+            if (updateData.shop.driving_license !== undefined) {
+              shopUpdateData.driving_license = updateData.shop.driving_license;
+              console.log(`📝 Updating shop ${shop.id} driving_license`);
+            }
+            
+            // Update shop_type if user is completing B2C signup and shop_type is incorrect
+            // For B2C signup (user_type N or R), ensure shop_type is 3 (Retailer B2C) for v2 or 2 for v1
+            if ((user.user_type === 'N' || user.user_type === 'R') && shop.shop_type !== 3 && shop.shop_type !== 2) {
+              if (!isV1User) {
+                shopUpdateData.shop_type = 3; // Retailer B2C for v2
+                console.log(`📝 Correcting shop_type from ${shop.shop_type} to 3 (Retailer B2C) for B2C signup`);
+              } else {
+                shopUpdateData.shop_type = 2; // Retailer/Door Step Buyer for v1
+                console.log(`📝 Correcting shop_type from ${shop.shop_type} to 2 (Retailer/Door Step Buyer) for v1 B2C signup`);
+              }
+            }
 
             if (Object.keys(shopUpdateData).length > 0) {
               console.log(`🔄 Updating shop ${shop.id} with data:`, JSON.stringify(shopUpdateData, null, 2));
@@ -239,8 +324,205 @@ class V2ProfileService {
               // Verify the update
               const updatedShop = await Shop.findById(shop.id);
               console.log(`✅ Verified shop ${shop.id} address after update:`, updatedShop?.address);
+              
+              // Update shop reference with latest data
+              shop = updatedShop;
             } else {
               console.log(`⚠️ No shop data to update`);
+            }
+          }
+          
+          // After shop is created/updated, validate documents for B2C v1/new users or users completing B2C signup
+          // This includes: users with type 'R' (B2C), 'N' (new user completing signup), or v1 users
+          // For v2 users with type 'N', always validate B2C signup completion
+          // For v1 users or users with type 'R', also validate
+          const isCompletingB2CSignup = user.user_type === 'N' || user.user_type === 'R' || (isV1User && !user.user_type);
+          // Always validate if user_type is 'N' (new user), or if it's a v1 user, or if shop is new
+          const shouldValidateB2C = isCompletingB2CSignup && (user.user_type === 'N' || isV1User || isNewUser);
+          
+          console.log(`🔍 [B2C Signup Validation] Checking if should validate:`);
+          console.log(`   user.user_type: ${user.user_type}`);
+          console.log(`   isV1User: ${isV1User}`);
+          console.log(`   isNewUser: ${isNewUser}`);
+          console.log(`   isCompletingB2CSignup: ${isCompletingB2CSignup}`);
+          console.log(`   shouldValidateB2C: ${shouldValidateB2C}`);
+          
+          if (shouldValidateB2C) {
+            // Use the shop object that was just updated (to avoid DynamoDB eventual consistency issues)
+            // If shop was just updated, use it; otherwise re-fetch
+            let latestShop = shop;
+            if (!latestShop || !latestShop.id) {
+              latestShop = await Shop.findByUserId(userId);
+            }
+            console.log(`📦 [B2C Validation] Using shop data:`, {
+              id: latestShop?.id,
+              address: latestShop?.address,
+              contact: latestShop?.contact,
+              aadhar_card: latestShop?.aadhar_card ? 'present' : 'missing'
+            });
+            
+            // Check if Aadhar card is uploaded (it's a URL, so just check if it exists and is not empty)
+            const hasAadharCard = latestShop?.aadhar_card && String(latestShop.aadhar_card || '').trim() !== '';
+            
+            // Re-fetch user to get updated name (after userUpdateData was applied)
+            const updatedUserForCheck = await User.findById(userId);
+            
+            // Check if all required fields are filled (use updated user name/email or updateData name/email)
+            const currentName = updatedUserForCheck.name || updateData.name || '';
+            const currentEmail = updatedUserForCheck.email || updateData.email || '';
+            const hasName = currentName && currentName.trim() !== '';
+            const hasEmail = currentEmail && currentEmail.trim() !== '' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(currentEmail.trim());
+            const hasAddress = latestShop?.address && String(latestShop.address || '').trim() !== '';
+            const hasContact = latestShop?.contact && String(latestShop.contact || '').trim() !== '';
+            const isB2CComplete = hasName && hasEmail && hasAddress && hasContact && hasAadharCard;
+            
+            console.log(`🔍 [B2C Signup Check] Initial validation:`);
+            console.log(`   Name: ${hasName} (${currentName})`);
+            console.log(`   Email: ${hasEmail} (${currentEmail || 'missing'})`);
+            console.log(`   Address: ${hasAddress} (${latestShop?.address || 'missing'})`);
+            console.log(`   Contact: ${hasContact} (${latestShop?.contact || 'missing'}, type: ${typeof latestShop?.contact})`);
+            console.log(`   Aadhar: ${hasAadharCard ? 'present' : 'missing'}`);
+            console.log(`   Complete: ${isB2CComplete}`);
+            
+            // If user is trying to save profile but Aadhar card is missing, prevent save
+            if (!hasAadharCard) {
+              console.log(`❌ Incomplete B2C signup for v1/new user - Aadhar card not uploaded, preventing save`);
+              throw new Error('INCOMPLETE_SIGNUP: Please upload your Aadhar card before submitting.');
+            }
+            
+            console.log(`✅ B2C signup validation passed - Aadhar card uploaded`);
+            
+            // Re-fetch user to get updated name (after userUpdateData was applied)
+            const updatedUser = await User.findById(userId);
+            
+            // Update user type ONLY after B2C signup is complete (name + email + address + contact + aadhar card)
+            // Double-check that all required data is actually saved
+            const savedName = updatedUser.name || updateData.name || '';
+            const savedEmail = updatedUser.email || updateData.email || '';
+            const hasNameSaved = savedName && String(savedName).trim() !== '';
+            const hasEmailSaved = savedEmail && String(savedEmail).trim() !== '' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(savedEmail.trim());
+            const hasAddressSaved = latestShop?.address && String(latestShop.address || '').trim() !== '';
+            const hasContactSaved = latestShop?.contact && String(latestShop.contact || '').trim() !== '';
+            const hasAadharSaved = latestShop?.aadhar_card && String(latestShop.aadhar_card || '').trim() !== '';
+            const isB2CSignupTrulyComplete = hasNameSaved && hasEmailSaved && hasAddressSaved && hasContactSaved && hasAadharSaved;
+            
+            console.log(`🔍 [B2C Final Check] All fields validation:`);
+            console.log(`   Name saved: ${hasNameSaved} (${savedName})`);
+            console.log(`   Email saved: ${hasEmailSaved} (${savedEmail || 'missing'})`);
+            console.log(`   Address saved: ${hasAddressSaved} (${latestShop?.address || 'missing'})`);
+            console.log(`   Contact saved: ${hasContactSaved} (${latestShop?.contact || 'missing'}, type: ${typeof latestShop?.contact})`);
+            console.log(`   Aadhar saved: ${hasAadharSaved} (${latestShop?.aadhar_card ? 'present' : 'missing'})`);
+            console.log(`   User type before update: ${updatedUser.user_type}`);
+            console.log(`   Will update to R: ${isB2CSignupTrulyComplete && updatedUser.user_type !== 'R' && updatedUser.user_type !== 'SR'}`);
+            
+            console.log(`🔍 B2C signup completion check:`);
+            console.log(`   Name: ${hasNameSaved} (${updatedUser.name || updateData.name || 'missing'})`);
+            console.log(`   Address: ${hasAddressSaved} (${latestShop?.address || 'missing'})`);
+            console.log(`   Contact: ${hasContactSaved} (${latestShop?.contact || 'missing'})`);
+            console.log(`   Aadhar: ${hasAadharSaved} (${latestShop?.aadhar_card ? 'present' : 'missing'})`);
+            console.log(`   Complete: ${isB2CSignupTrulyComplete}`);
+            
+            if (!isB2CSignupTrulyComplete) {
+              console.log(`❌ B2C signup verification failed - not all required data saved correctly`);
+              console.log(`   Name: ${hasNameSaved}, Email: ${hasEmailSaved}, Address: ${hasAddressSaved}, Contact: ${hasContactSaved}, Aadhar: ${hasAadharSaved}`);
+              throw new Error('INCOMPLETE_SIGNUP: Signup data was not saved correctly. Please ensure all fields (name, email, address, contact, Aadhar card) are filled. Please try again.');
+            }
+            
+            // Only change user_type if signup is truly complete
+            // Update from 'N' (new_user), 'S' (B2B), or other types to appropriate B2C type
+            if (isB2CSignupTrulyComplete && updatedUser.user_type !== 'R' && updatedUser.user_type !== 'SR') {
+              // Check if user has completed B2B signup (form + all documents)
+              const hasB2BComplete = latestShop?.company_name && latestShop.company_name.trim() !== '' &&
+                                     latestShop?.gst_number && latestShop.gst_number.trim() !== '' &&
+                                     latestShop?.business_license_url && latestShop.business_license_url.trim() !== '' &&
+                                     latestShop?.gst_certificate_url && latestShop.gst_certificate_url.trim() !== '' &&
+                                     latestShop?.address_proof_url && latestShop.address_proof_url.trim() !== '' &&
+                                     latestShop?.kyc_owner_url && latestShop.kyc_owner_url.trim() !== '';
+              
+              // Check if user is V1 and needs upgrade to V2
+              const isV1User = !updatedUser.app_version || updatedUser.app_version === 'v1' || updatedUser.app_version === 'v1.0';
+              
+              if (hasB2BComplete) {
+                // Both B2B and B2C complete - upgrade to SR
+                console.log(`🔄 B2C signup complete - user already has B2B, upgrading to SR (B2B+B2C) for user ${userId}`);
+                const updateData = { user_type: 'SR' };
+                if (isV1User) {
+                  updateData.app_version = 'v2';
+                  console.log(`📱 Upgrading V1 user to V2 after signup completion`);
+                }
+                await User.updateProfile(userId, updateData);
+                console.log(`✅ User type updated to SR for user ${userId}`);
+              } else if (updatedUser.user_type === 'N') {
+                // New user (N) completing B2C signup - set to R (B2C)
+                console.log(`🔄 B2C signup complete - updating new user (N) to R (B2C) for user ${userId}`);
+                const updateData = { user_type: 'R' };
+                if (isV1User) {
+                  updateData.app_version = 'v2';
+                  console.log(`📱 Upgrading V1 user to V2 after signup completion`);
+                }
+                await User.updateProfile(userId, updateData);
+                console.log(`✅ User type updated from N to R for user ${userId}`);
+              } else if (updatedUser.user_type === 'S') {
+                // B2B user completing B2C signup - upgrade to SR
+                console.log(`🔄 B2C signup complete - B2B user (S) completing B2C, upgrading to SR (B2B+B2C) for user ${userId}`);
+                const updateData = { user_type: 'SR' };
+                if (isV1User) {
+                  updateData.app_version = 'v2';
+                  console.log(`📱 Upgrading V1 user to V2 after signup completion`);
+                }
+                await User.updateProfile(userId, updateData);
+                console.log(`✅ User type updated from S to SR for user ${userId}`);
+              } else {
+                // Other type - set to R (B2C)
+                console.log(`🔄 B2C signup complete - setting user type to R (B2C) for user ${userId} (from ${updatedUser.user_type})`);
+                const updateData = { user_type: 'R' };
+                if (isV1User) {
+                  updateData.app_version = 'v2';
+                  console.log(`📱 Upgrading V1 user to V2 after signup completion`);
+                }
+                await User.updateProfile(userId, updateData);
+                console.log(`✅ User type updated to R for user ${userId}`);
+              }
+              
+              // Invalidate B2B users cache after user type update
+              try {
+                await RedisCache.invalidateB2BUsersCache();
+                console.log('🗑️  Invalidated B2B users cache after user type update');
+              } catch (err) {
+                console.error('Redis cache invalidation error:', err);
+              }
+              
+              // Set approval_status to 'pending' for B2C users when signup is complete
+              // This is done after user type update to ensure signup is truly complete
+              if ((updatedUser.user_type === 'R' || updatedUser.user_type === 'SR') && latestShop && latestShop.id) {
+                // Re-check if B2C signup is complete (name + email + address + contact + aadhar)
+                const finalName = updatedUser.name || updateData.name || '';
+                const finalEmail = updatedUser.email || updateData.email || '';
+                const finalAddress = latestShop.address && String(latestShop.address || '').trim() !== '';
+                const finalContact = latestShop.contact && String(latestShop.contact || '').trim() !== '';
+                const finalAadhar = latestShop.aadhar_card && String(latestShop.aadhar_card || '').trim() !== '';
+                const isB2CFinalComplete = finalName && finalEmail && finalAddress && finalContact && finalAadhar;
+                
+                if (isB2CFinalComplete) {
+                  // If status is 'rejected', change it back to 'pending' when user resubmits
+                  if (latestShop.approval_status === 'rejected') {
+                    console.log(`📋 Complete B2C signup - changing approval_status from 'rejected' to 'pending' for user ${userId} (resubmission)`);
+                    await Shop.update(latestShop.id, { approval_status: 'pending' });
+                    console.log(`✅ B2C approval_status changed from 'rejected' to 'pending' for shop ${latestShop.id}`);
+                  } else if (!latestShop.approval_status || latestShop.approval_status === null) {
+                    // Set approval_status to 'pending' only if signup is complete and no status exists
+                    console.log(`📋 Complete B2C signup - setting approval_status to 'pending' for user ${userId}`);
+                    await Shop.update(latestShop.id, { approval_status: 'pending' });
+                    console.log(`✅ B2C approval_status set to 'pending' for shop ${latestShop.id}`);
+                  } else if (latestShop.approval_status === 'approved') {
+                    // Keep approved status - don't override admin approval
+                    console.log(`📋 Complete B2C signup - keeping existing approval_status 'approved' for user ${userId}`);
+                  } else {
+                    // Status is 'pending' - keep it
+                    console.log(`📋 Complete B2C signup - keeping existing approval_status 'pending' for user ${userId}`);
+                  }
+                }
+              }
             }
           }
         } catch (err) {
@@ -250,7 +532,8 @@ class V2ProfileService {
       }
 
       // Update delivery boy data for Delivery users (address, contact, and delivery_mode)
-      if (user.user_type === 'D' && updateData.delivery) {
+      // Also handle new users (type 'N') completing delivery signup
+      if ((user.user_type === 'D' || user.user_type === 'N') && updateData.delivery) {
         try {
           // Always use the address value, even if it's an empty string
           const addressValue = updateData.delivery.address !== undefined 
@@ -269,10 +552,22 @@ class V2ProfileService {
             ? deliveryModeValue 
             : undefined;
           
+          // Get vehicle information if provided
+          const vehicleTypeValue = updateData.delivery.vehicle_type;
+          const vehicleModelValue = updateData.delivery.vehicle_model;
+          const vehicleRegValue = updateData.delivery.vehicle_registration_number;
+          const aadharCardValue = updateData.delivery.aadhar_card;
+          const drivingLicenseValue = updateData.delivery.driving_license;
+          
           console.log(`📝 Processing delivery update for user ${userId}`);
           console.log(`📝 Address value received:`, addressValue);
           console.log(`📝 Contact value received:`, contactValue);
           console.log(`📝 Delivery mode value received:`, modeValue);
+          console.log(`📝 Vehicle type value received:`, vehicleTypeValue);
+          console.log(`📝 Vehicle model value received:`, vehicleModelValue);
+          console.log(`📝 Vehicle registration value received:`, vehicleRegValue);
+          console.log(`📝 Aadhar card value received:`, aadharCardValue ? 'Present' : 'Not provided');
+          console.log(`📝 Driving license value received:`, drivingLicenseValue ? 'Present' : 'Not provided');
           console.log(`📝 Full updateData.delivery:`, JSON.stringify(updateData.delivery, null, 2));
           
           let deliveryBoy = await DeliveryBoy.findByUserId(userId);
@@ -290,6 +585,23 @@ class V2ProfileService {
               contact: contactValue !== undefined ? contactValue : '',
               delivery_mode: modeValue || 'deliver', // Default to 'deliver' if not provided
             };
+            
+            // Add vehicle information if provided
+            if (vehicleTypeValue !== undefined) {
+              deliveryData.vehicle_type = vehicleTypeValue;
+            }
+            if (vehicleModelValue !== undefined) {
+              deliveryData.vehicle_model = vehicleModelValue;
+            }
+            if (vehicleRegValue !== undefined) {
+              deliveryData.vehicle_registration_number = vehicleRegValue;
+            }
+            if (aadharCardValue !== undefined) {
+              deliveryData.aadhar_card = aadharCardValue;
+            }
+            if (drivingLicenseValue !== undefined) {
+              deliveryData.driving_license = drivingLicenseValue;
+            }
             console.log(`📝 Delivery boy data to create:`, JSON.stringify(deliveryData, null, 2));
             console.log(`📝 user_id type:`, typeof deliveryData.user_id, `value:`, deliveryData.user_id);
             
@@ -315,6 +627,60 @@ class V2ProfileService {
               console.log(`❌ WARNING: Delivery boy created but findByUserId(${userIdNum}) returned null!`);
               console.log(`   This suggests a type mismatch. Created with user_id type: ${typeof deliveryData.user_id}, value: ${deliveryData.user_id}`);
             }
+            
+            // Check if delivery signup is complete after creation
+            const finalName = user.name || updateData.name || '';
+            const finalEmail = user.email || updateData.email || '';
+            const finalAddress = deliveryBoy.address && String(deliveryBoy.address || '').trim() !== '';
+            const finalContact = deliveryBoy.contact && String(deliveryBoy.contact || '').trim() !== '';
+            const finalAadhar = deliveryBoy.aadhar_card && String(deliveryBoy.aadhar_card || '').trim() !== '';
+            const finalVehicleType = deliveryBoy.vehicle_type || '';
+            const finalVehicleModel = deliveryBoy.vehicle_model && String(deliveryBoy.vehicle_model || '').trim() !== '';
+            const finalVehicleReg = deliveryBoy.vehicle_registration_number && String(deliveryBoy.vehicle_registration_number || '').trim() !== '';
+            const finalDrivingLicense = deliveryBoy.driving_license && String(deliveryBoy.driving_license || '').trim() !== '';
+            
+            // Vehicle details are required unless vehicle type is cycle
+            const hasVehicleDetails = finalVehicleType === 'cycle' || (finalVehicleModel && finalVehicleReg);
+            // Driving license is required unless vehicle type is cycle
+            const hasDrivingLicense = finalVehicleType === 'cycle' || finalDrivingLicense;
+            
+            const isDeliveryFinalComplete = finalName && finalEmail && finalAddress && finalContact && finalAadhar && hasVehicleDetails && hasDrivingLicense;
+            
+            if (isDeliveryFinalComplete) {
+              // Check if user is V1 and needs upgrade to V2
+              const isV1User = !user.app_version || user.app_version === 'v1' || user.app_version === 'v1.0';
+              
+              // Update user_type from 'N' to 'D' if user is completing delivery signup
+              if (user.user_type === 'N') {
+                console.log(`🔄 Delivery signup complete - updating new user (N) to D (Delivery) for user ${userId}`);
+                const updateData = { user_type: 'D' };
+                if (isV1User) {
+                  updateData.app_version = 'v2';
+                  console.log(`📱 Upgrading V1 user to V2 after delivery signup completion`);
+                }
+                await User.updateProfile(userId, updateData);
+                console.log(`✅ User type updated from N to D for user ${userId}`);
+                
+                // Invalidate user caches after user type update
+                try {
+                  const userIdStr = String(userId);
+                  await RedisCache.delete(RedisCache.userKey(userIdStr, 'profile'));
+                  await RedisCache.delete(RedisCache.userKey(userIdStr));
+                  await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'users' }));
+                  await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'delivery_boy' }));
+                  await RedisCache.invalidateTableCache('users');
+                  await RedisCache.invalidateTableCache('delivery_boy');
+                  console.log('🗑️  Invalidated user caches after user type update');
+                } catch (err) {
+                  console.error('Redis cache invalidation error:', err);
+                }
+              }
+              
+              // Set approval_status to 'pending' for delivery users when signup is complete
+              console.log(`📋 Complete delivery signup - setting approval_status to 'pending' for user ${userId}`);
+              await DeliveryBoy.update(deliveryBoy.id, { approval_status: 'pending' });
+              console.log(`✅ Delivery approval_status set to 'pending' for delivery ${deliveryBoy.id}`);
+            }
           } else {
             // Update existing delivery boy record - only update fields that are provided
             const deliveryUpdateData = {};
@@ -326,6 +692,21 @@ class V2ProfileService {
             }
             if (modeValue !== undefined) {
               deliveryUpdateData.delivery_mode = modeValue;
+            }
+            if (vehicleTypeValue !== undefined) {
+              deliveryUpdateData.vehicle_type = vehicleTypeValue;
+            }
+            if (vehicleModelValue !== undefined) {
+              deliveryUpdateData.vehicle_model = vehicleModelValue;
+            }
+            if (vehicleRegValue !== undefined) {
+              deliveryUpdateData.vehicle_registration_number = vehicleRegValue;
+            }
+            if (aadharCardValue !== undefined && aadharCardValue !== null && aadharCardValue !== '') {
+              deliveryUpdateData.aadhar_card = aadharCardValue;
+            }
+            if (drivingLicenseValue !== undefined && drivingLicenseValue !== null && drivingLicenseValue !== '') {
+              deliveryUpdateData.driving_license = drivingLicenseValue;
             }
             
             console.log(`📝 Updating delivery boy ${deliveryBoy.id} with data:`, JSON.stringify(deliveryUpdateData, null, 2));
@@ -341,6 +722,74 @@ class V2ProfileService {
               console.log(`✅ Verified delivery ${deliveryBoy.id} contact after update: "${updatedDelivery?.contact || ''}"`);
               console.log(`✅ Verified delivery ${deliveryBoy.id} delivery_mode after update: "${updatedDelivery?.delivery_mode}"`);
               console.log(`✅ Verified delivery ${deliveryBoy.id} full record:`, JSON.stringify(updatedDelivery, null, 2));
+              
+              // Set approval_status to 'pending' for delivery users when signup is complete
+              // Check if delivery signup is complete (name + email + address + contact + aadhar + vehicle details + driving license if not cycle)
+              const finalName = user.name || updateData.name || '';
+              const finalEmail = user.email || updateData.email || '';
+              const finalAddress = updatedDelivery.address && String(updatedDelivery.address || '').trim() !== '';
+              const finalContact = updatedDelivery.contact && String(updatedDelivery.contact || '').trim() !== '';
+              const finalAadhar = updatedDelivery.aadhar_card && String(updatedDelivery.aadhar_card || '').trim() !== '';
+              const finalVehicleType = updatedDelivery.vehicle_type || '';
+              const finalVehicleModel = updatedDelivery.vehicle_model && String(updatedDelivery.vehicle_model || '').trim() !== '';
+              const finalVehicleReg = updatedDelivery.vehicle_registration_number && String(updatedDelivery.vehicle_registration_number || '').trim() !== '';
+              const finalDrivingLicense = updatedDelivery.driving_license && String(updatedDelivery.driving_license || '').trim() !== '';
+              
+              // Vehicle details are required unless vehicle type is cycle
+              const hasVehicleDetails = finalVehicleType === 'cycle' || (finalVehicleModel && finalVehicleReg);
+              // Driving license is required unless vehicle type is cycle
+              const hasDrivingLicense = finalVehicleType === 'cycle' || finalDrivingLicense;
+              
+              const isDeliveryFinalComplete = finalName && finalEmail && finalAddress && finalContact && finalAadhar && hasVehicleDetails && hasDrivingLicense;
+              
+              if (isDeliveryFinalComplete) {
+                // Check if user is V1 and needs upgrade to V2
+                const isV1User = !user.app_version || user.app_version === 'v1' || user.app_version === 'v1.0';
+                
+                // Update user_type from 'N' to 'D' if user is completing delivery signup
+                if (user.user_type === 'N') {
+                  console.log(`🔄 Delivery signup complete - updating new user (N) to D (Delivery) for user ${userId}`);
+                  const updateData = { user_type: 'D' };
+                  if (isV1User) {
+                    updateData.app_version = 'v2';
+                    console.log(`📱 Upgrading V1 user to V2 after delivery signup completion`);
+                  }
+                  await User.updateProfile(userId, updateData);
+                  console.log(`✅ User type updated from N to D for user ${userId}`);
+                  
+                  // Invalidate user caches after user type update
+                  try {
+                    const userIdStr = String(userId);
+                    await RedisCache.delete(RedisCache.userKey(userIdStr, 'profile'));
+                    await RedisCache.delete(RedisCache.userKey(userIdStr));
+                    await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'users' }));
+                    await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'delivery_boy' }));
+                    await RedisCache.invalidateTableCache('users');
+                    await RedisCache.invalidateTableCache('delivery_boy');
+                    console.log('🗑️  Invalidated user caches after user type update');
+                  } catch (err) {
+                    console.error('Redis cache invalidation error:', err);
+                  }
+                }
+                
+                // If status is 'rejected', change it back to 'pending' when user resubmits
+                if (updatedDelivery.approval_status === 'rejected') {
+                  console.log(`📋 Complete delivery signup - changing approval_status from 'rejected' to 'pending' for user ${userId} (resubmission)`);
+                  await DeliveryBoy.update(deliveryBoy.id, { approval_status: 'pending' });
+                  console.log(`✅ Delivery approval_status changed from 'rejected' to 'pending' for delivery ${deliveryBoy.id}`);
+                } else if (!updatedDelivery.approval_status || updatedDelivery.approval_status === null) {
+                  // Set approval_status to 'pending' only if signup is complete and no status exists
+                  console.log(`📋 Complete delivery signup - setting approval_status to 'pending' for user ${userId}`);
+                  await DeliveryBoy.update(deliveryBoy.id, { approval_status: 'pending' });
+                  console.log(`✅ Delivery approval_status set to 'pending' for delivery ${deliveryBoy.id}`);
+                } else if (updatedDelivery.approval_status === 'approved') {
+                  // Keep approved status - don't override admin approval
+                  console.log(`📋 Complete delivery signup - keeping existing approval_status 'approved' for user ${userId}`);
+                } else {
+                  // Status is 'pending' - keep it
+                  console.log(`📋 Complete delivery signup - keeping existing approval_status 'pending' for user ${userId}`);
+                }
+              }
             } else {
               console.log(`⚠️ No delivery data to update`);
             }
@@ -576,6 +1025,96 @@ class V2ProfileService {
     if (address) filledFields++;
 
     return Math.round((filledFields / totalFields) * 100);
+  }
+  /**
+   * Manually complete delivery signup and update user_type to 'D'
+   * This is a fallback method if the regular updateProfile doesn't update user_type
+   * @param {string|number} userId - User ID
+   * @returns {Promise<ProfileData>} Updated profile
+   */
+  static async completeDeliverySignup(userId) {
+    const User = require('../../models/User');
+    const DeliveryBoy = require('../../models/DeliveryBoy');
+    const RedisCache = require('../../utils/redisCache');
+
+    // Get user
+    const user = await User.findById(userId);
+    if (!user) {
+      throw new Error('USER_NOT_FOUND');
+    }
+
+    // Check if user_type is already 'D'
+    if (user.user_type === 'D') {
+      console.log(`✅ User ${userId} already has user_type 'D'`);
+      throw new Error('ALREADY_COMPLETE');
+    }
+
+    // Get delivery boy record
+    const delivery = await DeliveryBoy.findByUserId(userId);
+    if (!delivery) {
+      console.log(`❌ No delivery_boy record found for user ${userId}`);
+      throw new Error('DELIVERY_RECORD_NOT_FOUND');
+    }
+
+    // Check if signup is complete
+    const finalName = user.name || '';
+    const finalEmail = user.email || '';
+    const finalAddress = delivery.address && String(delivery.address || '').trim() !== '';
+    const finalContact = delivery.contact && String(delivery.contact || '').trim() !== '';
+    const finalAadhar = delivery.aadhar_card && String(delivery.aadhar_card || '').trim() !== '';
+    const finalVehicleType = delivery.vehicle_type || '';
+    const finalVehicleModel = delivery.vehicle_model && String(delivery.vehicle_model || '').trim() !== '';
+    const finalVehicleReg = delivery.vehicle_registration_number && String(delivery.vehicle_registration_number || '').trim() !== '';
+    const finalDrivingLicense = delivery.driving_license && String(delivery.driving_license || '').trim() !== '';
+
+    const hasVehicleDetails = finalVehicleType === 'cycle' || (finalVehicleModel && finalVehicleReg);
+    const hasDrivingLicense = finalVehicleType === 'cycle' || finalDrivingLicense;
+    const isComplete = finalName && finalEmail && finalAddress && finalContact && finalAadhar && hasVehicleDetails && hasDrivingLicense;
+
+    if (!isComplete) {
+      console.log(`❌ Delivery signup not complete for user ${userId}`);
+      console.log(`   Missing:`, {
+        name: !finalName,
+        email: !finalEmail,
+        address: !finalAddress,
+        contact: !finalContact,
+        aadhar: !finalAadhar,
+        vehicleDetails: !hasVehicleDetails,
+        drivingLicense: !hasDrivingLicense,
+      });
+      throw new Error('SIGNUP_NOT_COMPLETE');
+    }
+
+    // Update user_type to 'D'
+    if (user.user_type === 'N') {
+      console.log(`🔄 Manually updating user_type from N to D for user ${userId}`);
+      await User.updateProfile(userId, { user_type: 'D' });
+      console.log(`✅ User type updated from N to D for user ${userId}`);
+
+      // Invalidate user caches after user type update
+      try {
+        const userIdStr = String(userId);
+        await RedisCache.delete(RedisCache.userKey(userIdStr, 'profile'));
+        await RedisCache.delete(RedisCache.userKey(userIdStr));
+        await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'users' }));
+        await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'delivery_boy' }));
+        await RedisCache.invalidateTableCache('users');
+        await RedisCache.invalidateTableCache('delivery_boy');
+        console.log('🗑️  Invalidated user caches after user type update');
+      } catch (err) {
+        console.error('Redis cache invalidation error:', err);
+      }
+    }
+
+    // Set approval_status to 'pending' if not already set
+    if (!delivery.approval_status) {
+      console.log(`📋 Setting approval_status to 'pending' for delivery ${delivery.id}`);
+      await DeliveryBoy.update(delivery.id, { approval_status: 'pending' });
+      console.log(`✅ Delivery approval_status set to 'pending' for delivery ${delivery.id}`);
+    }
+
+    // Return updated profile
+    return await V2ProfileService.getProfile(userId);
   }
 }
 

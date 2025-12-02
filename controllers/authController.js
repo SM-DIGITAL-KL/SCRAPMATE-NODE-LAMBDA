@@ -156,18 +156,55 @@ class AuthController {
   // User registration
   static async usersRegister(req, res) {
     try {
+      console.log('📝 [usersRegister] Request received');
+      console.log('   Content-Type:', req.headers['content-type'] || req.headers['Content-Type']);
+      console.log('   Body type:', typeof req.body);
+      console.log('   Body keys:', req.body ? Object.keys(req.body) : 'no body');
+      console.log('   File:', req.file ? `Yes (${req.file.originalname})` : 'No');
+      
       const {
         language, usertype, shop_type, name, email, place, address,
         location, state, mob_number, pincode, lat_log, place_id
       } = req.body;
 
-      if (!mob_number || !email || !name || !usertype || !address || !language) {
+      console.log('📝 [usersRegister] Parsed fields:');
+      console.log('   language:', language);
+      console.log('   usertype:', usertype);
+      console.log('   shop_type:', shop_type);
+      console.log('   name:', name);
+      console.log('   email:', email);
+      console.log('   place:', place);
+      console.log('   address:', address);
+      console.log('   location:', location);
+      console.log('   state:', state);
+      console.log('   mob_number:', mob_number);
+      console.log('   pincode:', pincode);
+      console.log('   lat_log:', lat_log);
+      console.log('   place_id:', place_id);
+
+      // Validate required fields
+      // Note: address is optional for customer (C) registration, required for shop (S)
+      if (!mob_number || !email || !name || !usertype || !language) {
+        console.log('❌ [usersRegister] Missing required fields');
         return res.status(200).json({
           status: 'error',
           msg: 'empty param',
           data: ''
         });
       }
+      
+      // Address is required for shop registration, optional for customer
+      if (usertype === 'S' && !address) {
+        console.log('❌ [usersRegister] Address required for shop registration');
+        return res.status(200).json({
+          status: 'error',
+          msg: 'Address is required for shop registration',
+          data: ''
+        });
+      }
+      
+      // Clean location field - remove "City not selected" placeholder
+      const cleanLocation = (location && location !== 'City not selected') ? location : '';
 
       // Check if email or mobile already exists
       console.log('🔍 Checking if user exists...');
@@ -181,22 +218,80 @@ class AuthController {
       console.log('   Email exists:', emailExists);
       console.log('   Mobile exists:', mobileExists);
 
-      if (emailExists) {
-        console.log('❌ Registration blocked: Email already exists');
-        return res.status(200).json({
-          status: 'error',
-          msg: 'Email already exists',
-          data: ''
-        });
-      }
-
-      if (mobileExists) {
-        console.log('❌ Registration blocked: Mobile number already exists');
-        return res.status(200).json({
-          status: 'error',
-          msg: 'Mobile number already exists',
-          data: ''
-        });
+      if (emailExists || mobileExists) {
+        console.log('⚠️  User already exists, returning existing user data');
+        
+        // Find the existing user
+        let existingUser = null;
+        if (emailExists) {
+          existingUser = await User.findByEmail(email);
+        } else if (mobileExists) {
+          const users = await User.findAllByMobile(mob_number);
+          existingUser = users && users.length > 0 ? users[0] : null;
+        }
+        
+        if (existingUser) {
+          const Shop = require('../models/Shop');
+          const Customer = require('../models/Customer');
+          
+          const userData = {};
+          
+          if (existingUser.user_type === 'S') {
+            // Get shop data
+            const shop = await Shop.findByUserId(existingUser.id);
+            if (shop) {
+              userData.data = shop;
+              // Use S3 URL helper - handles both S3 URLs and local paths
+              userData.data.profile_photo = await getImageUrl(shop.profile_photo, 'profile');
+              userData.user = 'shop';
+            } else {
+              // Return user data even if shop doesn't exist yet
+              userData.data = {
+                user_id: existingUser.id,
+                email: existingUser.email,
+                shopname: existingUser.name,
+                contact: existingUser.mob_num,
+                profile_photo: ''
+              };
+              userData.user = 'shop';
+            }
+          } else {
+            // Get customer data
+            const customer = await Customer.findByUserId(existingUser.id);
+            if (customer) {
+              userData.data = customer;
+              // Use S3 URL helper - handles both S3 URLs and local paths
+              userData.data.profile_photo = await getImageUrl(customer.profile_photo, 'profile');
+              userData.user = 'customer';
+            } else {
+              // Return user data even if customer doesn't exist yet
+              userData.data = {
+                user_id: existingUser.id,
+                email: existingUser.email,
+                name: existingUser.name,
+                mob_num: existingUser.mob_num,
+                profile_photo: ''
+              };
+              userData.user = 'customer';
+            }
+          }
+          
+          console.log('✅ Returning existing user data:', { user_type: existingUser.user_type, user_id: existingUser.id });
+          
+          return res.status(200).json({
+            status: 'success',
+            msg: 'User already exists',
+            data: userData
+          });
+        } else {
+          // Shouldn't happen, but handle gracefully
+          console.log('❌ User exists check passed but user not found');
+          return res.status(200).json({
+            status: 'error',
+            msg: emailExists ? 'Email already exists' : 'Mobile number already exists',
+            data: ''
+          });
+        }
       }
       
       console.log('✅ User does not exist, proceeding with registration');
@@ -231,7 +326,7 @@ class AuthController {
           shopname: name,
           contact: mob_number,
           address: address,
-          location: location || '',
+          location: cleanLocation,
           state: state || '',
           place: place || '',
           language: language,
@@ -258,8 +353,8 @@ class AuthController {
           email: email,
           name: name,
           contact: mob_number,
-          address: address,
-          location: location || '',
+          address: address || '',
+          location: cleanLocation,
           state: state || '',
           place: place || '',
           language: language,
@@ -268,6 +363,8 @@ class AuthController {
           lat_log: lat_log || '',
           place_id: place_id || ''
         };
+        
+        console.log('📝 [usersRegister] Creating customer with data:', customerData);
 
         const customer = await Customer.create(customerData);
         const customerDetails = await Customer.findById(customer.id);

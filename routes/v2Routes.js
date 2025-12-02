@@ -103,6 +103,13 @@ router.post('/profile/:userId/aadhar', documentUpload.single('file'), V2ProfileC
  */
 router.post('/profile/:userId/driving-license', documentUpload.single('file'), V2ProfileController.uploadDrivingLicense);
 
+/**
+ * PUT /api/v2/profile/:userId/complete-delivery-signup
+ * Manually complete delivery signup and update user_type to 'D'
+ * This is a fallback endpoint if the regular updateProfile doesn't update user_type
+ */
+router.put('/profile/:userId/complete-delivery-signup', V2ProfileController.completeDeliverySignup);
+
 // ==================== B2B SIGNUP ROUTES ====================
 /**
  * POST /api/v2/b2b-signup/:userId/document

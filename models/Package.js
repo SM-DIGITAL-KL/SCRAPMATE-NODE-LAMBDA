@@ -241,7 +241,10 @@ class Package {
       
       const command = new ScanCommand({
         TableName: TABLE_NAME,
-        FilterExpression: 'type = :type',
+        FilterExpression: '#type = :type',
+        ExpressionAttributeNames: {
+          '#type': 'type'  // 'type' is a reserved keyword in DynamoDB
+        },
         ExpressionAttributeValues: {
           ':type': typeValue
         },
@@ -252,6 +255,57 @@ class Package {
       return response.Items && response.Items.length > 0 ? response.Items[0] : null;
     } catch (err) {
       throw err;
+    }
+  }
+
+  // Set free package for new user
+  static async setPackage(userId) {
+    try {
+      const Invoice = require('./Invoice');
+      
+      // Find free package (type = 1)
+      const freePackage = await this.findByType(1);
+      
+      if (freePackage) {
+        // Check if user already has an invoice
+        const existingInvoice = await Invoice.findLatestByUserId(userId);
+        
+        // Only create invoice if user doesn't have one yet
+        if (!existingInvoice) {
+          const today = new Date();
+          const fromDate = today.toISOString().split('T')[0];
+          
+          // Calculate to_date by adding duration days
+          const toDate = new Date(today);
+          toDate.setDate(toDate.getDate() + (freePackage.duration || 30));
+          const toDateStr = toDate.toISOString().split('T')[0];
+          
+          // Create invoice
+          const invoiceData = {
+            user_id: typeof userId === 'string' && !isNaN(userId) ? parseInt(userId) : userId,
+            from_date: fromDate,
+            to_date: toDateStr,
+            name: freePackage.name || 'Free Package',
+            displayname: freePackage.displayname || 'Free',
+            type: 'Free',
+            price: freePackage.price || 0,
+            duration: freePackage.duration || 30
+          };
+          
+          await Invoice.create(invoiceData);
+          console.log(`✅ Created free package invoice for user ${userId}`);
+        } else {
+          console.log(`ℹ️  User ${userId} already has an invoice, skipping package setup`);
+        }
+      } else {
+        console.log('⚠️  No free package (type=1) found in packages table');
+      }
+      
+      return true;
+    } catch (err) {
+      console.error('Error setting package:', err);
+      // Don't throw error - allow registration to continue even if package setup fails
+      return true;
     }
   }
 }

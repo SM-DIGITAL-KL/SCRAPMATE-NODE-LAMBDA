@@ -63,6 +63,17 @@ class V2ShopTypeService {
       throw new Error('User not found');
     }
 
+    // IMPORTANT: If user_type is 'D' (Delivery), always return delivery dashboard only
+    if (user.user_type === 'D') {
+      console.log(`🚚 Delivery user (ID: ${user.id}) - allowing access to delivery dashboard only`);
+      return {
+        shopType: null,
+        shopTypeName: null,
+        allowedDashboards: ['delivery'],
+        canSwitch: false
+      };
+    }
+
     // Check if user is v1 (no restrictions) or v2 (with restrictions)
     const isV1User = !user.app_version || user.app_version === 'v1';
 

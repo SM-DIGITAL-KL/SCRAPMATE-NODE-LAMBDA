@@ -210,12 +210,15 @@ class ProductController {
   // All product categories
   static async allProCategory(req, res) {
     try {
+      console.log(`🔍 all_pro_category called`);
       const { shop_id } = req.query;
+      console.log(`   shop_id: ${shop_id}`);
 
       // Check Redis cache first (only if previously successful)
       const cacheKey = RedisCache.listKey('all_pro_categories', { shop_id: shop_id || 'all' });
       const cached = await RedisCache.get(cacheKey);
       if (cached) {
+        console.log(`⚡ Redis cache hit for all pro categories: ${cacheKey}`);
         return res.json({
           status: 'success',
           msg: 'success',
@@ -223,26 +226,59 @@ class ProductController {
         });
       }
 
-      let query = 'SELECT * FROM category_img_keywords';
-      const params = [];
+      // Use CategoryImgKeywords model to fetch from DynamoDB
+      const CategoryImgKeywords = require('../models/CategoryImgKeywords');
+      console.log(`🔎 Fetching all categories from DynamoDB`);
+      let allCategories = await CategoryImgKeywords.getAll();
+      console.log(`✅ Found ${allCategories.length} category(ies) in DynamoDB`);
 
-      // TODO: category_img_keywords table - Create CategoryImgKeywords model if needed
-      // For now, return empty array
-      let categories = [];
-      
+      // If shop_id is provided, filter out categories already used by this shop
       if (shop_id) {
-        // Get categories already used by this shop
-        const usedCategories = await ProductCategory.findByShopId(shop_id);
-        const usedCatNames = usedCategories.map(c => c.cat_name);
-        
-        // Filter out used categories (if we had category_img_keywords model)
-        // For now, just return empty array
-        categories = [];
+        try {
+          // Get categories already used by this shop
+          const usedCategories = await ProductCategory.findByShopId(shop_id);
+          const usedCatNames = usedCategories.map(c => c.cat_name);
+          console.log(`   Shop ${shop_id} already uses ${usedCatNames.length} categories:`, usedCatNames);
+          
+          // Filter out used categories
+          allCategories = allCategories.filter(cat => {
+            const catName = cat.cat_name || cat.category_name || '';
+            return !usedCatNames.includes(catName);
+          });
+          console.log(`   After filtering: ${allCategories.length} available categories`);
+        } catch (filterErr) {
+          console.error('Error filtering categories by shop:', filterErr);
+          // Continue with all categories if filtering fails
+        }
       }
 
-      // Cache the result only on success (1 hour TTL)
+      // Format image URLs to ensure they point to S3 (with presigned URLs)
+      // getImageUrl is already imported at the top of the file
+      const categoryList = await Promise.all(allCategories.map(async (cat) => {
+        let catImg = '';
+        
+        // Prefer cat_img field, fallback to category_img
+        const imageUrl = cat.cat_img || cat.category_img || '';
+        
+        if (imageUrl) {
+          // Use getImageUrl helper which handles both S3 and external URLs
+          catImg = await getImageUrl(imageUrl, 'category');
+        }
+
+        return {
+          id: cat.id,
+          cat_name: cat.cat_name || cat.category_name || '',
+          cat_img: catImg || '',
+          category_img: catImg || '',
+          keywords: cat.keywords || cat.keyword || ''
+        };
+      }));
+
+      console.log(`✅ Returning ${categoryList.length} formatted categories`);
+
+      // Cache the result only on success (365 days TTL)
       try {
-        await RedisCache.set(cacheKey, categories, '365days');
+        await RedisCache.set(cacheKey, categoryList, '365days');
         console.log(`💾 Redis cache set for all pro categories: ${cacheKey}`);
       } catch (redisErr) {
         console.error('Redis cache error:', redisErr);
@@ -252,13 +288,14 @@ class ProductController {
       res.json({
         status: 'success',
         msg: 'success',
-        data: categories
+        data: categoryList
       });
     } catch (err) {
       console.error('All product category error:', err);
+      console.error('Error stack:', err.stack);
       res.status(201).json({
         status: 'error',
-        msg: 'Failed to fetch categories',
+        msg: `Failed to fetch categories: ${err.message}`,
         data: ''
       });
     }
@@ -586,9 +623,13 @@ class ProductController {
   // Items list for sale
   static async itemsListForSale(req, res) {
     try {
+      console.log(`🔍 [itemsListForSale] Request received`);
+      console.log(`   Body:`, req.body);
+      
       const { shop_id, category } = req.body;
 
       if (!shop_id || !category) {
+        console.log(`❌ [itemsListForSale] Missing params: shop_id=${shop_id}, category=${category}`);
         return res.status(201).json({
           status: 'error',
           msg: 'empty param',
@@ -598,21 +639,77 @@ class ProductController {
 
       // Category can be comma-separated list
       const categoryNames = category.split(',').map(c => c.trim());
+      console.log(`📝 [itemsListForSale] shop_id=${shop_id}, categoryNames=${JSON.stringify(categoryNames)}`);
       
       // Get category IDs using model method
       const categories = await ProductCategory.getByCategoryNames(shop_id, categoryNames);
+      console.log(`📝 [itemsListForSale] Found ${categories.length} category(ies) for shop ${shop_id}`);
 
       if (categories.length === 0) {
+        console.log(`⚠️  [itemsListForSale] No categories found, returning empty grouped data`);
+        // Return grouped data with empty arrays for each category
+        const groupedData = {};
+        categoryNames.forEach(catName => {
+          groupedData[catName] = [];
+        });
         return res.json({
           status: 'success',
           msg: 'Empty List',
-          data: {}
+          data: groupedData
         });
       }
 
       const categoryIds = categories.map(c => c.id);
-      // Get products using model method
-      const products = await Product.getByShopIdAndCategoryIds(shop_id, categoryIds);
+      console.log(`📝 [itemsListForSale] Category IDs: ${JSON.stringify(categoryIds)}`);
+      
+      // Get products for each category ID and combine
+      // Since DynamoDB doesn't support IN operator well, we'll get products for each category
+      let allProducts = [];
+      for (const catId of categoryIds) {
+        const productsForCategory = await Product.findByShopId(shop_id, catId);
+        allProducts.push(...productsForCategory);
+      }
+      
+      // Remove duplicates (in case a product appears in multiple categories)
+      const uniqueProducts = [];
+      const seenIds = new Set();
+      allProducts.forEach(product => {
+        if (!seenIds.has(product.id)) {
+          seenIds.add(product.id);
+          uniqueProducts.push(product);
+        }
+      });
+      
+      console.log(`📝 [itemsListForSale] Found ${uniqueProducts.length} unique product(s)`);
+      const products = uniqueProducts;
+
+      // Format product images and ensure correct field names/types for Flutter
+      const { getImageUrl } = require('../utils/imageHelper');
+      const formattedProducts = await Promise.all(products.map(async (product) => {
+        let imageUrl = '';
+        if (product.image) {
+          imageUrl = await getImageUrl(product.image, 'product');
+        }
+        
+        // Ensure all fields match Flutter model expectations
+        // Flutter expects: id (int), shop_id (int), cat_id (int), name (String), 
+        // amout (String - note typo), created_at (String ISO), updated_at (String ISO)
+        return {
+          id: typeof product.id === 'number' ? product.id : parseInt(product.id) || 0,
+          shop_id: typeof product.shop_id === 'number' ? product.shop_id : parseInt(product.shop_id) || 0,
+          cat_id: typeof product.cat_id === 'number' ? product.cat_id : parseInt(product.cat_id) || 0,
+          name: String(product.name || ''),
+          amout: String(product.price || product.amout || product.amount || '0'), // Flutter expects "amout" (typo)
+          image: imageUrl,
+          // Ensure dates are ISO strings
+          created_at: product.created_at ? 
+            (typeof product.created_at === 'string' ? product.created_at : new Date(product.created_at).toISOString()) :
+            new Date().toISOString(),
+          updated_at: product.updated_at ? 
+            (typeof product.updated_at === 'string' ? product.updated_at : new Date(product.updated_at).toISOString()) :
+            new Date().toISOString()
+        };
+      }));
 
       // Group by category name
       const groupedData = {};
@@ -620,14 +717,23 @@ class ProductController {
         groupedData[catName] = [];
       });
 
-      products.forEach(product => {
+      formattedProducts.forEach(product => {
         const category = categories.find(c => c.id === product.cat_id);
-        if (category && groupedData[category.cat_name]) {
-          groupedData[category.cat_name].push(product);
+        if (category) {
+          const catName = category.cat_name;
+          // Match category name (case-insensitive)
+          const matchingKey = Object.keys(groupedData).find(key => 
+            key.toLowerCase() === catName.toLowerCase()
+          );
+          if (matchingKey) {
+            groupedData[matchingKey].push(product);
+          }
         }
       });
 
-      if (products.length === 0) {
+      console.log(`✅ [itemsListForSale] Returning grouped data with ${formattedProducts.length} product(s)`);
+
+      if (formattedProducts.length === 0) {
         return res.json({
           status: 'success',
           msg: 'Empty List',
@@ -641,10 +747,11 @@ class ProductController {
         });
       }
     } catch (err) {
-      console.error('Items list for sale error:', err);
+      console.error('❌ [itemsListForSale] Error:', err);
+      console.error('❌ [itemsListForSale] Stack:', err.stack);
       res.status(201).json({
         status: 'error',
-        msg: 'Failed to fetch items',
+        msg: `Failed to fetch items: ${err.message}`,
         data: ''
       });
     }

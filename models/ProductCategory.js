@@ -141,21 +141,53 @@ class ProductCategory {
       const client = getDynamoDBClient();
       const sid = typeof shopId === 'string' && !isNaN(shopId) ? parseInt(shopId) : shopId;
       
-      const command = new ScanCommand({
-        TableName: TABLE_NAME,
-        FilterExpression: 'shop_id = :shopId AND cat_name IN (:catNames)',
-        ExpressionAttributeValues: {
-          ':shopId': sid,
-          ':catNames': categoryNames
+      console.log(`🔍 [getByCategoryNames] Looking for shop_id=${sid}, categoryNames=${JSON.stringify(categoryNames)}`);
+      
+      // DynamoDB doesn't support IN operator directly, so we need to use OR conditions
+      // Build OR conditions for each category name
+      let lastKey = null;
+      const allItems = [];
+      
+      do {
+        // First filter by shop_id
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'shop_id = :shopId',
+          ExpressionAttributeValues: {
+            ':shopId': sid
+          }
+        };
+        
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
         }
-      });
-
-      const response = await client.send(command);
-      return (response.Items || []).map(item => ({
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        
+        if (response.Items) {
+          // Filter in memory by category names (case-insensitive)
+          const matching = response.Items.filter(item => {
+            const itemCatName = (item.cat_name || '').trim();
+            return categoryNames.some(catName => 
+              itemCatName.toLowerCase() === catName.trim().toLowerCase()
+            );
+          });
+          allItems.push(...matching);
+        }
+        
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+      
+      console.log(`✅ [getByCategoryNames] Found ${allItems.length} matching category(ies)`);
+      
+      return allItems.map(item => ({
         id: item.id,
-        cat_name: item.cat_name
+        cat_name: item.cat_name,
+        shop_id: item.shop_id
       }));
     } catch (err) {
+      console.error('❌ [getByCategoryNames] Error:', err);
       throw err;
     }
   }

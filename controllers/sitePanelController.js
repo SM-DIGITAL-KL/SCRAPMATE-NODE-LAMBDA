@@ -194,9 +194,59 @@ class SitePanelController {
         });
       }
       
-      // TODO: admin_profile table - Create AdminProfile model if needed
-      // For now, just log the update
-      console.log('✅ updateAppVersion: Would update app version to:', version);
+      // Update admin_profile table in DynamoDB
+      const { getDynamoDBClient } = require('../config/dynamodb');
+      const { GetCommand, PutCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+      const client = getDynamoDBClient();
+      
+      // Check if admin_profile exists
+      const getCommand = new GetCommand({
+        TableName: 'admin_profile',
+        Key: { id: 1 }
+      });
+      
+      const response = await client.send(getCommand);
+      
+      if (response.Item) {
+        // Update existing item
+        const updateCommand = new UpdateCommand({
+          TableName: 'admin_profile',
+          Key: { id: 1 },
+          UpdateExpression: 'SET appVersion = :version, app_version = :version, #updated_at = :updated_at',
+          ExpressionAttributeNames: {
+            '#updated_at': 'updated_at'
+          },
+          ExpressionAttributeValues: {
+            ':version': version,
+            ':updated_at': new Date().toISOString()
+          }
+        });
+        
+        await client.send(updateCommand);
+        console.log('✅ updateAppVersion: Updated app version to:', version);
+      } else {
+        // Create new admin_profile item if it doesn't exist
+        const newItem = {
+          id: 1,
+          name: 'SCRAPMATE',
+          contact: 0,
+          email: 'nil@nil.in',
+          address: 'nil',
+          location: 'nil',
+          appVersion: version,
+          app_version: version,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+        
+        const putCommand = new PutCommand({
+          TableName: 'admin_profile',
+          Item: newItem
+        });
+        
+        await client.send(putCommand);
+        console.log('✅ updateAppVersion: Created new admin_profile with version:', version);
+      }
       
       // Invalidate related caches
       try {

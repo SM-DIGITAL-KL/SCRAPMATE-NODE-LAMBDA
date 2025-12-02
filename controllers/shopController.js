@@ -544,16 +544,48 @@ class ShopController {
       // Get nearby shops with distance calculation using model method
       const shops = await Shop.getShopsByLocation(refLat, refLng, matchRadius, shopIds);
 
-      // TODO: Implement Google Distance Matrix API call for precise distances
-      // For now, return shops with calculated distance
-      const shopList = shops.map(shop => {
-        const [lat, lng] = shop.lat_log.split(',').map(Number);
+      console.log(`✅ Found ${shops.length} nearby shop(s)`);
+
+      // Format shop data with full details and image URLs
+      const { getImageUrl } = require('../utils/imageHelper');
+      const shopList = await Promise.all(shops.map(async (shop) => {
+        // Format profile image URL
+        let imageUrl = '';
+        const profilePhoto = shop.profile_photo || shop.shop_img || '';
+        if (profilePhoto) {
+          imageUrl = await getImageUrl(profilePhoto, 'shop');
+        }
+
+        // Return full shop details
+        // Convert contact to string (it might be stored as number in DynamoDB)
+        let contactValue = '';
+        if (shop.contact !== undefined && shop.contact !== null) {
+          contactValue = String(shop.contact);
+        } else if (shop.mob_number !== undefined && shop.mob_number !== null) {
+          contactValue = String(shop.mob_number);
+        }
+        
         return {
-          shop_id: shop.id,
-          lat_long: shop.lat_log,
-          distance: `${shop.distance.toFixed(2)} km`
+          id: shop.id,
+          shopname: shop.shopname || shop.shop_name || '',
+          contact: contactValue,
+          address: shop.address || '',
+          image: imageUrl,
+          lat_log: shop.lat_log || '',
+          distance: `${shop.distance.toFixed(2)} km`,
+          ownername: shop.ownername || shop.owner_name || '',
+          email: shop.email || '',
+          location: shop.location || '',
+          state: shop.state || '',
+          place: shop.place || '',
+          pincode: shop.pincode || '',
+          shop_type: shop.shop_type || '',
+          language: shop.language || 1,
+          user_id: shop.user_id || null
         };
-      });
+      }));
+
+      console.log(`✅ Returning ${shopList.length} shop(s) with full details`);
 
       res.json({
         status: 'success',

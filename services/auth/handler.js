@@ -17,6 +17,16 @@ require('../../config/dynamodb');
 
 // Middleware - Body parsing for HTTP API v2 (BEFORE express.json)
 app.use((req, res, next) => {
+  // IMPORTANT: Do NOT parse multipart/form-data - let multer handle it
+  const contentType = req.headers['content-type'] || req.headers['Content-Type'] || '';
+  const isMultipart = contentType.includes('multipart/form-data');
+  
+  // Skip parsing for multipart/form-data - multer will handle it
+  if (isMultipart) {
+    console.log('📎 Multipart request detected, skipping JSON parsing - multer will handle');
+    return next();
+  }
+  
   // If body is a Buffer or string, parse it manually for HTTP API v2
   if (req.body) {
     try {
@@ -29,7 +39,6 @@ app.use((req, res, next) => {
       }
       
       if (bodyString) {
-        const contentType = req.headers['content-type'] || req.headers['Content-Type'] || '';
         if (contentType.includes('application/json') || bodyString.trim().startsWith('{') || bodyString.trim().startsWith('[')) {
           req.body = JSON.parse(bodyString);
           console.log('✅ Parsed body in middleware:', Object.keys(req.body));
@@ -42,8 +51,25 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Only use JSON parser for non-multipart requests
+app.use((req, res, next) => {
+  const contentType = req.headers['content-type'] || req.headers['Content-Type'] || '';
+  if (!contentType.includes('multipart/form-data')) {
+    express.json()(req, res, next);
+  } else {
+    next();
+  }
+});
+
+// Only use urlencoded parser for non-multipart requests
+app.use((req, res, next) => {
+  const contentType = req.headers['content-type'] || req.headers['Content-Type'] || '';
+  if (!contentType.includes('multipart/form-data')) {
+    express.urlencoded({ extended: true })(req, res, next);
+  } else {
+    next();
+  }
+});
 
 // Debug middleware to log request body
 app.use((req, res, next) => {
@@ -111,24 +137,35 @@ exports.handler = async (event, context) => {
   
   // Handle HTTP API v2 format - parse body if needed
   if (event.requestContext?.http && event.body) {
+    if (!event.headers) event.headers = {};
+    const contentType = event.headers['content-type'] || event.headers['Content-Type'] || '';
+    const isMultipart = contentType.includes('multipart/form-data');
+    
     // HTTP API v2 sends body as string
     if (typeof event.body === 'string') {
-      // Check if body is base64 encoded
-      if (event.isBase64Encoded) {
+      // For multipart/form-data, decode base64 to Buffer for multer
+      if (isMultipart && event.isBase64Encoded) {
+        // Decode base64 to Buffer - multer needs the raw binary data
         try {
-          event.body = Buffer.from(event.body, 'base64').toString('utf-8');
+          event.body = Buffer.from(event.body, 'base64');
+          console.log('📎 Multipart request: decoded base64 body to Buffer for multer');
         } catch (e) {
-          console.error('Failed to decode base64 body:', e);
+          console.error('Failed to decode base64 multipart body:', e);
         }
-      }
-      
-      // Ensure Content-Type is set for express.json() to parse
-      if (!event.headers) event.headers = {};
-      const contentType = event.headers['content-type'] || event.headers['Content-Type'] || '';
-      
-      // If it's JSON and not already parsed, ensure Content-Type is set
-      if ((contentType.includes('application/json') || event.body.trim().startsWith('{') || event.body.trim().startsWith('[')) && !contentType) {
-        event.headers['content-type'] = 'application/json';
+      } else {
+        // For JSON, decode base64 if needed
+        if (event.isBase64Encoded) {
+          try {
+            event.body = Buffer.from(event.body, 'base64').toString('utf-8');
+          } catch (e) {
+            console.error('Failed to decode base64 body:', e);
+          }
+        }
+        
+        // Ensure Content-Type is set for express.json() to parse (only for JSON)
+        if ((contentType.includes('application/json') || event.body.trim().startsWith('{') || event.body.trim().startsWith('[')) && !contentType) {
+          event.headers['content-type'] = 'application/json';
+        }
       }
     }
   }

@@ -10,6 +10,19 @@ const V2B2BSignupController = require('../../controllers/v2B2BSignupController')
 const shopImageUpload = shopImageUploadMulter.single('shop_img');
 const v2DocumentUpload = documentUploadMulter;
 
+// Request logging middleware for shop service
+router.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  console.log(`\n🏪 [SHOP SERVICE] ${req.method} ${req.path || req.url} [${timestamp}]`);
+  console.log(`   Query:`, req.query);
+  console.log(`   Params:`, req.params);
+  console.log(`   Body keys:`, req.body ? Object.keys(req.body) : 'no body');
+  if (req.file) {
+    console.log(`   File: ${req.file.originalname} (${req.file.size} bytes)`);
+  }
+  next();
+});
+
 router.use(apiKeyCheck);
 
 // ==================== SHOP ROUTES ====================

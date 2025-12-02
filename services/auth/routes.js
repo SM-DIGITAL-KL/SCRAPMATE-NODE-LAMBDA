@@ -15,6 +15,19 @@ const V2AuthController = require('../../controllers/v2AuthController');
 
 const profileUpload = profileUploadMulter.single('profile_photo');
 
+// Request logging middleware for auth service
+router.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  console.log(`\n🔐 [AUTH SERVICE] ${req.method} ${req.path || req.url} [${timestamp}]`);
+  console.log(`   Query:`, req.query);
+  console.log(`   Params:`, req.params);
+  console.log(`   Body keys:`, req.body ? Object.keys(req.body) : 'no body');
+  if (req.file) {
+    console.log(`   File: ${req.file.originalname} (${req.file.size} bytes)`);
+  }
+  next();
+});
+
 // Public route (no API key required)
 router.get('/', AuthController.index);
 

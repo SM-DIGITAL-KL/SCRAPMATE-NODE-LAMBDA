@@ -48,6 +48,43 @@ class Product {
     }
   }
 
+  // Count products by shop ID (optimized with Select: "COUNT")
+  static async getCountByShopId(shopId) {
+    try {
+      const client = getDynamoDBClient();
+      const sid = typeof shopId === 'string' && !isNaN(shopId) ? parseInt(shopId) : shopId;
+      let lastKey = null;
+      let count = 0;
+      
+      do {
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'shop_id = :shopId',
+          ExpressionAttributeValues: {
+            ':shopId': sid
+          },
+          Select: 'COUNT'
+        };
+        
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        
+        // With Select: "COUNT", response.Count contains the count
+        count += response.Count || 0;
+        
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+      
+      return count;
+    } catch (err) {
+      throw err;
+    }
+  }
+
   // Count products by category ID (optimized with Select: "COUNT")
   static async countByCategoryId(catId) {
     try {

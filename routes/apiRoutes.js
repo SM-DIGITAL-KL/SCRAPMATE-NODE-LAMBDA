@@ -35,6 +35,102 @@ const deliveryBoyUpload = deliveryBoyUploadMulter.fields([
 // Public route (no API key required)
 router.get('/', AuthController.index);
 
+// ==================== REQUEST LOGGING MIDDLEWARE ====================
+// Log all incoming requests to track which endpoints are being called
+router.use((req, res, next) => {
+  const timestamp = new Date().toISOString();
+  const method = req.method;
+  const path = req.path || req.url;
+  const fullUrl = req.originalUrl || req.url;
+  
+  console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log(`📥 [${timestamp}] ${method} ${fullUrl}`);
+  console.log(`   Path: ${path}`);
+  console.log(`   Query:`, req.query);
+  console.log(`   Params:`, req.params);
+  console.log(`   Headers:`, {
+    'content-type': req.headers['content-type'] || req.headers['Content-Type'],
+    'api-key': req.headers['api-key'] ? '***' : 'missing',
+    'user-agent': req.headers['user-agent']?.substring(0, 50)
+  });
+  
+  // Log body (but limit size for large payloads)
+  if (req.body) {
+    const bodyStr = JSON.stringify(req.body);
+    if (bodyStr.length > 500) {
+      console.log(`   Body: ${bodyStr.substring(0, 500)}... (truncated, ${bodyStr.length} chars)`);
+    } else {
+      console.log(`   Body:`, req.body);
+    }
+  } else {
+    console.log(`   Body: (empty or not parsed)`);
+  }
+  
+  // Log file upload info
+  if (req.file) {
+    console.log(`   File: ${req.file.originalname} (${req.file.size} bytes, ${req.file.mimetype})`);
+  }
+  if (req.files) {
+    console.log(`   Files:`, Object.keys(req.files).map(key => `${key}: ${req.files[key].length || 1} file(s)`));
+  }
+  
+  // Capture original json method to log response
+  const originalJson = res.json.bind(res);
+  res.json = function(body) {
+    const statusCode = res.statusCode;
+    console.log(`📤 [${timestamp}] ${method} ${fullUrl} → ${statusCode}`);
+    if (body && typeof body === 'object') {
+      const responseStr = JSON.stringify(body);
+      if (responseStr.length > 500) {
+        console.log(`   Response: ${responseStr.substring(0, 500)}... (truncated)`);
+      } else {
+        console.log(`   Response:`, body);
+      }
+    }
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    return originalJson(body);
+  };
+  
+  // Capture original send method
+  const originalSend = res.send.bind(res);
+  res.send = function(body) {
+    const statusCode = res.statusCode;
+    console.log(`📤 [${timestamp}] ${method} ${fullUrl} → ${statusCode}`);
+    if (typeof body === 'string' && body.length > 500) {
+      console.log(`   Response: ${body.substring(0, 500)}... (truncated)`);
+    } else {
+      console.log(`   Response:`, body);
+    }
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    return originalSend(body);
+  };
+  
+  // Log errors
+  const originalStatus = res.status.bind(res);
+  res.status = function(code) {
+    if (code >= 400) {
+      console.log(`⚠️  [${timestamp}] ${method} ${fullUrl} → ERROR ${code}`);
+    }
+    return originalStatus(code);
+  };
+  
+  next();
+});
+
+// Error logging middleware
+router.use((err, req, res, next) => {
+  const timestamp = new Date().toISOString();
+  console.error('\n❌ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.error(`❌ [${timestamp}] ERROR in ${req.method} ${req.path || req.url}`);
+  console.error(`   Error:`, err.message);
+  console.error(`   Stack:`, err.stack);
+  console.error(`   Body:`, req.body);
+  console.error(`   Params:`, req.params);
+  console.error(`   Query:`, req.query);
+  console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+  next(err);
+});
+
 // All routes below require API key
 router.use(apiKeyCheck);
 

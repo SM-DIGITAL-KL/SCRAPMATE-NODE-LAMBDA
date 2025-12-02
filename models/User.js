@@ -873,9 +873,39 @@ class User {
       
       let lastKey = null;
       const allUsers = [];
+      const userIdsWithB2BShop = new Set(); // Track users with shop_type = 1 (Industrial) or 4 (Wholesaler)
       let scannedCount = 0;
       
-      // First, collect all B2B users (we need to scan all to filter)
+      // First, find all shops with shop_type = 1 (Industrial) or 4 (Wholesaler) to identify v1 B2B users
+      console.log('🔍 Scanning shops for shop_type = 1 (Industrial) or 4 (Wholesaler)...');
+      let shopLastKey = null;
+      do {
+        const shopParams = {
+          TableName: 'shops'
+        };
+        
+        if (shopLastKey) {
+          shopParams.ExclusiveStartKey = shopLastKey;
+        }
+        
+        const shopCommand = new ScanCommand(shopParams);
+        const shopResponse = await client.send(shopCommand);
+        
+        if (shopResponse.Items) {
+          shopResponse.Items.forEach(shop => {
+            // Include shops with shop_type = 1 (Industrial) or 4 (Wholesaler)
+            if (shop.user_id && (shop.shop_type === 1 || shop.shop_type === 4)) {
+              userIdsWithB2BShop.add(shop.user_id);
+            }
+          });
+        }
+        
+        shopLastKey = shopResponse.LastEvaluatedKey;
+      } while (shopLastKey);
+      
+      console.log(`✅ Found ${userIdsWithB2BShop.size} users with shop_type = 1 (Industrial) or 4 (Wholesaler)`);
+      
+      // Now, collect all B2B users (we need to scan all to filter)
       do {
         const params = {
           TableName: TABLE_NAME
@@ -890,10 +920,14 @@ class User {
         
         if (response.Items) {
           scannedCount += response.Items.length;
-          // Filter for B2B users (S or SR)
-          let b2bUsers = response.Items.filter(user => 
-            user.user_type === 'S' || user.user_type === 'SR'
-          );
+          // Filter for B2B users:
+          // 1. user_type = 'S' or 'SR' (v2 B2B users)
+          // 2. OR user has shop_type = 1 (Industrial) or 4 (Wholesaler) (v1 B2B users)
+          let b2bUsers = response.Items.filter(user => {
+            const isV2B2B = user.user_type === 'S' || user.user_type === 'SR';
+            const isV1B2B = userIdsWithB2BShop.has(user.id);
+            return isV2B2B || isV1B2B;
+          });
           
           // Note: Search filtering is done in the controller after enriching with shop data
           // This allows searching by both user.mob_num and shop.contact
@@ -954,6 +988,136 @@ class User {
       };
     } catch (err) {
       console.error('User.getB2BUsers error:', err);
+      throw err;
+    }
+  }
+
+  // Get B2C users with pagination (user_type = 'R' or 'SR', OR shop_type = 2 or 3 for v1 retailers)
+  static async getB2CUsers(page = 1, limit = 10, search = null) {
+    try {
+      const client = getDynamoDBClient();
+      const Shop = require('./Shop');
+      const pageNumber = parseInt(page) || 1;
+      const pageSize = parseInt(limit) || 20;
+      const skip = (pageNumber - 1) * pageSize;
+      
+      let lastKey = null;
+      const allUsers = [];
+      const userIdsWithRetailerShop = new Set(); // Track users with shop_type = 2 or 3
+      let scannedCount = 0;
+      
+      // First, find all shops with shop_type = 2 (Retailer/Door Step Buyer) or 3 (Retailer B2C) to identify v1 B2C users
+      console.log('🔍 Scanning shops for shop_type = 2 (Retailer/Door Step Buyer) or 3 (Retailer B2C)...');
+      let shopLastKey = null;
+      do {
+        const shopParams = {
+          TableName: 'shops'
+        };
+        
+        if (shopLastKey) {
+          shopParams.ExclusiveStartKey = shopLastKey;
+        }
+        
+        const shopCommand = new ScanCommand(shopParams);
+        const shopResponse = await client.send(shopCommand);
+        
+        if (shopResponse.Items) {
+          shopResponse.Items.forEach(shop => {
+            // Include shops with shop_type = 2 (Retailer/Door Step Buyer) or 3 (Retailer B2C)
+            if (shop.user_id && (shop.shop_type === 2 || shop.shop_type === 3)) {
+              userIdsWithRetailerShop.add(shop.user_id);
+            }
+          });
+        }
+        
+        shopLastKey = shopResponse.LastEvaluatedKey;
+      } while (shopLastKey);
+      
+      console.log(`✅ Found ${userIdsWithRetailerShop.size} users with shop_type = 2 (Retailer/Door Step Buyer) or 3 (Retailer B2C)`);
+      
+      // Now, collect all B2C users (we need to scan all to filter)
+      do {
+        const params = {
+          TableName: TABLE_NAME
+        };
+        
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        
+        if (response.Items) {
+          scannedCount += response.Items.length;
+          // Filter for B2C users:
+          // 1. user_type = 'R' or 'SR' (v2 B2C users)
+          // 2. OR user has shop_type = 2 (v1 Retailer/Door Step Buyer) or 3 (v1 Retailer B2C)
+          let b2cUsers = response.Items.filter(user => {
+            const isV2B2C = user.user_type === 'R' || user.user_type === 'SR';
+            const isV1Retailer = userIdsWithRetailerShop.has(user.id);
+            return isV2B2C || isV1Retailer;
+          });
+          
+          // Note: Search filtering is done in the controller after enriching with shop data
+          // This allows searching by both user.mob_num and shop.contact
+          
+          allUsers.push(...b2cUsers);
+        }
+        
+        lastKey = response.LastEvaluatedKey;
+        // Stop if no more items to scan OR if we have enough for pagination
+        // (we need at least skip + pageSize items, but we'll get all for accurate total count)
+      } while (lastKey);
+      
+      // Sort by created_at descending (newest first)
+      allUsers.sort((a, b) => {
+        // Handle missing or invalid dates - use created_at or fallback to updated_at
+        let dateA = a.created_at ? new Date(a.created_at) : null;
+        let dateB = b.created_at ? new Date(b.created_at) : null;
+        
+        // If dates are invalid or missing, use updated_at as fallback
+        if (!dateA || isNaN(dateA.getTime())) {
+          dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
+        }
+        if (!dateB || isNaN(dateB.getTime())) {
+          dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
+        }
+        
+        // Sort descending (newest first)
+        return dateB.getTime() - dateA.getTime();
+      });
+      
+      console.log(`✅ Sorted ${allUsers.length} B2C users by newest first`);
+      if (allUsers.length > 0) {
+        console.log(`   First user: ${allUsers[0].name} (created: ${allUsers[0].created_at})`);
+        if (allUsers.length > 1) {
+          console.log(`   Last user: ${allUsers[allUsers.length - 1].name} (created: ${allUsers[allUsers.length - 1].created_at})`);
+        }
+      }
+      
+      // Get total count
+      const total = allUsers.length;
+      
+      // Apply pagination (if limit is very large, return all users)
+      const paginatedUsers = pageSize >= 999999 ? allUsers : allUsers.slice(skip, skip + pageSize);
+      
+      // Remove password from results
+      const usersWithoutPassword = paginatedUsers.map(user => {
+        const { password: _, ...userWithoutPassword } = user;
+        return userWithoutPassword;
+      });
+      
+      return {
+        users: usersWithoutPassword,
+        total: total,
+        page: pageNumber,
+        limit: pageSize,
+        totalPages: Math.ceil(total / pageSize),
+        hasMore: skip + pageSize < total
+      };
+    } catch (err) {
+      console.error('User.getB2CUsers error:', err);
       throw err;
     }
   }

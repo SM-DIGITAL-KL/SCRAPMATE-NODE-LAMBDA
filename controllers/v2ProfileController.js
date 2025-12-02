@@ -352,6 +352,17 @@ class V2ProfileController {
         });
       }
 
+      // Check if user exists BEFORE uploading to S3
+      const User = require('../models/User');
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'User not found',
+          data: null,
+        });
+      }
+
       console.log(`📤 Uploading Aadhar card for user ${userId}`);
       console.log(`📤 Original file size: ${(req.file.buffer.length / 1024).toFixed(2)}KB`);
 
@@ -362,13 +373,6 @@ class V2ProfileController {
       // Upload PDF directly to S3 (no compression for PDFs)
       const s3Result = await uploadBufferToS3(req.file.buffer, filename, 'documents');
       console.log(`✅ Aadhar card uploaded to S3: ${s3Result.s3Url}`);
-
-      // Get user to determine type
-      const User = require('../models/User');
-      const user = await User.findById(userId);
-      if (!user) {
-        throw new Error('USER_NOT_FOUND');
-      }
 
       // Update profile based on user type
       let updatedProfile;
@@ -466,6 +470,17 @@ class V2ProfileController {
         });
       }
 
+      // Check if user exists BEFORE uploading to S3
+      const User = require('../models/User');
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'User not found',
+          data: null,
+        });
+      }
+
       console.log(`📤 Uploading driving license for user ${userId}`);
       console.log(`📤 Original file size: ${(req.file.buffer.length / 1024).toFixed(2)}KB`);
 
@@ -476,13 +491,6 @@ class V2ProfileController {
       // Upload PDF directly to S3 (no compression for PDFs)
       const s3Result = await uploadBufferToS3(req.file.buffer, filename, 'documents');
       console.log(`✅ Driving license uploaded to S3: ${s3Result.s3Url}`);
-
-      // Get user to determine type
-      const User = require('../models/User');
-      const user = await User.findById(userId);
-      if (!user) {
-        throw new Error('USER_NOT_FOUND');
-      }
 
       // Update profile based on user type
       let updatedProfile;
@@ -541,6 +549,86 @@ class V2ProfileController {
       return res.status(500).json({
         status: 'error',
         msg: 'Failed to upload driving license',
+        data: null,
+      });
+    }
+  }
+
+  /**
+   * PUT /api/v2/profile/:userId/complete-delivery-signup
+   * Manually complete delivery signup and update user_type to 'D'
+   * This is a fallback endpoint if the regular updateProfile doesn't update user_type
+   */
+  static async completeDeliverySignup(req, res) {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res.status(400).json({
+        status: 'error',
+        msg: 'User ID is required',
+        data: null,
+      });
+    }
+
+    try {
+      console.log(`🔄 Manual delivery signup completion requested for user ${userId}`);
+
+      const profile = await V2ProfileService.completeDeliverySignup(userId);
+
+      return res.json({
+        status: 'success',
+        msg: 'Delivery signup completed successfully',
+        data: profile,
+      });
+    } catch (error) {
+      console.error('V2ProfileController.completeDeliverySignup error:', error);
+      console.error('Error stack:', error.stack);
+
+      if (error.message === 'USER_NOT_FOUND') {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'User not found',
+          data: null,
+        });
+      }
+
+      if (error.message === 'DELIVERY_RECORD_NOT_FOUND') {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Delivery record not found. Please complete the delivery signup form first.',
+          data: null,
+        });
+      }
+
+      if (error.message === 'SIGNUP_NOT_COMPLETE') {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Delivery signup is not complete. Please fill all required fields.',
+          data: null,
+        });
+      }
+
+      if (error.message === 'ALREADY_COMPLETE') {
+        try {
+          const profile = await V2ProfileService.getProfile(userId);
+          return res.status(200).json({
+            status: 'success',
+            msg: 'Delivery signup is already complete',
+            data: profile,
+          });
+        } catch (profileError) {
+          console.error('Error fetching profile for ALREADY_COMPLETE:', profileError);
+          return res.status(200).json({
+            status: 'success',
+            msg: 'Delivery signup is already complete',
+            data: null,
+          });
+        }
+      }
+
+      return res.status(500).json({
+        status: 'error',
+        msg: error.message || 'Failed to complete delivery signup',
         data: null,
       });
     }

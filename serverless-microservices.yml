@@ -82,6 +82,12 @@ functions:
       - httpApi:
           path: /api/login_app/{mob}
           method: GET
+      - httpApi:
+          path: /api/v2/auth/login
+          method: POST
+      - httpApi:
+          path: /api/v2/auth/verify-otp
+          method: POST
 
   # ==================== SHOP SERVICE ====================
   shop-service:
@@ -122,6 +128,24 @@ functions:
           method: POST
       - httpApi:
           path: /api/shop_ads_type_edit
+          method: POST
+      - httpApi:
+          path: /api/v2/shop-types
+          method: GET
+      - httpApi:
+          path: /api/v2/user/dashboards/{userId}
+          method: GET
+      - httpApi:
+          path: /api/v2/user/validate-dashboard
+          method: POST
+      - httpApi:
+          path: /api/v2/user/switch-dashboard
+          method: POST
+      - httpApi:
+          path: /api/v2/b2b-signup/{userId}/document
+          method: POST
+      - httpApi:
+          path: /api/v2/b2b-signup/{userId}
           method: POST
 
   # ==================== PRODUCT SERVICE ====================
@@ -259,6 +283,30 @@ functions:
           method: POST
       - httpApi:
           path: /api/fcmTokenClear/{userid}
+          method: GET
+      - httpApi:
+          path: /api/v2/profile/{userId}
+          method: GET
+      - httpApi:
+          path: /api/v2/profile/{userId}
+          method: PUT
+      - httpApi:
+          path: /api/v2/profile/{userId}/delivery-mode
+          method: PUT
+      - httpApi:
+          path: /api/v2/profile/{userId}/online-status
+          method: PUT
+      - httpApi:
+          path: /api/v2/profile/{userId}/image
+          method: POST
+      - httpApi:
+          path: /api/v2/profile/{userId}/aadhar
+          method: POST
+      - httpApi:
+          path: /api/v2/profile/{userId}/driving-license
+          method: POST
+      - httpApi:
+          path: /api/v2/subscription-packages
           method: GET
 
   # ==================== NOTIFICATION SERVICE ====================

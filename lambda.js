@@ -47,27 +47,44 @@ exports.handler = async (event, context) => {
       }
     }
     
-    // Ensure Content-Type is set for JSON parsing by serverless-http
-    const contentType = event.headers?.['content-type'] || event.headers?.['Content-Type'];
-    const isJson = contentType?.includes('application/json') || bodyString.trim().startsWith('{') || bodyString.trim().startsWith('[');
+    // Ensure Content-Type is set for parsing by serverless-http
+    const contentType = event.headers?.['content-type'] || event.headers?.['Content-Type'] || '';
+    const isJson = contentType.includes('application/json') || bodyString.trim().startsWith('{') || bodyString.trim().startsWith('[');
+    const isFormData = contentType.includes('application/x-www-form-urlencoded') || (bodyString.includes('=') && !bodyString.includes('{'));
     
-    if (isJson && !contentType) {
+    if (!contentType) {
       if (!event.headers) event.headers = {};
-      event.headers['content-type'] = 'application/json';
-      console.log('✅ Set content-type to application/json');
+      if (isJson) {
+        event.headers['content-type'] = 'application/json';
+        console.log('✅ Detected and set content-type to application/json');
+      } else if (isFormData) {
+        event.headers['content-type'] = 'application/x-www-form-urlencoded';
+        console.log('✅ Detected and set content-type to application/x-www-form-urlencoded');
+      }
     }
     
     // Parse JSON body manually and store parsed version
-    // serverless-http expects body as string, but we'll parse it in middleware
     if (isJson) {
       try {
         parsedBody = JSON.parse(bodyString);
         event._parsedBody = parsedBody; // Store parsed version for manual access in middleware
-        // Also store as _body for backward compatibility
         event._body = parsedBody;
         console.log('✅ Parsed JSON body in Lambda handler:', Object.keys(parsedBody));
       } catch (parseError) {
         console.error('❌ Failed to parse JSON body:', parseError);
+        console.error('   Body string (first 200 chars):', bodyString.substring(0, 200));
+      }
+    }
+    // Parse form data manually
+    else if (isFormData) {
+      try {
+        const querystring = require('querystring');
+        parsedBody = querystring.parse(bodyString);
+        event._parsedBody = parsedBody;
+        event._body = parsedBody;
+        console.log('✅ Parsed form data body in Lambda handler:', Object.keys(parsedBody));
+      } catch (parseError) {
+        console.error('❌ Failed to parse form data body:', parseError);
         console.error('   Body string (first 200 chars):', bodyString.substring(0, 200));
       }
     }

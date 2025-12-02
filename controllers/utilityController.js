@@ -76,12 +76,75 @@ class UtilityController {
     try {
       const { name, where, value } = req.body;
 
+      console.log(`🔍 [getTableCondition] Request: name=${name}, where=${where}, value=${value}`);
+
       if (!name || !where || !value) {
         return res.status(201).json({
           status: 'error',
           msg: 'empty param',
           data: ''
         });
+      }
+
+      // Handle admin_profile table directly (no model exists)
+      if (name.toLowerCase() === 'admin_profile') {
+        try {
+          const client = getDynamoDBClient();
+          let keyValue = value;
+          
+          // Convert to number if where is 'id'
+          if (where === 'id' && !isNaN(value)) {
+            keyValue = parseInt(value);
+          }
+          
+          const command = new GetCommand({
+            TableName: 'admin_profile',
+            Key: { [where]: keyValue }
+          });
+          
+          const response = await client.send(command);
+          
+          if (response.Item) {
+            // Format image URLs if they exist
+            const { getImageUrl } = require('../utils/imageHelper');
+            const item = { ...response.Item };
+            
+            // Format slider images if they exist
+            const sliderFields = ['slider_img1', 'slider_img2', 'slider_img3', 'slider_img4'];
+            for (const field of sliderFields) {
+              if (item[field]) {
+                try {
+                  // Use 'images' type for slider images, or try to detect from path
+                  item[field] = await getImageUrl(item[field], 'images');
+                } catch (imgErr) {
+                  console.error(`Error formatting ${field}:`, imgErr);
+                  // Keep original value if formatting fails
+                }
+              }
+            }
+            
+            console.log(`✅ [getTableCondition] Found admin_profile record`);
+            return res.json({
+              status: 'success',
+              msg: 'get data',
+              data: [item]
+            });
+          } else {
+            console.log(`⚠️  [getTableCondition] admin_profile record not found`);
+            return res.json({
+              status: 'success',
+              msg: 'get data',
+              data: []
+            });
+          }
+        } catch (dbErr) {
+          console.error('❌ [getTableCondition] Error fetching admin_profile:', dbErr);
+          return res.status(201).json({
+            status: 'error',
+            msg: 'Failed to fetch admin_profile data',
+            data: ''
+          });
+        }
       }
 
       // Map table names to models and their find methods
@@ -320,6 +383,15 @@ class UtilityController {
       
       if (!data) {
         console.log(`❌ No data found for user_id=${user_id} in table=${table}`);
+        // For shops table, return empty object instead of error (user may not have completed signup)
+        if (table.toLowerCase() === 'shops') {
+          console.log(`⚠️  Shop not found for user_id=${user_id}, returning empty data (user may not have completed signup)`);
+          return res.json({
+            status: 'success',
+            msg: 'No shop data found',
+            data: {}
+          });
+        }
         return res.status(201).json({
           status: 'error',
           msg: 'Not Found',
@@ -329,19 +401,25 @@ class UtilityController {
 
       console.log(`✅ Data found for user_id=${user_id} in table=${table}`);
 
-      // Format image URL based on table type
-      if (table.toLowerCase() === 'delivery_boy') {
-        if (data.profile_img) {
-          data.image = `${req.protocol}://${req.get('host')}/assets/images/deliveryboy/${data.profile_img}`;
+      // Format image URL based on table type using imageHelper
+      const { getImageUrl } = require('../utils/imageHelper');
+      try {
+        if (table.toLowerCase() === 'delivery_boy') {
+          if (data.profile_img) {
+            data.image = await getImageUrl(data.profile_img, 'deliveryboy');
+          } else {
+            data.image = '';
+          }
         } else {
-          data.image = '';
+          if (data.profile_photo) {
+            data.image = await getImageUrl(data.profile_photo, 'profile');
+          } else {
+            data.image = '';
+          }
         }
-      } else {
-        if (data.profile_photo) {
-          data.image = `${req.protocol}://${req.get('host')}/assets/images/profile/${data.profile_photo}`;
-        } else {
-          data.image = '';
-        }
+      } catch (imageErr) {
+        console.error('Error formatting image URL:', imageErr);
+        data.image = '';
       }
 
       // Cache the result only on success (1 hour TTL)

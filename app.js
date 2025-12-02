@@ -117,7 +117,16 @@ app.use((req, res, next) => {
 // Lambda Function URL sends body as string, so we need to parse it manually if body parser didn't
 // This MUST run BEFORE express.json() to catch cases where express.json() doesn't parse
 app.use((req, res, next) => {
-  // If body is a string but should be JSON (from Lambda Function URL)
+  const contentType = req.headers['content-type'] || req.headers['Content-Type'] || '';
+  const isFormData = contentType.includes('application/x-www-form-urlencoded');
+  
+  // If body is already parsed (object), skip
+  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) && !Array.isArray(req.body)) {
+    console.log('✅ Body already parsed, skipping manual parsing');
+    return next();
+  }
+  
+  // If body is a string, try to parse it
   if (req.body && typeof req.body === 'string') {
     const trimmed = req.body.trim();
     // Check if it looks like JSON
@@ -125,10 +134,22 @@ app.use((req, res, next) => {
       try {
         const parsed = JSON.parse(req.body);
         req.body = parsed;
-        console.log('✅ Manually parsed body from string (before express.json):', Object.keys(parsed));
+        console.log('✅ Manually parsed JSON body from string:', Object.keys(parsed));
+        return next();
       } catch (parseError) {
-        console.error('❌ Failed to manually parse body:', parseError);
-        console.error('   Body preview:', req.body.substring(0, 200));
+        console.error('❌ Failed to manually parse JSON body:', parseError);
+      }
+    }
+    // Check if it's form data
+    else if (isFormData || (trimmed.includes('=') && !trimmed.includes('{'))) {
+      try {
+        const querystring = require('querystring');
+        const parsed = querystring.parse(req.body);
+        req.body = parsed;
+        console.log('✅ Manually parsed form data body from string:', Object.keys(parsed));
+        return next();
+      } catch (parseError) {
+        console.error('❌ Failed to manually parse form data body:', parseError);
       }
     }
   }
@@ -136,6 +157,7 @@ app.use((req, res, next) => {
   else if (req.lambdaEvent && req.lambdaEvent._parsedBody) {
     req.body = req.lambdaEvent._parsedBody;
     console.log('✅ Using pre-parsed body from Lambda event:', Object.keys(req.body));
+    return next();
   }
   // Also check Lambda event body string if present
   else if (req.lambdaEvent && req.lambdaEvent.body && typeof req.lambdaEvent.body === 'string') {
@@ -144,19 +166,42 @@ app.use((req, res, next) => {
       try {
         const parsed = JSON.parse(req.lambdaEvent.body);
         req.body = parsed;
-        console.log('✅ Parsed body from Lambda event string:', Object.keys(parsed));
+        console.log('✅ Parsed JSON body from Lambda event string:', Object.keys(parsed));
+        return next();
       } catch (parseError) {
-        console.error('❌ Failed to parse Lambda event body:', parseError);
-        console.error('   Body preview:', req.lambdaEvent.body.substring(0, 200));
+        console.error('❌ Failed to parse Lambda event JSON body:', parseError);
+      }
+    } else if (trimmed.includes('=') && !trimmed.includes('{')) {
+      try {
+        const querystring = require('querystring');
+        const parsed = querystring.parse(req.lambdaEvent.body);
+        req.body = parsed;
+        console.log('✅ Parsed form data body from Lambda event string:', Object.keys(parsed));
+        return next();
+      } catch (parseError) {
+        console.error('❌ Failed to parse Lambda event form data body:', parseError);
       }
     }
   }
   next();
 });
 
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Middleware - Only parse if body is not already parsed
+app.use((req, res, next) => {
+  // Skip JSON parser if body is already an object (parsed)
+  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) && !Array.isArray(req.body)) {
+    return express.urlencoded({ extended: true })(req, res, next);
+  }
+  express.json()(req, res, next);
+});
+
+app.use((req, res, next) => {
+  // Skip urlencoded parser if body is already an object (parsed)
+  if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) && !Array.isArray(req.body)) {
+    return next();
+  }
+  express.urlencoded({ extended: true })(req, res, next);
+});
 
 // Session configuration (for web routes authentication)
 // Note: In Lambda, sessions should use DynamoDB or ElastiCache for persistence

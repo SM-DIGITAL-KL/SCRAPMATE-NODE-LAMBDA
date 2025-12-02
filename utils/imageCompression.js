@@ -1,9 +1,32 @@
 /**
  * Image Compression Utility
  * Compresses images to target size (default 50KB)
+ * 
+ * Note: sharp is lazy-loaded to avoid Lambda initialization errors
+ * when the package has macOS binaries but Lambda runs on Linux
  */
 
-const sharp = require('sharp');
+// Lazy-load sharp only when needed
+let sharp = null;
+let sharpAvailable = null; // Cache availability check
+function getSharp() {
+  if (sharpAvailable === false) {
+    return null; // Already determined it's not available
+  }
+  
+  if (!sharp) {
+    try {
+      sharp = require('sharp');
+      sharpAvailable = true;
+    } catch (error) {
+      console.error('❌ Failed to load sharp module:', error.message);
+      console.error('   Image compression will be disabled. This may be due to platform mismatch (macOS vs Linux).');
+      sharpAvailable = false;
+      return null;
+    }
+  }
+  return sharp;
+}
 
 // Target size: 50KB
 const TARGET_SIZE_BYTES = 50 * 1024; // 50KB
@@ -26,8 +49,17 @@ async function compressImage(buffer, targetSizeBytes = TARGET_SIZE_BYTES) {
 
     console.log(`📦 Compressing image from ${(originalSize / 1024).toFixed(2)}KB to under ${targetSizeBytes / 1024}KB...`);
 
+    // Lazy-load sharp
+    const sharpLib = getSharp();
+    
+    // If sharp is not available, return original buffer
+    if (!sharpLib) {
+      console.warn('⚠️  Sharp not available, returning original image without compression');
+      return buffer;
+    }
+
     // Detect image format
-    const metadata = await sharp(buffer).metadata();
+    const metadata = await sharpLib(buffer).metadata();
     const format = metadata.format; // 'jpeg', 'png', 'webp', etc.
 
     // Determine output format (prefer JPEG for better compression)
@@ -62,7 +94,7 @@ async function compressImage(buffer, targetSizeBytes = TARGET_SIZE_BYTES) {
       }
 
       try {
-        let sharpInstance = sharp(buffer)
+        let sharpInstance = sharpLib(buffer)
           .resize(maxWidth, maxHeight, {
             fit: 'inside',
             withoutEnlargement: true
