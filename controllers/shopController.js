@@ -172,29 +172,96 @@ class ShopController {
         });
       }
 
-      // Check Redis cache first (only if previously successful)
+      // Load all category keywords once for efficient lookup
+      let allCategoryKeywords = null;
+      const getCategoryKeywords = async () => {
+        if (!allCategoryKeywords) {
+          try {
+            const CategoryImgKeywords = require('../models/CategoryImgKeywords');
+            allCategoryKeywords = await CategoryImgKeywords.getAll();
+          } catch (err) {
+            console.error('Error loading CategoryImgKeywords:', err);
+            allCategoryKeywords = [];
+          }
+        }
+        return allCategoryKeywords;
+      };
+      
+      // Helper function to get category name from image URL if cat_name is "null"
+      const getCategoryNameFromImage = async (catImg) => {
+        if (!catImg) return '';
+        
+        try {
+          // Extract filename from URL (e.g., c181.png from full URL)
+          const filenameMatch = catImg.match(/(c\d+\.png)/i);
+          const filename = filenameMatch ? filenameMatch[1] : null;
+          
+          if (filename) {
+            // Get all category keywords and find the one matching this image
+            const categories = await getCategoryKeywords();
+            const matchingCategory = categories.find(cat => {
+              const catImgUrl = cat.category_img || cat.cat_img || '';
+              return catImgUrl.includes(filename);
+            });
+            
+            if (matchingCategory && matchingCategory.category_name) {
+              return matchingCategory.category_name;
+            }
+          }
+        } catch (err) {
+          console.error('Error fetching category name from image:', err);
+        }
+        return '';
+      };
+      
+      // Helper function to fix null category names
+      const fixCategoryNames = async (categories) => {
+        return Promise.all(
+          categories.map(async (cat) => {
+            const itemCount = await Product.countByCategoryId(cat.id);
+            
+            // Fix cat_name if it's the string "null" or null/undefined
+            let catName = cat.cat_name;
+            if (!catName || catName === 'null' || catName === 'undefined') {
+              // Try to get category name from image URL
+              catName = await getCategoryNameFromImage(cat.cat_img);
+              // If still empty, use empty string instead of "null"
+              if (!catName) {
+                catName = '';
+              }
+            }
+            
+            return {
+              ...cat,
+              cat_name: catName,
+              items_count: itemCount
+            };
+          })
+        );
+      };
+
+      // Check Redis cache first
       const cacheKey = RedisCache.listKey('shop_categories', { shop_id: id });
       const cached = await RedisCache.get(cacheKey);
-      if (cached) {
-        return res.json({
-          status: 'success',
-          msg: 'Shop category list',
-          data: cached
-        });
+      
+      // If cached data exists, check if it has null category names
+      if (cached && Array.isArray(cached)) {
+        const hasNullNames = cached.some(cat => !cat.cat_name || cat.cat_name === 'null' || cat.cat_name === 'undefined');
+        if (!hasNullNames) {
+          // Cache is valid, return it
+          return res.json({
+            status: 'success',
+            msg: 'Shop category list',
+            data: cached
+          });
+        }
+        // Cache has null names, we'll fetch fresh data and fix it
       }
 
       const categories = await ProductCategory.findByShopId(id);
       
-      // Add item count for each category
-      const categoriesWithCount = await Promise.all(
-        categories.map(async (cat) => {
-          const itemCount = await Product.countByCategoryId(cat.id);
-          return {
-            ...cat,
-            items_count: itemCount
-          };
-        })
-      );
+      // Add item count for each category and fix null category names
+      const categoriesWithCount = await fixCategoryNames(categories);
 
       // Cache the result only on success (1 hour TTL)
       try {

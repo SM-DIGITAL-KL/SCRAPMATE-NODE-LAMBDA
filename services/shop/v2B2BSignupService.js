@@ -93,13 +93,18 @@ class V2B2BSignupService {
       // If shop already exists with status 'rejected', change it back to 'pending' when resubmitting
       // Otherwise, preserve approved status
       let approvalStatus = shop?.approval_status || null;
+      const currentTime = new Date().toISOString();
+      let shouldSetApplicationSubmitted = false;
+      
       if (isCompleteB2BSignup) {
         // If status is 'rejected', change it back to 'pending' when user resubmits
         if (approvalStatus === 'rejected') {
           approvalStatus = 'pending';
+          shouldSetApplicationSubmitted = true; // Resubmission counts as new application
           console.log(`📋 Complete B2B signup (form + documents) - changing approval_status from 'rejected' to 'pending' for user ${userId} (resubmission)`);
         } else if (!approvalStatus || approvalStatus === null) {
           approvalStatus = 'pending';
+          shouldSetApplicationSubmitted = true; // First time submission
           console.log(`📋 Complete B2B signup (form + documents) - setting approval_status to 'pending' for user ${userId}`);
         } else if (approvalStatus === 'approved') {
           // Keep approved status - don't override admin approval
@@ -130,6 +135,18 @@ class V2B2BSignupService {
         contact_person_email: signupData.contactEmail || '',
         approval_status: approvalStatus,
       };
+      
+      // Set application_submitted_at when signup is completed for the first time or resubmitted
+      if (shouldSetApplicationSubmitted && !shop?.application_submitted_at) {
+        shopData.application_submitted_at = currentTime;
+        console.log(`📋 Setting application_submitted_at for B2B user: ${userId}`);
+      }
+      
+      // Set review_initiated_at when status is set to pending for the first time
+      if (approvalStatus === 'pending' && !shop?.review_initiated_at) {
+        shopData.review_initiated_at = currentTime;
+        console.log(`📋 Setting review_initiated_at for B2B user: ${userId}`);
+      }
       
       // Only add document URLs if they are provided and not empty
       if (signupData.businessLicenseUrl && signupData.businessLicenseUrl.trim() !== '') {

@@ -19,5 +19,8 @@ router.post('/shop_item_edit/:id', ProductController.shopItemEdit);
 router.get('/shop_item_delete/:id', ProductController.shopItemDelete);
 router.post('/items_list_for_sale', ProductController.itemsListForSale);
 
+// Note: V2 category routes are now handled by the main v2Routes mounted in handler.js
+// at both /api/v2 and /v2 paths to support both API Gateway and Lambda Function URL
+
 module.exports = router;
 

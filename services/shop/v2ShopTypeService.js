@@ -74,6 +74,30 @@ class V2ShopTypeService {
       };
     }
 
+    // IMPORTANT: If user_type is 'N' (New user), always return all dashboards
+    // New users should be able to access any dashboard regardless of shop_type
+    if (user.user_type === 'N') {
+      console.log(`🆕 New user (ID: ${user.id}) - allowing access to all dashboards (b2b, b2c, delivery)`);
+      let shopType = null;
+      let shopTypeName = null;
+      try {
+        const shop = await Shop.findByUserId(parseInt(userId));
+        if (shop && shop.shop_type) {
+          shopType = parseInt(shop.shop_type);
+          shopTypeName = this.getShopTypeName(shopType);
+        }
+      } catch (error) {
+        console.log(`⚠️  Error fetching shop for new user ${user.id}:`, error.message);
+        // Continue without shop info - new users get all dashboards anyway
+      }
+      return {
+        shopType,
+        shopTypeName,
+        allowedDashboards: ['b2b', 'b2c', 'delivery'],
+        canSwitch: true
+      };
+    }
+
     // Check if user is v1 (no restrictions) or v2 (with restrictions)
     const isV1User = !user.app_version || user.app_version === 'v1';
 
@@ -128,6 +152,7 @@ class V2ShopTypeService {
       }
     } else {
       // If user doesn't have a shop, check user_type
+      // Note: user_type 'N' is already handled above, so we skip it here
       if (user.user_type === 'SR') {
         // SR users (B2B + B2C in vendor app) can access both dashboards
         allowedDashboards = ['b2b', 'b2c'];
@@ -221,7 +246,13 @@ class V2ShopTypeService {
       }
     } else {
       // User without shop - check user_type
-      if (dashboardType.toLowerCase() === 'delivery') {
+      if (user.user_type === 'N') {
+        // N = New user - can access any dashboard (b2b, b2c, or delivery)
+        canAccess = ['b2b', 'b2c', 'delivery'].includes(dashboardType.toLowerCase());
+        if (!canAccess) {
+          reason = 'Invalid dashboard type';
+        }
+      } else if (dashboardType.toLowerCase() === 'delivery') {
         // Only Delivery users (type 'D') can access delivery dashboard
         canAccess = user.user_type === 'D';
         if (!canAccess) {

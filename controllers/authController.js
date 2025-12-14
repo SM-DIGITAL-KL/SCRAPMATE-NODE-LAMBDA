@@ -159,13 +159,27 @@ class AuthController {
       console.log('📝 [usersRegister] Request received');
       console.log('   Content-Type:', req.headers['content-type'] || req.headers['Content-Type']);
       console.log('   Body type:', typeof req.body);
-      console.log('   Body keys:', req.body ? Object.keys(req.body) : 'no body');
+      console.log('   Body is Buffer:', Buffer.isBuffer(req.body));
+      console.log('   Body is string:', typeof req.body === 'string');
+      console.log('   Body keys:', req.body && typeof req.body === 'object' ? Object.keys(req.body) : 'not an object');
+      console.log('   Body value (first 200 chars):', typeof req.body === 'string' ? req.body.substring(0, 200) : JSON.stringify(req.body).substring(0, 200));
       console.log('   File:', req.file ? `Yes (${req.file.originalname})` : 'No');
+      
+      // If body is a string or Buffer, multer hasn't parsed it yet - this shouldn't happen
+      if (typeof req.body === 'string' || Buffer.isBuffer(req.body)) {
+        console.error('❌ [usersRegister] Body is still string/Buffer - multer did not parse multipart data!');
+        console.error('   This means multer middleware did not run or failed silently');
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Failed to parse form data. Please ensure Content-Type is multipart/form-data',
+          data: ''
+        });
+      }
       
       const {
         language, usertype, shop_type, name, email, place, address,
         location, state, mob_number, pincode, lat_log, place_id
-      } = req.body;
+      } = req.body || {};
 
       console.log('📝 [usersRegister] Parsed fields:');
       console.log('   language:', language);

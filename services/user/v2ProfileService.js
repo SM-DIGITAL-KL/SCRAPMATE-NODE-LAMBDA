@@ -6,6 +6,7 @@
 const User = require('../../models/User');
 const Shop = require('../../models/Shop');
 const DeliveryBoy = require('../../models/DeliveryBoy');
+const Customer = require('../../models/Customer');
 const RedisCache = require('../../utils/redisCache');
 
 class V2ProfileService {
@@ -20,6 +21,97 @@ class V2ProfileService {
       
       if (!user) {
         throw new Error('USER_NOT_FOUND');
+      }
+
+      // For deleted users (del_status = 2) or new users (user_type 'N'), return a minimal profile
+      // BUT: Include delivery/shop data if it exists (for signup completion and approval status)
+      // This allows them to access the profile API during signup/re-registration
+      // Deleted users can re-register, so we allow them to see their profile
+      // IMPORTANT: If user has completed signup (user_type is 'D', 'S', 'R', or 'SR'), respect the actual user_type
+      // even if del_status = 2 (they may be re-registering but have already completed signup)
+      if (user.del_status === 2 || user.user_type === 'N') {
+        // Determine user_type to return:
+        // - If user_type is 'N', always return 'N'
+        // - If user_type is 'D', 'S', 'R', or 'SR' (completed signup), respect the actual user_type
+        //   even if del_status = 2 (they've completed signup, just re-registering)
+        const hasCompletedSignup = ['D', 'S', 'R', 'SR'].includes(user.user_type);
+        const userType = hasCompletedSignup ? user.user_type : 'N';
+        console.log(`✅ Returning profile for ${user.del_status === 2 ? 'deleted' : 'new'} user (ID: ${userId}, actual type: ${user.user_type}, returned type: ${userType}, del_status: ${user.del_status})`);
+        
+        let profileData = {
+          id: user.id,
+          name: user.name || '',
+          email: user.email || '',
+          phone: user.mob_num ? String(user.mob_num) : '',
+          user_type: userType, // Return 'N' for deleted users to allow re-registration
+          app_type: user.app_type || 'vendor_app',
+          profile_image: user.profile_image || user.profile_photo || null,
+          completion_percentage: 0, // New/deleted user has 0% completion initially
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+        };
+        
+        // IMPORTANT: Check if delivery_boy or shop data exists even for new users
+        // This allows them to see approval status during signup
+        try {
+          // Check for delivery_boy data (for delivery signup)
+          const deliveryBoy = await DeliveryBoy.findByUserId(userId);
+          if (deliveryBoy) {
+            profileData.delivery = {
+              id: deliveryBoy.id,
+              name: deliveryBoy.name || '',
+              address: deliveryBoy.address || '',
+              contact: deliveryBoy.contact || '',
+              delivery_mode: deliveryBoy.delivery_mode || 'deliver',
+              is_online: deliveryBoy.is_online !== undefined ? deliveryBoy.is_online : false,
+              aadhar_card: deliveryBoy.aadhar_card || null,
+              driving_license: deliveryBoy.driving_license || null,
+              vehicle_type: deliveryBoy.vehicle_type || null,
+              vehicle_model: deliveryBoy.vehicle_model || null,
+              vehicle_registration_number: deliveryBoy.vehicle_registration_number || null,
+              approval_status: deliveryBoy.approval_status || null,
+              rejection_reason: deliveryBoy.rejection_reason || null,
+              application_submitted_at: deliveryBoy.application_submitted_at || null,
+              documents_verified_at: deliveryBoy.documents_verified_at || null,
+              review_initiated_at: deliveryBoy.review_initiated_at || null,
+            };
+            profileData.delivery_boy = profileData.delivery;
+            console.log(`✅ Added delivery data to profile for new user (approval_status: ${deliveryBoy.approval_status || 'null'})`);
+          }
+          
+          // Check for shop data (for B2B/B2C signup)
+          const shop = await Shop.findByUserId(userId);
+          if (shop) {
+            profileData.shop = {
+              id: shop.id,
+              shopname: shop.shopname || '',
+              ownername: shop.ownername || '',
+              address: shop.address || '',
+              contact: shop.contact || '',
+              shop_type: shop.shop_type || '',
+              aadhar_card: shop.aadhar_card || null,
+              driving_license: shop.driving_license || null,
+              company_name: shop.company_name || '',
+              gst_number: shop.gst_number || '',
+              pan_number: shop.pan_number || '',
+              business_license_url: shop.business_license_url || '',
+              gst_certificate_url: shop.gst_certificate_url || '',
+              address_proof_url: shop.address_proof_url || '',
+              kyc_owner_url: shop.kyc_owner_url || '',
+              approval_status: shop.approval_status || null,
+              rejection_reason: shop.rejection_reason || null,
+              application_submitted_at: shop.application_submitted_at || null,
+              documents_verified_at: shop.documents_verified_at || null,
+              review_initiated_at: shop.review_initiated_at || null,
+            };
+            console.log(`✅ Added shop data to profile for new user (approval_status: ${shop.approval_status || 'null'})`);
+          }
+        } catch (err) {
+          console.error('❌ Error fetching delivery/shop data for new user:', err);
+          // Continue with minimal profile if there's an error
+        }
+        
+        return profileData;
       }
 
       // Get additional profile data based on user type
@@ -62,6 +154,9 @@ class V2ProfileService {
               kyc_owner_url: shop.kyc_owner_url || '',
               approval_status: shop.approval_status || null,
               rejection_reason: shop.rejection_reason || null,
+              application_submitted_at: shop.application_submitted_at || null,
+              documents_verified_at: shop.documents_verified_at || null,
+              review_initiated_at: shop.review_initiated_at || null,
             };
             
             // For B2B users, use company_name as the display name
@@ -122,6 +217,9 @@ class V2ProfileService {
               vehicle_registration_number: deliveryBoy.vehicle_registration_number || null,
               approval_status: deliveryBoy.approval_status || null,
               rejection_reason: deliveryBoy.rejection_reason || null,
+              application_submitted_at: deliveryBoy.application_submitted_at || null,
+              documents_verified_at: deliveryBoy.documents_verified_at || null,
+              review_initiated_at: deliveryBoy.review_initiated_at || null,
             };
             // Also add as delivery_boy for backward compatibility
             profileData.delivery_boy = profileData.delivery;
@@ -504,23 +602,41 @@ class V2ProfileService {
                 const isB2CFinalComplete = finalName && finalEmail && finalAddress && finalContact && finalAadhar;
                 
                 if (isB2CFinalComplete) {
-                  // If status is 'rejected', change it back to 'pending' when user resubmits
-                  if (latestShop.approval_status === 'rejected') {
-                    console.log(`📋 Complete B2C signup - changing approval_status from 'rejected' to 'pending' for user ${userId} (resubmission)`);
-                    await Shop.update(latestShop.id, { approval_status: 'pending' });
-                    console.log(`✅ B2C approval_status changed from 'rejected' to 'pending' for shop ${latestShop.id}`);
-                  } else if (!latestShop.approval_status || latestShop.approval_status === null) {
-                    // Set approval_status to 'pending' only if signup is complete and no status exists
-                    console.log(`📋 Complete B2C signup - setting approval_status to 'pending' for user ${userId}`);
-                    await Shop.update(latestShop.id, { approval_status: 'pending' });
-                    console.log(`✅ B2C approval_status set to 'pending' for shop ${latestShop.id}`);
-                  } else if (latestShop.approval_status === 'approved') {
-                    // Keep approved status - don't override admin approval
-                    console.log(`📋 Complete B2C signup - keeping existing approval_status 'approved' for user ${userId}`);
-                  } else {
-                    // Status is 'pending' - keep it
-                    console.log(`📋 Complete B2C signup - keeping existing approval_status 'pending' for user ${userId}`);
-                  }
+                const currentTime = new Date().toISOString();
+                const updateData = { approval_status: 'pending' };
+                let shouldSetApplicationSubmitted = false;
+                
+                // If status is 'rejected', change it back to 'pending' when user resubmits
+                if (latestShop.approval_status === 'rejected') {
+                  console.log(`📋 Complete B2C signup - changing approval_status from 'rejected' to 'pending' for user ${userId} (resubmission)`);
+                  shouldSetApplicationSubmitted = true; // Resubmission counts as new application
+                } else if (!latestShop.approval_status || latestShop.approval_status === null) {
+                  // Set approval_status to 'pending' only if signup is complete and no status exists
+                  console.log(`📋 Complete B2C signup - setting approval_status to 'pending' for user ${userId}`);
+                  shouldSetApplicationSubmitted = true; // First time submission
+                } else if (latestShop.approval_status === 'approved') {
+                  // Keep approved status - don't override admin approval
+                  console.log(`📋 Complete B2C signup - keeping existing approval_status 'approved' for user ${userId}`);
+                  return; // Don't update if already approved
+                } else {
+                  // Status is 'pending' - keep it
+                  console.log(`📋 Complete B2C signup - keeping existing approval_status 'pending' for user ${userId}`);
+                }
+                
+                // Set application_submitted_at when signup is completed for the first time or resubmitted
+                if (shouldSetApplicationSubmitted && !latestShop.application_submitted_at) {
+                  updateData.application_submitted_at = currentTime;
+                  console.log(`📋 Setting application_submitted_at for B2C user: ${userId}`);
+                }
+                
+                // Set review_initiated_at when status is set to pending for the first time
+                if (!latestShop.review_initiated_at) {
+                  updateData.review_initiated_at = currentTime;
+                  console.log(`📋 Setting review_initiated_at for B2C user: ${userId}`);
+                }
+                
+                await Shop.update(latestShop.id, updateData);
+                console.log(`✅ B2C approval_status updated for shop ${latestShop.id}`);
                 }
               }
             }
@@ -651,15 +767,38 @@ class V2ProfileService {
               const isV1User = !user.app_version || user.app_version === 'v1' || user.app_version === 'v1.0';
               
               // Update user_type from 'N' to 'D' if user is completing delivery signup
+              // Also handle re-registration: if user_type = 'D' but del_status = 2, reset del_status
+              if (user.user_type === 'N' || (user.user_type === 'D' && user.del_status === 2)) {
+                const updateData = {};
+                
+                // If user_type is 'N', update to 'D'
               if (user.user_type === 'N') {
+                  updateData.user_type = 'D';
                 console.log(`🔄 Delivery signup complete - updating new user (N) to D (Delivery) for user ${userId}`);
-                const updateData = { user_type: 'D' };
+                } else {
+                  console.log(`🔄 Delivery signup complete - user ${userId} already has user_type 'D' (re-registering)`);
+                }
+                
+                // If user has del_status = 2 (deleted), reset it to 1 (active) for re-registration
+                if (user.del_status === 2) {
+                  updateData.del_status = 1;
+                  console.log(`🔄 Re-registering user ${userId} - resetting del_status from 2 to 1`);
+                }
+                
                 if (isV1User) {
                   updateData.app_version = 'v2';
                   console.log(`📱 Upgrading V1 user to V2 after delivery signup completion`);
                 }
+                
+                if (Object.keys(updateData).length > 0) {
                 await User.updateProfile(userId, updateData);
+                  if (updateData.user_type) {
                 console.log(`✅ User type updated from N to D for user ${userId}`);
+                  }
+                  if (updateData.del_status) {
+                    console.log(`✅ del_status reset from 2 to 1 for user ${userId}`);
+                  }
+                }
                 
                 // Invalidate user caches after user type update
                 try {
@@ -677,8 +816,23 @@ class V2ProfileService {
               }
               
               // Set approval_status to 'pending' for delivery users when signup is complete
+              const currentTime = new Date().toISOString();
+              const updateData = { approval_status: 'pending' };
+              
+              // Set application_submitted_at when signup is completed for the first time
+              if (!deliveryBoy.application_submitted_at) {
+                updateData.application_submitted_at = currentTime;
+                console.log(`📋 Setting application_submitted_at for delivery user: ${userId}`);
+              }
+              
+              // Set review_initiated_at when status is set to pending for the first time
+              if (!deliveryBoy.review_initiated_at) {
+                updateData.review_initiated_at = currentTime;
+                console.log(`📋 Setting review_initiated_at for delivery user: ${userId}`);
+              }
+              
               console.log(`📋 Complete delivery signup - setting approval_status to 'pending' for user ${userId}`);
-              await DeliveryBoy.update(deliveryBoy.id, { approval_status: 'pending' });
+              await DeliveryBoy.update(deliveryBoy.id, updateData);
               console.log(`✅ Delivery approval_status set to 'pending' for delivery ${deliveryBoy.id}`);
             }
           } else {
@@ -750,6 +904,13 @@ class V2ProfileService {
                 if (user.user_type === 'N') {
                   console.log(`🔄 Delivery signup complete - updating new user (N) to D (Delivery) for user ${userId}`);
                   const updateData = { user_type: 'D' };
+                  
+                  // If user has del_status = 2 (deleted), reset it to 1 (active) for re-registration
+                  if (user.del_status === 2) {
+                    updateData.del_status = 1;
+                    console.log(`🔄 Re-registering user ${userId} - resetting del_status from 2 to 1`);
+                  }
+                  
                   if (isV1User) {
                     updateData.app_version = 'v2';
                     console.log(`📱 Upgrading V1 user to V2 after delivery signup completion`);
@@ -772,23 +933,41 @@ class V2ProfileService {
                   }
                 }
                 
+                const currentTime = new Date().toISOString();
+                const updateData = { approval_status: 'pending' };
+                let shouldSetApplicationSubmitted = false;
+                
                 // If status is 'rejected', change it back to 'pending' when user resubmits
                 if (updatedDelivery.approval_status === 'rejected') {
                   console.log(`📋 Complete delivery signup - changing approval_status from 'rejected' to 'pending' for user ${userId} (resubmission)`);
-                  await DeliveryBoy.update(deliveryBoy.id, { approval_status: 'pending' });
-                  console.log(`✅ Delivery approval_status changed from 'rejected' to 'pending' for delivery ${deliveryBoy.id}`);
+                  shouldSetApplicationSubmitted = true; // Resubmission counts as new application
                 } else if (!updatedDelivery.approval_status || updatedDelivery.approval_status === null) {
                   // Set approval_status to 'pending' only if signup is complete and no status exists
                   console.log(`📋 Complete delivery signup - setting approval_status to 'pending' for user ${userId}`);
-                  await DeliveryBoy.update(deliveryBoy.id, { approval_status: 'pending' });
-                  console.log(`✅ Delivery approval_status set to 'pending' for delivery ${deliveryBoy.id}`);
+                  shouldSetApplicationSubmitted = true; // First time submission
                 } else if (updatedDelivery.approval_status === 'approved') {
                   // Keep approved status - don't override admin approval
                   console.log(`📋 Complete delivery signup - keeping existing approval_status 'approved' for user ${userId}`);
+                  return; // Don't update if already approved
                 } else {
                   // Status is 'pending' - keep it
                   console.log(`📋 Complete delivery signup - keeping existing approval_status 'pending' for user ${userId}`);
                 }
+                
+                // Set application_submitted_at when signup is completed for the first time or resubmitted
+                if (shouldSetApplicationSubmitted && !deliveryBoy.application_submitted_at) {
+                  updateData.application_submitted_at = currentTime;
+                  console.log(`📋 Setting application_submitted_at for delivery user: ${userId}`);
+                }
+                
+                // Set review_initiated_at when status is set to pending for the first time
+                if (!deliveryBoy.review_initiated_at) {
+                  updateData.review_initiated_at = currentTime;
+                  console.log(`📋 Setting review_initiated_at for delivery user: ${userId}`);
+                }
+                
+                await DeliveryBoy.update(deliveryBoy.id, updateData);
+                console.log(`✅ Delivery approval_status updated for delivery ${deliveryBoy.id}`);
               }
             } else {
               console.log(`⚠️ No delivery data to update`);
@@ -1043,10 +1222,16 @@ class V2ProfileService {
       throw new Error('USER_NOT_FOUND');
     }
 
-    // Check if user_type is already 'D'
-    if (user.user_type === 'D') {
-      console.log(`✅ User ${userId} already has user_type 'D'`);
+    // Check if user_type is already 'D' and user is not deleted (del_status !== 2)
+    // If user is deleted (del_status = 2), allow re-registration even if user_type = 'D'
+    if (user.user_type === 'D' && user.del_status !== 2) {
+      console.log(`✅ User ${userId} already has user_type 'D' and is not deleted`);
       throw new Error('ALREADY_COMPLETE');
+    }
+    
+    // If user has user_type = 'D' but del_status = 2, allow re-registration
+    if (user.user_type === 'D' && user.del_status === 2) {
+      console.log(`🔄 User ${userId} has user_type 'D' but del_status = 2 - allowing re-registration`);
     }
 
     // Get delivery boy record
@@ -1085,11 +1270,36 @@ class V2ProfileService {
       throw new Error('SIGNUP_NOT_COMPLETE');
     }
 
-    // Update user_type to 'D'
+    // Update user_type to 'D' and reset del_status if user is re-registering
+    // Handle both cases:
+    // 1. user_type = 'N' -> update to 'D' and reset del_status if needed
+    // 2. user_type = 'D' but del_status = 2 -> reset del_status to 1 (re-registration)
+    if (user.user_type === 'N' || (user.user_type === 'D' && user.del_status === 2)) {
+      const updateData = {};
+      
+      // If user_type is 'N', update to 'D'
     if (user.user_type === 'N') {
+        updateData.user_type = 'D';
       console.log(`🔄 Manually updating user_type from N to D for user ${userId}`);
-      await User.updateProfile(userId, { user_type: 'D' });
+      } else {
+        console.log(`🔄 User ${userId} already has user_type 'D' - keeping it`);
+      }
+      
+      // If user has del_status = 2 (deleted), reset it to 1 (active) for re-registration
+      if (user.del_status === 2) {
+        updateData.del_status = 1;
+        console.log(`🔄 Re-registering user ${userId} - resetting del_status from 2 to 1`);
+      }
+      
+      if (Object.keys(updateData).length > 0) {
+        await User.updateProfile(userId, updateData);
+        if (updateData.user_type) {
       console.log(`✅ User type updated from N to D for user ${userId}`);
+        }
+        if (updateData.del_status) {
+          console.log(`✅ del_status reset from 2 to 1 for user ${userId}`);
+        }
+      }
 
       // Invalidate user caches after user type update
       try {
@@ -1108,13 +1318,104 @@ class V2ProfileService {
 
     // Set approval_status to 'pending' if not already set
     if (!delivery.approval_status) {
+      const currentTime = new Date().toISOString();
+      const updateData = { approval_status: 'pending' };
+      
+      // Set application_submitted_at when signup is completed for the first time
+      if (!delivery.application_submitted_at) {
+        updateData.application_submitted_at = currentTime;
+        console.log(`📋 Setting application_submitted_at for delivery ${delivery.id}`);
+      }
+      
+      // Set review_initiated_at when status is set to pending for the first time
+      if (!delivery.review_initiated_at) {
+        updateData.review_initiated_at = currentTime;
+        console.log(`📋 Setting review_initiated_at for delivery ${delivery.id}`);
+      }
+      
       console.log(`📋 Setting approval_status to 'pending' for delivery ${delivery.id}`);
-      await DeliveryBoy.update(delivery.id, { approval_status: 'pending' });
+      await DeliveryBoy.update(delivery.id, updateData);
       console.log(`✅ Delivery approval_status set to 'pending' for delivery ${delivery.id}`);
     }
 
     // Return updated profile
     return await V2ProfileService.getProfile(userId);
+  }
+
+  /**
+   * Delete user account (soft delete)
+   * @param {string|number} userId - User ID
+   * @returns {Promise<Object>} Deletion result
+   */
+  static async deleteAccount(userId) {
+    try {
+      const user = await User.findById(userId);
+      
+      if (!user) {
+        throw new Error('USER_NOT_FOUND');
+      }
+
+      // Soft delete based on user type
+      if (user.user_type === 'S' || user.user_type === 'R' || user.user_type === 'SR') {
+        const shop = await Shop.findByUserId(userId);
+        if (shop) {
+          await Shop.update(shop.id, { del_status: 2 });
+          console.log(`✅ Soft deleted shop ${shop.id} for user ${userId}`);
+        }
+      } else if (user.user_type === 'D') {
+        const deliveryBoy = await DeliveryBoy.findByUserId(userId);
+        if (deliveryBoy) {
+          await DeliveryBoy.update(deliveryBoy.id, { del_status: 2 });
+          console.log(`✅ Soft deleted delivery boy ${deliveryBoy.id} for user ${userId}`);
+        }
+      } else if (user.user_type === 'C') {
+        const customer = await Customer.findByUserId(userId);
+        if (customer) {
+          await Customer.update(customer.id, { del_status: 2 });
+          console.log(`✅ Soft deleted customer ${customer.id} for user ${userId}`);
+        }
+      }
+
+      // Reset user to new/unregistered state by setting user_type to 'N'
+      await User.updateProfile(userId, { user_type: 'N', del_status: 2 });
+      console.log(`✅ Reset user ${userId} to type 'N' (new/unregistered)`);
+
+      // Invalidate all user-related caches
+      try {
+        const userIdStr = String(userId);
+        await RedisCache.delete(RedisCache.userKey(userIdStr, 'profile'));
+        await RedisCache.delete(RedisCache.userKey(userIdStr));
+        
+        // Invalidate get_user_by_id cache for all possible tables
+        await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'users' }));
+        if (user.user_type === 'S' || user.user_type === 'R' || user.user_type === 'SR') {
+          await RedisCache.delete(RedisCache.dashboardKey('shop', userIdStr));
+          await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'shops' }));
+        } else if (user.user_type === 'D') {
+          await RedisCache.delete(RedisCache.dashboardKey('deliveryboy', userIdStr));
+          await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'delivery_boy' }));
+        }
+        
+        // Invalidate name-based cache if user had a name
+        if (user.name) {
+          await RedisCache.delete(RedisCache.userKey(`name:${user.name}`, 'search'));
+          await RedisCache.delete(RedisCache.userKey(`name:${user.name}`, 'exact'));
+        }
+        
+        console.log(`🗑️  Invalidated all user caches for user_id: ${userIdStr}`);
+      } catch (redisErr) {
+        console.error('Redis cache invalidation error:', redisErr);
+      }
+
+      return {
+        userId: userId,
+        deleted: true,
+        message: 'Account deleted successfully'
+      };
+    } catch (error) {
+      console.error('V2ProfileService.deleteAccount error:', error);
+      throw error;
+    }
   }
 }
 

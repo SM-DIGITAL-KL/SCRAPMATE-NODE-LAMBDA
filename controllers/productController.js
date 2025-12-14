@@ -305,18 +305,27 @@ class ProductController {
   static async categoryImgList(req, res) {
     try {
       console.log(`🔍 category_img_list called`);
+      
+      // Check if cache should be bypassed (via clear_cache or bypass_cache parameter)
+      const bypassCache = req.query.clear_cache === '1' || req.query.bypass_cache === '1' || req.query.clear_cache === 'true' || req.query.bypass_cache === 'true';
 
-      // Check Redis cache first (only if previously successful)
-      // Include version to bust old cache entries that used non-S3 URLs
+      // Define cache key outside the if block so it's available for setting cache later
       const cacheKey = RedisCache.listKey('category_img_list', { version: 's3' });
-      const cached = await RedisCache.get(cacheKey);
-      if (cached) {
-        console.log(`⚡ Redis cache hit for category img list: ${cacheKey}`);
-        return res.json({
-          status: 'success',
-          msg: 'Category image list',
-          data: cached
-        });
+
+      // Check Redis cache first (only if previously successful and not bypassed)
+      // Include version to bust old cache entries that used non-S3 URLs
+      if (!bypassCache) {
+        const cached = await RedisCache.get(cacheKey);
+        if (cached) {
+          console.log(`⚡ Redis cache hit for category img list: ${cacheKey}`);
+          return res.json({
+            status: 'success',
+            msg: 'Category image list',
+            data: cached
+          });
+        }
+      } else {
+        console.log(`🔄 Cache bypass requested - fetching fresh data from DynamoDB`);
       }
 
       const CategoryImgKeywords = require('../models/CategoryImgKeywords');
@@ -326,49 +335,221 @@ class ProductController {
 
       // Format image URLs to ensure they point to S3 (with presigned URLs)
       // Convert S3 URLs to presigned URLs for secure access
-      const categoryList = await Promise.all(categories.map(async (cat) => {
+      console.log(`\n${'='.repeat(80)}`);
+      console.log(`🖼️  [PROCESSING CATEGORY IMAGES] Starting to process ${categories.length} categories...`);
+      console.log(`${'='.repeat(80)}\n`);
+      
+      const categoryList = await Promise.all(categories.map(async (cat, index) => {
         let catImg = '';
+        
+        console.log(`\n📦 [CATEGORY ${index + 1}/${categories.length}]`);
+        console.log(`   ID: ${cat.id}`);
+        console.log(`   Name: ${cat.category_name || 'N/A'}`);
         
         // Prefer cat_img field, fallback to category_img
         const imageUrl = cat.cat_img || cat.category_img || '';
         
+        console.log(`   Raw cat_img: ${cat.cat_img || 'N/A'}`);
+        console.log(`   Raw category_img: ${cat.category_img || 'N/A'}`);
+        console.log(`   Using imageUrl: ${imageUrl || 'N/A'}`);
+        
         if (imageUrl) {
-          // If it's already an S3 URL (scrapmate-images.s3), extract key and generate presigned URL
-          if (imageUrl.includes('scrapmate-images.s3') || imageUrl.includes('s3.amazonaws.com')) {
-            // Extract S3 key from URL
-            // URL format: https://scrapmate-images.s3.ap-south-1.amazonaws.com/categories/c205.png
-            const urlMatch = imageUrl.match(/\/categories\/([^?]+)/);
-            if (urlMatch) {
-              const filename = urlMatch[1];
-              const s3Key = `categories/${filename}`;
-              // Generate presigned URL
-              const { getS3Url } = require('../utils/s3Upload');
-              catImg = await getS3Url(s3Key);
-            } else {
-              // Fallback to original URL if key extraction fails
-              catImg = imageUrl;
-            }
+          console.log(`   Image URL length: ${imageUrl.length} characters`);
+          console.log(`   Image URL preview: ${imageUrl.substring(0, Math.min(100, imageUrl.length))}${imageUrl.length > 100 ? '...' : ''}`);
+          
+          // Validate URL - allow external URLs and S3 URLs
+          const isExternalUrl = imageUrl.startsWith('http://') || imageUrl.startsWith('https://');
+          const isS3Url = imageUrl.includes('scrapmate-images.s3') || imageUrl.includes('s3.amazonaws.com');
+          const hasValidLength = imageUrl.length >= 10; // Minimum reasonable URL length
+          
+          // IMPORTANT: Check if URL is already a presigned S3 URL
+          // If it already has presigned parameters, use it as-is - don't generate a new one!
+          const isAlreadyPresigned = imageUrl.includes('X-Amz-Signature') || imageUrl.includes('X-Amz-Algorithm');
+          
+          // Check for incomplete/corrupted URLs - only reject if URL is too short or not a valid HTTP(S) URL
+          // Allow all valid HTTP(S) URLs, whether S3 or external
+          if (!hasValidLength || !isExternalUrl) {
+            console.warn(`   ⚠️  Invalid URL detected - skipping`);
+            console.warn(`      URL: ${imageUrl}`);
+            console.warn(`      Reason: ${!hasValidLength ? 'URL too short' : 'Not a valid HTTP(S) URL'}`);
+            catImg = '';
           } else {
-            // Use getImageUrl helper which handles both S3 and external URLs
-            catImg = await getImageUrl(imageUrl, 'category');
+            // If it's an S3 URL
+            if (isS3Url) {
+              // IMPORTANT: Always generate a fresh presigned URL for S3 URLs
+              // Presigned URLs expire after 1 hour - always generate fresh one to avoid expired URLs
+              // This works for both base S3 URLs and existing presigned URLs
+              
+              if (isAlreadyPresigned) {
+                console.log(`   ⚠️  Presigned URL detected in database - will generate fresh one`);
+                console.log(`      Reason: Presigned URLs expire after 1 hour - need fresh URL for current request`);
+              } else {
+                console.log(`   ✅ Detected S3 URL (base URL) - will generate presigned URL`);
+              }
+              
+              // Extract S3 key from URL (works for both base URLs and presigned URLs)
+              // The filename is before the query parameters, so this works for both
+              let urlMatch = imageUrl.match(/\/categories\/([^?\/]+)/);
+              if (!urlMatch) {
+                // Try category-images folder
+                urlMatch = imageUrl.match(/\/category-images\/([^?\/]+)/);
+              }
+              if (!urlMatch && imageUrl.includes('/cate')) {
+                // Handle truncated URLs - try to find any filename after /cate
+                const truncatedMatch = imageUrl.match(/\/cate[^\/]*\/([^?\/]+)/);
+                if (truncatedMatch) {
+                  urlMatch = truncatedMatch;
+                }
+              }
+              
+              if (urlMatch && urlMatch[1] && urlMatch[1].length > 0) {
+                const filename = urlMatch[1];
+                console.log(`   ✅ Extracted filename: ${filename}`);
+                
+                // Validate filename has extension
+                if (filename.includes('.') && filename.length > 4) {
+                  // Use categories folder for consistency
+                  const s3Key = `categories/${filename}`;
+                  console.log(`   📁 S3 Key: ${s3Key}`);
+                  console.log(`   🔑 Generating fresh presigned URL (valid for 1 hour)...`);
+                  
+                  // Generate fresh presigned URL (always generate new one, don't reuse expired ones)
+                  const { getS3Url } = require('../utils/s3Upload');
+                  catImg = await getS3Url(s3Key, 3600); // 1 hour expiration
+                  
+                  // If presigned URL generation failed, return empty to show "No Image"
+                  if (!catImg) {
+                    console.warn(`   ❌ Failed to generate presigned URL for ${s3Key}`);
+                    console.warn(`      This might mean the file doesn't exist in S3`);
+                    catImg = '';
+                  } else {
+                    console.log(`   ✅ Fresh presigned URL generated: ${catImg.substring(0, 100)}...`);
+                    console.log(`      URL length: ${catImg.length} characters`);
+                  }
+                } else {
+                  console.warn(`   ❌ Invalid filename: ${filename} (no extension or too short)`);
+                  catImg = '';
+                }
+              } else {
+                console.warn(`   ⚠️  Could not extract filename from S3 URL`);
+                console.warn(`      URL: ${imageUrl.substring(0, 150)}...`);
+                // If we can't extract, try using the URL as-is (might be a direct S3 URL)
+                if (imageUrl.length > 50 && imageUrl.includes('http')) {
+                  console.log(`   📝 Fallback: Using URL as-is (cannot extract S3 key)`);
+                  catImg = imageUrl;
+                } else {
+                  console.warn(`   ❌ URL is also invalid - skipping`);
+                  catImg = '';
+                }
+              }
+            } else {
+              // External URL (not S3) - use as-is
+              console.log(`   🌐 External URL detected - using URL as-is`);
+              console.log(`      URL is valid external URL, no processing needed`);
+              catImg = imageUrl; // External URLs are used directly
+              console.log(`   ✅ Using external URL: ${catImg.substring(0, Math.min(100, catImg.length))}${catImg.length > 100 ? '...' : ''}`);
+            }
           }
+        } else {
+          console.log(`   ⚠️  No image URL found for this category`);
         }
 
-        return {
+        const finalCategory = {
           ...cat,
           category_img: catImg || '',
           cat_img: catImg || ''
         };
+        
+        console.log(`   ✅ Final category_img: ${finalCategory.category_img ? finalCategory.category_img.substring(0, 80) + '...' : 'EMPTY'}`);
+        console.log(`   ✅ Final cat_img: ${finalCategory.cat_img ? finalCategory.cat_img.substring(0, 80) + '...' : 'EMPTY'}`);
+        
+        return finalCategory;
       }));
+
+      // Summary of all category images
+      console.log(`\n${'='.repeat(80)}`);
+      console.log(`📊 [SUMMARY] All Category Images Processed`);
+      console.log(`${'='.repeat(80)}`);
+      console.log(`   Total categories: ${categoryList.length}`);
+      
+      let withImages = 0;
+      let withoutImages = 0;
+      let s3Images = 0;
+      let externalImages = 0;
+      let presignedS3Images = 0;
+      let baseS3Images = 0;
+      let expiredImages = 0;
+      
+      categoryList.forEach((cat, index) => {
+        const hasImage = !!(cat.category_img || cat.cat_img);
+        if (hasImage) {
+          withImages++;
+          const imgUrl = cat.category_img || cat.cat_img;
+          if (imgUrl.includes('scrapmate-images.s3') || imgUrl.includes('s3.amazonaws.com')) {
+            s3Images++;
+            if (imgUrl.includes('X-Amz-Signature') || imgUrl.includes('X-Amz-Algorithm')) {
+              presignedS3Images++;
+            } else {
+              baseS3Images++;
+            }
+          } else {
+            externalImages++;
+          }
+        } else {
+          withoutImages++;
+        }
+        
+        const imagePreview = hasImage ? (cat.category_img || cat.cat_img) : 'NONE';
+        const isPresigned = imagePreview.includes('X-Amz-Signature') || imagePreview.includes('X-Amz-Algorithm');
+        const imageType = !hasImage ? 'NONE' : 
+                         isPresigned ? 'PRESIGNED_S3' :
+                         imagePreview.includes('scrapmate-images.s3') || imagePreview.includes('s3.amazonaws.com') ? 'BASE_S3' :
+                         'EXTERNAL';
+        
+        console.log(`   ${index + 1}. ${cat.category_name || 'N/A'} (ID: ${cat.id}) [${imageType}]`);
+        if (hasImage) {
+          console.log(`      Image: ${imagePreview.substring(0, 100)}${imagePreview.length > 100 ? '...' : ''}`);
+          if (isPresigned) {
+            // Extract expiration info from presigned URL
+            const expiresMatch = imagePreview.match(/X-Amz-Expires=(\d+)/);
+            const dateMatch = imagePreview.match(/X-Amz-Date=(\d{8}T\d{6}Z)/);
+            if (expiresMatch && dateMatch) {
+              const expiresIn = parseInt(expiresMatch[1]);
+              const dateStr = dateMatch[1];
+              console.log(`      Presigned URL expires in: ${expiresIn} seconds (from ${dateStr})`);
+            }
+          }
+        } else {
+          console.log(`      Image: NONE`);
+        }
+      });
+      
+      console.log(`\n   📈 Statistics:`);
+      console.log(`   - Total categories: ${categoryList.length}`);
+      console.log(`   - Categories with images: ${withImages} (${((withImages/categoryList.length)*100).toFixed(1)}%)`);
+      console.log(`   - Categories without images: ${withoutImages} (${((withoutImages/categoryList.length)*100).toFixed(1)}%)`);
+      console.log(`   - S3 images (total): ${s3Images}`);
+      console.log(`     • Presigned S3 URLs: ${presignedS3Images}`);
+      console.log(`     • Base S3 URLs: ${baseS3Images}`);
+      console.log(`   - External images: ${externalImages}`);
+      console.log(`${'='.repeat(80)}\n`);
 
       // Cache the result only on success (1 hour TTL)
       try {
         await RedisCache.set(cacheKey, categoryList, '365days');
         console.log(`💾 Redis cache set for category img list: ${cacheKey}`);
       } catch (redisErr) {
-        console.error('Redis cache error:', redisErr);
+        console.error(`\n❌ Redis cache error:`, redisErr.message);
+        console.error(`   Error details:`, {
+          name: redisErr.name,
+          message: redisErr.message,
+          stack: redisErr.stack
+        });
         // Continue even if Redis fails
       }
+
+      console.log(`\n✅ [SUCCESS] Returning category image list to client`);
+      console.log(`   Total categories in response: ${categoryList.length}\n`);
 
       res.json({
         status: 'success',

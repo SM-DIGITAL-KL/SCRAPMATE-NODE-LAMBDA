@@ -53,6 +53,7 @@ router.post('/admin/b2b-users/:userId/approval-status', AdminController.updateB2
 router.get('/admin/b2c-users', AdminController.b2cUsers);
 router.get('/admin/b2c-users/:userId', AdminController.getB2CUserDetails);
 router.post('/admin/b2c-users/:userId/approval-status', AdminController.updateB2CApprovalStatus);
+router.get('/admin/delivery-users', AdminController.deliveryUsers);
 router.get('/admin/delivery-users/:userId', AdminController.getDeliveryUserDetails);
 router.post('/admin/delivery-users/:userId/approval-status', AdminController.updateDeliveryApprovalStatus);
 router.get('/admin/users', AdminController.users);

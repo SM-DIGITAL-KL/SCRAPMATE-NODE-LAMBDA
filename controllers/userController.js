@@ -58,6 +58,31 @@ class UserController {
         console.log(`🔎 Fetching shop data for user_id: ${user.id}`);
         profileData = await Shop.findByUserId(user.id);
         if (profileData) {
+          // Ensure String? fields are strings (Flutter expects String? not int)
+          if (profileData.name !== undefined && profileData.name !== null) {
+            profileData.name = String(profileData.name);
+          }
+          if (profileData.shopname !== undefined && profileData.shopname !== null) {
+            profileData.shopname = String(profileData.shopname);
+          }
+          if (profileData.ownername !== undefined && profileData.ownername !== null) {
+            profileData.ownername = String(profileData.ownername);
+          }
+          if (profileData.email !== undefined && profileData.email !== null) {
+            profileData.email = String(profileData.email);
+          }
+          if (profileData.address !== undefined && profileData.address !== null) {
+            profileData.address = String(profileData.address);
+          }
+          if (profileData.place !== undefined && profileData.place !== null) {
+            profileData.place = String(profileData.place);
+          }
+          if (profileData.location !== undefined && profileData.location !== null) {
+            profileData.location = String(profileData.location);
+          }
+          if (profileData.pincode !== undefined && profileData.pincode !== null) {
+            profileData.pincode = String(profileData.pincode);
+          }
           if (profileData.profile_photo) {
             profileData.profile_photo = `${req.protocol}://${req.get('host')}/assets/images/profile/${profileData.profile_photo}`;
           } else {
@@ -71,6 +96,31 @@ class UserController {
         console.log(`🔎 Fetching customer data for user_id: ${user.id}`);
         profileData = await Customer.findByUserId(user.id);
         if (profileData) {
+          // Ensure String? fields are strings (Flutter expects String? not int)
+          if (profileData.name !== undefined && profileData.name !== null) {
+            profileData.name = String(profileData.name);
+          }
+          if (profileData.email !== undefined && profileData.email !== null) {
+            profileData.email = String(profileData.email);
+          }
+          if (profileData.address !== undefined && profileData.address !== null) {
+            profileData.address = String(profileData.address);
+          }
+          if (profileData.place !== undefined && profileData.place !== null) {
+            profileData.place = String(profileData.place);
+          }
+          if (profileData.location !== undefined && profileData.location !== null) {
+            profileData.location = String(profileData.location);
+          }
+          if (profileData.pincode !== undefined && profileData.pincode !== null) {
+            profileData.pincode = String(profileData.pincode);
+          }
+          if (profileData.lat_log !== undefined && profileData.lat_log !== null) {
+            profileData.lat_log = String(profileData.lat_log);
+          }
+          if (profileData.place_id !== undefined && profileData.place_id !== null) {
+            profileData.place_id = String(profileData.place_id);
+          }
           if (profileData.profile_photo) {
             profileData.profile_photo = `${req.protocol}://${req.get('host')}/assets/images/profile/${profileData.profile_photo}`;
           } else {
@@ -84,6 +134,25 @@ class UserController {
         console.log(`🔎 Fetching delivery boy data for user_id: ${user.id}`);
         profileData = await DeliveryBoy.findByUserId(user.id);
         if (profileData) {
+          // Ensure String? fields are strings (Flutter expects String? not int)
+          if (profileData.name !== undefined && profileData.name !== null) {
+            profileData.name = String(profileData.name);
+          }
+          if (profileData.email !== undefined && profileData.email !== null) {
+            profileData.email = String(profileData.email);
+          }
+          if (profileData.address !== undefined && profileData.address !== null) {
+            profileData.address = String(profileData.address);
+          }
+          if (profileData.place !== undefined && profileData.place !== null) {
+            profileData.place = String(profileData.place);
+          }
+          if (profileData.location !== undefined && profileData.location !== null) {
+            profileData.location = String(profileData.location);
+          }
+          if (profileData.pincode !== undefined && profileData.pincode !== null) {
+            profileData.pincode = String(profileData.pincode);
+          }
           if (profileData.profile_img) {
             profileData.profile_img = `${req.protocol}://${req.get('host')}/assets/images/deliveryboy/${profileData.profile_img}`;
           } else {
@@ -103,9 +172,9 @@ class UserController {
         if (user.user_type === 'S' || user.user_type === 'R' || user.user_type === 'SR' || user.user_type === 'N') {
           console.log(`⚠️  User type ${user.user_type} but no shop data - returning basic user info (user may not have completed signup)`);
           const basicProfile = {
-            id: user.id,
-            name: user.name || '',
-            email: user.email || '',
+            id: user.id, // Keep as int (Flutter expects int)
+            name: user.name ? String(user.name) : '',
+            email: user.email ? String(user.email) : '',
             mob_num: user.mob_num || '',
             user_type: user.user_type,
             app_type: user.app_type || 'vendor_app',
@@ -136,6 +205,21 @@ class UserController {
         });
       }
 
+      // Ensure all String? fields are strings (Flutter expects String? not int)
+      if (profileData) {
+        // Keep id and user_id as int (Flutter expects int)
+        // But ensure String? fields like name, email, etc. are strings
+        if (profileData.name !== undefined && profileData.name !== null && typeof profileData.name !== 'string') {
+          profileData.name = String(profileData.name);
+        }
+        if (profileData.email !== undefined && profileData.email !== null && typeof profileData.email !== 'string') {
+          profileData.email = String(profileData.email);
+        }
+        if (profileData.address !== undefined && profileData.address !== null && typeof profileData.address !== 'string') {
+          profileData.address = String(profileData.address);
+        }
+      }
+
       // Cache profile data in Redis only on success (use consistent string format)
       try {
         const cacheKey = RedisCache.userKey(userId, 'profile');
@@ -144,6 +228,18 @@ class UserController {
       } catch (redisErr) {
         console.error('Redis cache error:', redisErr);
         // Continue even if Redis fails
+      }
+
+      // Log the response data structure for debugging
+      console.log(`📤 [users_profile_view] Sending response for user_id: ${userId}, user_type: ${user.user_type}`);
+      console.log(`📤 [users_profile_view] Profile data keys: ${Object.keys(profileData || {}).join(', ')}`);
+      if (profileData) {
+        console.log(`📤 [users_profile_view] id type: ${typeof profileData.id}, value: ${profileData.id}`);
+        console.log(`📤 [users_profile_view] user_id type: ${typeof profileData.user_id}, value: ${profileData.user_id}`);
+        if (profileData.shop_id !== undefined) {
+          console.log(`📤 [users_profile_view] shop_id type: ${typeof profileData.shop_id}, value: ${profileData.shop_id}`);
+        }
+        console.log(`📤 [users_profile_view] name type: ${typeof profileData.name}, value: ${profileData.name}`);
       }
 
       res.json({

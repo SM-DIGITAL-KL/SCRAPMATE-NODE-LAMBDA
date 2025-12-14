@@ -116,9 +116,17 @@ app.use((req, res, next) => {
 // Middleware - Body parsing for Lambda Function URL
 // Lambda Function URL sends body as string, so we need to parse it manually if body parser didn't
 // This MUST run BEFORE express.json() to catch cases where express.json() doesn't parse
+// IMPORTANT: Do NOT parse multipart/form-data - let multer handle it
 app.use((req, res, next) => {
   const contentType = req.headers['content-type'] || req.headers['Content-Type'] || '';
+  const isMultipart = contentType.includes('multipart/form-data');
   const isFormData = contentType.includes('application/x-www-form-urlencoded');
+  
+  // IMPORTANT: Skip parsing for multipart/form-data - multer will handle it
+  if (isMultipart) {
+    console.log('📎 Multipart request detected, skipping JSON/form parsing - multer will handle');
+    return next();
+  }
   
   // If body is already parsed (object), skip
   if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) && !Array.isArray(req.body)) {
@@ -140,8 +148,8 @@ app.use((req, res, next) => {
         console.error('❌ Failed to manually parse JSON body:', parseError);
       }
     }
-    // Check if it's form data
-    else if (isFormData || (trimmed.includes('=') && !trimmed.includes('{'))) {
+    // Check if it's form data (but NOT multipart)
+    else if (isFormData || (trimmed.includes('=') && !trimmed.includes('{') && !trimmed.includes('--'))) {
       try {
         const querystring = require('querystring');
         const parsed = querystring.parse(req.body);
@@ -171,7 +179,7 @@ app.use((req, res, next) => {
       } catch (parseError) {
         console.error('❌ Failed to parse Lambda event JSON body:', parseError);
       }
-    } else if (trimmed.includes('=') && !trimmed.includes('{')) {
+    } else if (trimmed.includes('=') && !trimmed.includes('{') && !trimmed.includes('--')) {
       try {
         const querystring = require('querystring');
         const parsed = querystring.parse(req.lambdaEvent.body);
@@ -186,8 +194,16 @@ app.use((req, res, next) => {
   next();
 });
 
-// Middleware - Only parse if body is not already parsed
+// Middleware - Only parse if body is not already parsed and NOT multipart
 app.use((req, res, next) => {
+  const contentType = req.headers['content-type'] || req.headers['Content-Type'] || '';
+  const isMultipart = contentType.includes('multipart/form-data');
+  
+  // Skip parsing for multipart/form-data - multer will handle it
+  if (isMultipart) {
+    return next();
+  }
+  
   // Skip JSON parser if body is already an object (parsed)
   if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) && !Array.isArray(req.body)) {
     return express.urlencoded({ extended: true })(req, res, next);
@@ -196,6 +212,14 @@ app.use((req, res, next) => {
 });
 
 app.use((req, res, next) => {
+  const contentType = req.headers['content-type'] || req.headers['Content-Type'] || '';
+  const isMultipart = contentType.includes('multipart/form-data');
+  
+  // Skip parsing for multipart/form-data - multer will handle it
+  if (isMultipart) {
+    return next();
+  }
+  
   // Skip urlencoded parser if body is already an object (parsed)
   if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) && !Array.isArray(req.body)) {
     return next();

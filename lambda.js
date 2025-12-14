@@ -36,8 +36,44 @@ exports.handler = async (event, context) => {
   let bodyString = event.body;
   let parsedBody = null;
   
-  if (bodyString && typeof bodyString === 'string') {
-    // Check if body is base64 encoded
+  // Ensure Content-Type is set for parsing by serverless-http
+  const contentType = event.headers?.['content-type'] || event.headers?.['Content-Type'] || '';
+  const isMultipart = contentType.includes('multipart/form-data');
+  
+  // IMPORTANT: For multipart/form-data, decode base64 to Buffer for multer
+  // Lambda Function URL sends multipart as base64-encoded string, but multer needs raw Buffer
+  if (isMultipart && bodyString && typeof bodyString === 'string') {
+    // Decode base64 to Buffer if encoded - multer needs raw binary data
+    if (event.isBase64Encoded) {
+      try {
+        event.body = Buffer.from(bodyString, 'base64');
+        console.log('📎 Multipart/form-data detected - decoded base64 body to Buffer for multer');
+        console.log('   isBase64Encoded: true');
+        console.log('   Buffer length:', event.body.length, 'bytes');
+      } catch (decodeError) {
+        console.error('❌ Failed to decode base64 multipart body:', decodeError);
+        // Fallback: keep as string and let serverless-http try to handle it
+        event.body = bodyString;
+      }
+    } else {
+      // If not base64 encoded, convert string to Buffer for multer
+      try {
+        event.body = Buffer.from(bodyString, 'binary');
+        console.log('📎 Multipart/form-data detected - converted string to Buffer for multer');
+        console.log('   isBase64Encoded: false');
+        console.log('   Buffer length:', event.body.length, 'bytes');
+      } catch (convertError) {
+        console.error('❌ Failed to convert multipart body to Buffer:', convertError);
+        event.body = bodyString;
+      }
+    }
+    // Ensure headers exist
+    if (!event.headers) {
+      event.headers = {};
+    }
+    // Keep content-type header for multer to parse boundaries
+  } else if (bodyString && typeof bodyString === 'string') {
+    // For non-multipart, check if body is base64 encoded
     if (event.isBase64Encoded) {
       try {
         bodyString = Buffer.from(bodyString, 'base64').toString('utf-8');
@@ -47,10 +83,8 @@ exports.handler = async (event, context) => {
       }
     }
     
-    // Ensure Content-Type is set for parsing by serverless-http
-    const contentType = event.headers?.['content-type'] || event.headers?.['Content-Type'] || '';
-    const isJson = contentType.includes('application/json') || bodyString.trim().startsWith('{') || bodyString.trim().startsWith('[');
-    const isFormData = contentType.includes('application/x-www-form-urlencoded') || (bodyString.includes('=') && !bodyString.includes('{'));
+    const isJson = contentType.includes('application/json') || (!isMultipart && (bodyString.trim().startsWith('{') || bodyString.trim().startsWith('[')));
+    const isFormData = contentType.includes('application/x-www-form-urlencoded') || (!isMultipart && bodyString.includes('=') && !bodyString.includes('{') && !bodyString.includes('--'));
     
     if (!contentType) {
       if (!event.headers) event.headers = {};
@@ -75,7 +109,7 @@ exports.handler = async (event, context) => {
         console.error('   Body string (first 200 chars):', bodyString.substring(0, 200));
       }
     }
-    // Parse form data manually
+    // Parse form data manually (only for application/x-www-form-urlencoded, NOT multipart)
     else if (isFormData) {
       try {
         const querystring = require('querystring');
@@ -89,9 +123,7 @@ exports.handler = async (event, context) => {
       }
     }
     
-    // Keep body as string for serverless-http (it expects string)
-    // The express.json() middleware or our custom middleware will parse it
-    // But if we already parsed it, ensure Content-Type is set so express.json() can handle it
+    // Keep body as string for serverless-http (it expects string for non-multipart)
     event.body = bodyString;
     
     // Ensure headers exist and Content-Type is set for express.json() to parse correctly

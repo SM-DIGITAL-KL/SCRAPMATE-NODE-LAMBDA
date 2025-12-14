@@ -53,6 +53,18 @@ class V2B2BSignupController {
       const s3Result = await uploadBufferToS3(req.file.buffer, filename, 'b2b-documents');
       console.log(`✅ Document uploaded to S3: ${s3Result.s3Url}`);
 
+      // Check if user has a shop with rejected status and change to pending on document resubmission
+      const Shop = require('../models/Shop');
+      const shop = await Shop.findByUserId(userId);
+      if (shop && shop.approval_status === 'rejected') {
+        const updateData = {
+          approval_status: 'pending',
+          application_submitted_at: new Date().toISOString()
+        };
+        await Shop.update(shop.id, updateData);
+        console.log(`📋 B2B document upload (${documentType}) - changing approval_status from 'rejected' to 'pending' for user ${userId} (resubmission)`);
+      }
+
       return res.json({
         status: 'success',
         msg: 'Document uploaded successfully',
@@ -150,4 +162,3 @@ class V2B2BSignupController {
 }
 
 module.exports = V2B2BSignupController;
-

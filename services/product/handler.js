@@ -55,6 +55,16 @@ app.use((req, res, next) => {
 const { cacheGetMiddleware } = require('../../middleware/cacheMiddleware');
 app.use(cacheGetMiddleware);
 
+// Mount v2 API routes for microservices gateway
+// This lets /api/v2/... work on the microservices API Gateway
+// Also mount at /v2 for Lambda Function URL direct access (without /api prefix)
+const v2Routes = require('../../routes/v2Routes');
+
+// v2 routes must be mounted BEFORE generic /api routes so they don't fall through to 404
+// Mount at both /api/v2 (for API Gateway) and /v2 (for Lambda Function URL)
+app.use('/api/v2', v2Routes);
+app.use('/v2', v2Routes);
+
 const productRoutes = require('./routes');
 app.use('/api', productRoutes);
 

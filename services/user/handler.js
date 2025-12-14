@@ -100,6 +100,8 @@ const { cacheGetMiddleware } = require('../../middleware/cacheMiddleware');
 app.use(cacheGetMiddleware);
 
 const userRoutes = require('./routes');
+
+// Mount user routes (includes v2 routes)
 app.use('/api', userRoutes);
 
 app.use((err, req, res, next) => {

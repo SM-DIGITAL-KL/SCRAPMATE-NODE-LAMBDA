@@ -1081,8 +1081,24 @@ class UtilityController {
   // Clear Redis cache
   static async clearRedisCache(req, res) {
     try {
-      const { type = 'all' } = req.body;
+      const { type = 'all', keys = null } = req.body;
 
+      // If specific keys are provided, delete them directly
+      if (keys && Array.isArray(keys)) {
+        let deletedCount = 0;
+        for (const key of keys) {
+          const deleted = await RedisCache.delete(key);
+          if (deleted) deletedCount++;
+        }
+        
+        return res.json({
+          status: 'success',
+          msg: `Deleted ${deletedCount} of ${keys.length} cache key(s)`,
+          data: { deleted: deletedCount, total: keys.length }
+        });
+      }
+
+      // Otherwise use the type-based clearing
       const result = await RedisCache.clearAll(type);
 
       if (result.success) {

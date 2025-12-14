@@ -79,12 +79,65 @@ router.post('/v2/profile/:userId/aadhar', v2DocumentUpload.single('file'), V2Pro
  */
 router.post('/v2/profile/:userId/driving-license', v2DocumentUpload.single('file'), V2ProfileController.uploadDrivingLicense);
 
+/**
+ * PUT /api/v2/profile/:userId/complete-delivery-signup
+ * Manually complete delivery signup and update user_type to 'D'
+ */
+router.put('/v2/profile/:userId/complete-delivery-signup', V2ProfileController.completeDeliverySignup);
+
+/**
+ * DELETE /api/v2/profile/:userId
+ * Delete user account (soft delete)
+ */
+router.delete('/v2/profile/:userId', V2ProfileController.deleteAccount);
+
 // ==================== V2 MOBILE SUBSCRIPTION PACKAGES ROUTES ====================
 /**
  * GET /api/v2/subscription-packages?userType=b2b|b2c
  * Get subscription packages for a specific user type
  */
 router.get('/v2/subscription-packages', V2SubscriptionPackageController.getSubscriptionPackages);
+
+// ==================== V2 PROFILE CATEGORY ROUTES ====================
+/**
+ * PUT /api/v2/profile/:userId/categories
+ * Update user's operating categories
+ * Body: { categoryIds: number[] }
+ */
+router.put('/v2/profile/:userId/categories', V2ProfileController.updateUserCategories);
+
+/**
+ * GET /api/v2/profile/:userId/categories
+ * Get user's operating categories
+ */
+router.get('/v2/profile/:userId/categories', V2ProfileController.getUserCategories);
+
+/**
+ * DELETE /api/v2/profile/:userId/categories/:categoryId
+ * Remove a category and all its subcategories from user's operating categories/subcategories
+ */
+router.delete('/v2/profile/:userId/categories/:categoryId', V2ProfileController.removeUserCategory);
+
+// ==================== V2 PROFILE SUBCATEGORY ROUTES ====================
+/**
+ * PUT /api/v2/profile/:userId/subcategories
+ * Update user's operating subcategories with custom prices
+ * Body: { subcategories: [{ subcategoryId: number, customPrice: string, priceUnit: string }] }
+ */
+router.put('/v2/profile/:userId/subcategories', V2ProfileController.updateUserSubcategories);
+
+/**
+ * DELETE /api/v2/profile/:userId/subcategories
+ * Remove specific subcategories from user's operating subcategories
+ * Body: { subcategoryIds: [number] }
+ */
+router.delete('/v2/profile/:userId/subcategories', V2ProfileController.removeUserSubcategories);
+
+/**
+ * GET /api/v2/profile/:userId/subcategories
+ * Get user's operating subcategories with custom prices
+ */
+router.get('/v2/profile/:userId/subcategories', V2ProfileController.getUserSubcategories);
 
 module.exports = router;
 

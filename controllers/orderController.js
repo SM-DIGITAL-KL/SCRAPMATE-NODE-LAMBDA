@@ -109,6 +109,34 @@ class OrderController {
       const { getImageUrl } = require('../utils/imageHelper');
       const formattedOrders = await Promise.all(orders.map(async (order) => {
         const formatted = { ...order };
+        
+        // Convert id fields to strings for frontend compatibility
+        if (formatted.id !== undefined) {
+          formatted.id = String(formatted.id);
+        }
+        if (formatted.customer_id !== undefined) {
+          formatted.customer_id = String(formatted.customer_id);
+        }
+        if (formatted.shop_id !== undefined) {
+          formatted.shop_id = String(formatted.shop_id);
+        }
+        if (formatted.delv_id !== undefined && formatted.delv_id !== null) {
+          formatted.delv_id = String(formatted.delv_id);
+        }
+        if (formatted.delv_boy_id !== undefined && formatted.delv_boy_id !== null) {
+          formatted.delv_boy_id = String(formatted.delv_boy_id);
+        }
+        
+        // Parse orderdetails if it's a JSON string
+        if (formatted.orderdetails && typeof formatted.orderdetails === 'string') {
+          try {
+            formatted.orderdetails = JSON.parse(formatted.orderdetails);
+          } catch (parseErr) {
+            console.error('Error parsing orderdetails:', parseErr);
+            // Keep as string if parsing fails
+          }
+        }
+        
         for (let i = 1; i <= 6; i++) {
           const imageField = `image${i}`;
           if (formatted[imageField]) {
@@ -190,6 +218,34 @@ class OrderController {
       const { getImageUrl } = require('../utils/imageHelper');
       const formattedOrders = await Promise.all(orders.map(async (order) => {
         const formatted = { ...order };
+        
+        // Convert id fields to strings for frontend compatibility
+        if (formatted.id !== undefined) {
+          formatted.id = String(formatted.id);
+        }
+        if (formatted.customer_id !== undefined) {
+          formatted.customer_id = String(formatted.customer_id);
+        }
+        if (formatted.shop_id !== undefined) {
+          formatted.shop_id = String(formatted.shop_id);
+        }
+        if (formatted.delv_id !== undefined && formatted.delv_id !== null) {
+          formatted.delv_id = String(formatted.delv_id);
+        }
+        if (formatted.delv_boy_id !== undefined && formatted.delv_boy_id !== null) {
+          formatted.delv_boy_id = String(formatted.delv_boy_id);
+        }
+        
+        // Parse orderdetails if it's a JSON string
+        if (formatted.orderdetails && typeof formatted.orderdetails === 'string') {
+          try {
+            formatted.orderdetails = JSON.parse(formatted.orderdetails);
+          } catch (parseErr) {
+            console.error('Error parsing orderdetails:', parseErr);
+            // Keep as string if parsing fails
+          }
+        }
+        
         for (let i = 1; i <= 6; i++) {
           const imageField = `image${i}`;
           if (formatted[imageField]) {
@@ -441,4 +497,3 @@ class OrderController {
 }
 
 module.exports = OrderController;
-

@@ -5,6 +5,7 @@
 
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 const { apiKeyCheck } = require('../../middleware/apiKeyMiddleware');
 const { profileUpload: profileUploadMulter } = require('../../utils/fileUpload');
 
@@ -39,7 +40,32 @@ router.get('/login_app/:mob', AuthController.loginApp);
 router.post('/login_app', AuthController.loginAppPost); // POST version for Flutter app
 router.post('/login', AuthController.login);
 router.post('/dologin', WebLoginController.doLogin);
-router.post('/users_register', profileUpload, AuthController.usersRegister);
+// Handle multer errors gracefully for users_register
+router.post('/users_register', (req, res, next) => {
+  profileUpload(req, res, (err) => {
+    if (err) {
+      // Handle multer errors gracefully
+      if (err.message === 'Unexpected end of form' || err.code === 'LIMIT_UNEXPECTED_FILE') {
+        console.warn('⚠️  [users_register] Multer error (non-critical):', err.message);
+        // Continue without file - registration can proceed without profile photo
+        req.file = null;
+        return next();
+      }
+      // For other multer errors, return a user-friendly error
+      if (err instanceof multer.MulterError) {
+        console.error('❌ [users_register] Multer error:', err.message);
+        return res.status(400).json({
+          status: 'error',
+          msg: err.code === 'LIMIT_FILE_SIZE' ? 'File too large (max 10MB)' : 'File upload error',
+          data: ''
+        });
+      }
+      // For other errors, pass to error handler
+      return next(err);
+    }
+    next();
+  });
+}, AuthController.usersRegister);
 router.post('/user_mob_verification', AuthController.userMobVerification);
 
 // ==================== V2 MOBILE AUTH ROUTES ====================

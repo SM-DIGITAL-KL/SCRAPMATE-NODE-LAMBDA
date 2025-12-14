@@ -244,8 +244,17 @@ function generateS3Key(localPath, type = 'images') {
 
 // Upload buffer to S3 (for multer)
 async function uploadBufferToS3(buffer, filename, folder = 'images') {
+  const uploadStartTime = Date.now();
+  
   try {
+    console.log(`\n🌐 [S3 UPLOAD UTILITY] Starting S3 upload...`);
+    console.log(`   Filename: ${filename}`);
+    console.log(`   Folder: ${folder}`);
+    console.log(`   Buffer size: ${buffer.length} bytes (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`);
+    console.log(`   Buffer type: ${buffer.constructor.name}`);
+    
     const client = getS3Client();
+    console.log(`   S3 client initialized`);
     
     // Auto-detect content type
     const ext = path.extname(filename).toLowerCase();
@@ -259,7 +268,12 @@ async function uploadBufferToS3(buffer, filename, folder = 'images') {
     };
     const contentType = contentTypes[ext] || 'application/octet-stream';
     
+    console.log(`   File extension: ${ext}`);
+    console.log(`   Content type: ${contentType}`);
+    
     const s3Key = `${folder}/${filename}`;
+    console.log(`   S3 Key: ${s3Key}`);
+    console.log(`   S3 Bucket: ${BUCKET_NAME}`);
     
     const command = new PutObjectCommand({
       Bucket: BUCKET_NAME,
@@ -270,10 +284,21 @@ async function uploadBufferToS3(buffer, filename, folder = 'images') {
       // Public access is handled via bucket policy instead
     });
 
+    console.log(`   Sending PutObjectCommand to S3...`);
+    const s3StartTime = Date.now();
     await client.send(command);
+    const s3Duration = Date.now() - s3StartTime;
+    console.log(`   ✅ S3 upload completed in ${s3Duration}ms`);
     
     const s3Url = `${getS3BaseUrl()}/${s3Key}`;
-    console.log(`✅ Uploaded buffer to S3: ${s3Key} -> ${s3Url}`);
+    const totalDuration = Date.now() - uploadStartTime;
+    
+    console.log(`\n✅ [S3 UPLOAD SUCCESS]`);
+    console.log(`   Total upload time: ${totalDuration}ms`);
+    console.log(`   S3 Key: ${s3Key}`);
+    console.log(`   S3 URL: ${s3Url}`);
+    console.log(`   URL length: ${s3Url.length} characters`);
+    console.log(`   Full URL: ${s3Url}`);
     
     return {
       s3Key: s3Key,
@@ -281,7 +306,22 @@ async function uploadBufferToS3(buffer, filename, folder = 'images') {
       filename: filename
     };
   } catch (err) {
-    console.error(`❌ Error uploading buffer to S3: ${filename}`, err);
+    const totalDuration = Date.now() - uploadStartTime;
+    console.error(`\n❌ [S3 UPLOAD FAILED]`);
+    console.error(`   Upload duration before failure: ${totalDuration}ms`);
+    console.error(`   Filename: ${filename}`);
+    console.error(`   Folder: ${folder}`);
+    console.error(`   Buffer size: ${buffer ? buffer.length : 0} bytes`);
+    console.error(`   Error name: ${err.name}`);
+    console.error(`   Error message: ${err.message}`);
+    console.error(`   Error code: ${err.code || 'N/A'}`);
+    console.error(`   Error stack:`, err.stack);
+    
+    if (err.name === 'NoSuchBucket') {
+      console.error(`   ❌ S3 Bucket "${BUCKET_NAME}" does not exist!`);
+      console.error(`   Please create the bucket or set the correct S3_BUCKET_NAME environment variable`);
+    }
+    
     throw err;
   }
 }

@@ -35,9 +35,6 @@ provider:
             - logs:CreateLogStream
             - logs:PutLogEvents
           Resource: "*"
-  logs:
-    httpApi:
-      accessLogging: false
   httpApi:
     cors:
       allowedOrigins:
@@ -154,6 +151,17 @@ functions:
     description: Product and category management service
     memorySize: 512
     timeout: 30
+    url:
+      cors: true
+      authorizer: aws_iam
+    package:
+      patterns:
+        - 'routes/**'
+        - 'controllers/**'
+        - 'models/**'
+        - 'middleware/**'
+        - 'utils/**'
+        - 'config/**'
     events:
       - httpApi:
           path: /api/product/{proxy+}
@@ -188,6 +196,57 @@ functions:
       - httpApi:
           path: /api/items_list_for_sale
           method: POST
+      # ==================== V2 GENERAL CATEGORY ROUTES ====================
+      - httpApi:
+          path: /api/v2/categories
+          method: GET
+      - httpApi:
+          path: /api/v2/subcategories
+          method: GET
+      - httpApi:
+          path: /api/v2/categories/with-subcategories
+          method: GET
+      - httpApi:
+          path: /api/v2/recycling/stats/{userId}
+          method: GET
+      - httpApi:
+          path: /api/v2/earnings/monthly-breakdown/{userId}
+          method: GET
+      - httpApi:
+          path: /api/v2/orders/pickup-request
+          method: POST
+      - httpApi:
+          path: /api/v2/orders/pickup-requests/available
+          method: GET
+      - httpApi:
+          path: /api/v2/orders/pickup-request/{orderId}/accept
+          method: POST
+      - httpApi:
+          path: /api/v2/orders/active-pickup/{userId}
+          method: GET
+
+  # ==================== LOCATION SERVICE ====================
+  location-service:
+    handler: services/location/handler.handler
+    description: Real-time location tracking service for pickup vendors
+    memorySize: 512
+    timeout: 30
+    events:
+      - httpApi:
+          path: /api/v2/location/{proxy+}
+          method: ANY
+      - httpApi:
+          path: /api/v2/location/update
+          method: POST
+      - httpApi:
+          path: /api/v2/location/{userId}
+          method: GET
+      - httpApi:
+          path: /api/v2/location/{userId}
+          method: DELETE
+      - httpApi:
+          path: /api/v2/location/order/{orderId}
+          method: GET
 
   # ==================== ORDER SERVICE ====================
   order-service:
@@ -291,6 +350,9 @@ functions:
           path: /api/v2/profile/{userId}
           method: PUT
       - httpApi:
+          path: /api/v2/profile/{userId}
+          method: DELETE
+      - httpApi:
           path: /api/v2/profile/{userId}/delivery-mode
           method: PUT
       - httpApi:
@@ -306,7 +368,34 @@ functions:
           path: /api/v2/profile/{userId}/driving-license
           method: POST
       - httpApi:
+          path: /api/v2/profile/{userId}/complete-delivery-signup
+          method: PUT
+      - httpApi:
           path: /api/v2/subscription-packages
+          method: GET
+      # ==================== V2 PROFILE CATEGORY ROUTES ====================
+      - httpApi:
+          path: /api/v2/profile/{userId}/categories
+          method: GET
+      - httpApi:
+          path: /api/v2/profile/{userId}/categories
+          method: PUT
+      - httpApi:
+          path: /api/v2/profile/{userId}/categories/{categoryId}
+          method: DELETE
+      # ==================== V2 PROFILE SUBCATEGORY ROUTES ====================
+      - httpApi:
+          path: /api/v2/profile/{userId}/subcategories
+          method: GET
+      - httpApi:
+          path: /api/v2/profile/{userId}/subcategories
+          method: PUT
+      - httpApi:
+          path: /api/v2/profile/{userId}/subcategories
+          method: DELETE
+      # ==================== V2 RECYCLING STATISTICS ROUTES ====================
+      - httpApi:
+          path: /api/v2/recycling/stats/{userId}
           method: GET
 
   # ==================== NOTIFICATION SERVICE ====================

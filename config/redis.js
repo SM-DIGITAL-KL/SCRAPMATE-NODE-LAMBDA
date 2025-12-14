@@ -16,10 +16,42 @@ const createMockRedis = () => ({
   scan: async () => ['0', []],
 });
 
-// Only initialize Redis if credentials are provided
+// Validate Redis URL - must be a valid HTTPS URL and not a placeholder
+const isValidRedisUrl = (url) => {
+  if (!url || typeof url !== 'string') return false;
+  
+  // Check for common placeholder values
+  const placeholders = [
+    'your-redis-url-here',
+    'your-redis-url',
+    'redis-url-here',
+    'placeholder',
+    'example.com',
+    'localhost',
+  ];
+  
+  const isPlaceholder = placeholders.some(placeholder => 
+    url.toLowerCase().includes(placeholder.toLowerCase())
+  );
+  
+  if (isPlaceholder) return false;
+  
+  // Must start with https://
+  if (!url.startsWith('https://')) return false;
+  
+  // Basic URL validation
+  try {
+    const urlObj = new URL(url);
+    return urlObj.protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
+
+// Only initialize Redis if credentials are provided and valid
 let redis = null;
 
-if (redisUrl && redisToken) {
+if (redisUrl && redisToken && isValidRedisUrl(redisUrl)) {
   try {
     redis = new Redis({
       url: redisUrl,
@@ -32,8 +64,14 @@ if (redisUrl && redisToken) {
     redis = createMockRedis();
   }
 } else {
+  if (redisUrl && !isValidRedisUrl(redisUrl)) {
+    console.warn('⚠️  Redis URL is invalid or placeholder value. Redis caching will be disabled.');
+    console.warn(`   Current REDIS_URL: "${redisUrl}"`);
+    console.warn('   Please set a valid HTTPS Redis URL in aws.txt or .env');
+  } else if (!redisUrl || !redisToken) {
   console.warn('⚠️  Redis credentials not found. Redis caching will be disabled.');
   console.warn('   Set REDIS_URL and REDIS_TOKEN (or UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN) in aws.txt or .env');
+  }
   redis = createMockRedis();
 }
 

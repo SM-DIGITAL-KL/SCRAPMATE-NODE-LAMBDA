@@ -127,12 +127,9 @@ app.use((req, res, next) => {
 });
 
 const utilityRoutes = require('./routes');
-// Mount v2 API routes for microservices gateway as well
-// This lets /api/v2/... work on the microservices API Gateway, not only on the monolithic Lambda URL
-const v2Routes = require('../../routes/v2Routes');
 
-// v2 routes must be mounted BEFORE generic /api routes so they don't fall through to utility 404
-app.use('/api/v2', v2Routes);
+// Note: V2 category routes are handled by product-service, not utility-service
+// Only mount v2 routes that are specific to utility service (if any)
 
 app.use('/api', utilityRoutes);
 app.use('/', utilityRoutes);  // Also mount at root for API Gateway path handling

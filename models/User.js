@@ -72,9 +72,10 @@ class User {
         scanCount++;
         const params = {
           TableName: TABLE_NAME,
-          FilterExpression: 'mob_num = :mobile',
+          FilterExpression: 'mob_num = :mobile AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
           ExpressionAttributeValues: {
-            ':mobile': mobileValue
+            ':mobile': mobileValue,
+            ':deleted': 2
           }
         };
         
@@ -923,7 +924,12 @@ class User {
           // Filter for B2B users:
           // 1. user_type = 'S' or 'SR' (v2 B2B users)
           // 2. OR user has shop_type = 1 (Industrial) or 4 (Wholesaler) (v1 B2B users)
+          // IMPORTANT: Exclude user_type = 'D' (Delivery users) even if they have a B2B shop
           let b2bUsers = response.Items.filter(user => {
+            // Exclude Delivery users (user_type 'D')
+            if (user.user_type === 'D') {
+              return false;
+            }
             const isV2B2B = user.user_type === 'S' || user.user_type === 'SR';
             const isV1B2B = userIdsWithB2BShop.has(user.id);
             return isV2B2B || isV1B2B;
@@ -1118,6 +1124,95 @@ class User {
       };
     } catch (err) {
       console.error('User.getB2CUsers error:', err);
+      throw err;
+    }
+  }
+
+  // Get Delivery users with pagination (user_type = 'D')
+  static async getDeliveryUsers(page = 1, limit = 10, search = null) {
+    try {
+      const client = getDynamoDBClient();
+      const pageNumber = parseInt(page) || 1;
+      const pageSize = parseInt(limit) || 20;
+      const skip = (pageNumber - 1) * pageSize;
+      
+      let lastKey = null;
+      const allUsers = [];
+      
+      // Collect all Delivery users (user_type = 'D')
+      console.log('🔍 Scanning users for user_type = "D" (Delivery)...');
+      do {
+        const params = {
+          TableName: TABLE_NAME
+        };
+        
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        
+        if (response.Items) {
+          // Filter for Delivery users: user_type = 'D'
+          const deliveryUsers = response.Items.filter(user => {
+            return user.user_type === 'D';
+          });
+          
+          allUsers.push(...deliveryUsers);
+        }
+        
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+      
+      // Sort by created_at descending (newest first)
+      allUsers.sort((a, b) => {
+        // Handle missing or invalid dates - use created_at or fallback to updated_at
+        let dateA = a.created_at ? new Date(a.created_at) : null;
+        let dateB = b.created_at ? new Date(b.created_at) : null;
+        
+        // If dates are invalid or missing, use updated_at as fallback
+        if (!dateA || isNaN(dateA.getTime())) {
+          dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
+        }
+        if (!dateB || isNaN(dateB.getTime())) {
+          dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
+        }
+        
+        // Sort descending (newest first)
+        return dateB.getTime() - dateA.getTime();
+      });
+      
+      console.log(`✅ Sorted ${allUsers.length} Delivery users by newest first`);
+      if (allUsers.length > 0) {
+        console.log(`   First user: ${allUsers[0].name} (created: ${allUsers[0].created_at})`);
+        if (allUsers.length > 1) {
+          console.log(`   Last user: ${allUsers[allUsers.length - 1].name} (created: ${allUsers[allUsers.length - 1].created_at})`);
+        }
+      }
+      
+      // Get total count
+      const total = allUsers.length;
+      
+      // Apply pagination (if limit is very large, return all users)
+      const paginatedUsers = pageSize >= 999999 ? allUsers : allUsers.slice(skip, skip + pageSize);
+      
+      // Remove password from results
+      const usersWithoutPassword = paginatedUsers.map(user => {
+        const { password: _, ...userWithoutPassword } = user;
+        return userWithoutPassword;
+      });
+      
+      return {
+        users: usersWithoutPassword,
+        total: total,
+        page: pageNumber,
+        limit: pageSize,
+        totalPages: Math.ceil(total / pageSize),
+        hasMore: skip + pageSize < total
+      };
+    } catch (err) {
+      console.error('User.getDeliveryUsers error:', err);
       throw err;
     }
   }

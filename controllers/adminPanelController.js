@@ -7,25 +7,129 @@ const ProductCategory = require('../models/ProductCategory');
 const RedisCache = require('../utils/redisCache');
 
 class AdminPanelController {
-  // Dashboard KPIs (counts only)
+  // Dashboard KPIs (counts only) - Optimized for performance
   static async dashboardKPIs(req, res) {
     console.log('✅ AdminPanelController.dashboardKPIs called');
     
     const cacheKey = RedisCache.adminKey('dashboard_kpis');
+    let cached = null;
+    
+    // Check cache first and return immediately if available
     try {
-      const cached = await RedisCache.get(cacheKey);
+      cached = await RedisCache.get(cacheKey);
       if (cached) {
-        console.log('⚡ Dashboard KPIs cache hit');
-        return res.json({
+        console.log('⚡ Dashboard KPIs cache hit - returning immediately');
+        // Return cached data immediately
+        res.json({
           status: 'success',
           msg: 'Dashboard KPIs retrieved',
           data: cached
         });
+        
+        // Refresh cache in background (don't await)
+        this._refreshKPIsCache(cacheKey).catch(err => {
+          console.error('Background cache refresh error:', err);
+        });
+        
+        return;
       }
     } catch (err) {
       console.error('Redis get error:', err);
     }
     
+    // If no cache, fetch with timeout protection
+    try {
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Query timeout')), 25000); // 25 second timeout
+      });
+      
+      const dataPromise = Promise.all([
+        Shop.countByDelStatus(1),
+        User.countByUserType('C'),
+        User.countByUserTypeAndCurrentMonth('C'),
+        User.countByUserTypeAndCurrentMonth('S'),
+        DeliveryBoy.count(),
+        (async () => {
+          const UserAdmin = require('../models/UserAdmin');
+          return await UserAdmin.count();
+        })(),
+        Order.count(),
+        Shop.countPendingB2BApprovals(),
+        User.countV2Users(),
+        User.countV2B2BUsers(),
+        User.countV2B2CUsers(),
+        Shop.countDoorStepBuyers(),
+        Shop.countV2DoorStepBuyers()
+      ]);
+
+      const [
+        shops,
+        customers,
+        this_month_customers,
+        this_month_vendors,
+        deliveryboys,
+        users,
+        orders,
+        pending_b2b_approvals,
+        v2_users_count,
+        v2_b2b_count,
+        v2_b2c_count,
+        door_step_buyers_count,
+        v2_door_step_buyers_count
+      ] = await Promise.race([dataPromise, timeoutPromise]);
+
+      const result = {
+        shops,
+        customers,
+        this_month_customers,
+        this_month_vendors,
+        deliveryboys,
+        users,
+        orders,
+        pending_b2b_approvals,
+        v2_users_count,
+        v2_b2b_count,
+        v2_b2c_count,
+        door_step_buyers_count,
+        v2_door_step_buyers_count
+      };
+
+      // Cache for 2 hours (7200 seconds) - KPIs don't change frequently
+      try {
+        await RedisCache.set(cacheKey, result, 7200);
+        console.log('💾 Dashboard KPIs cached for 2 hours');
+      } catch (err) {
+        console.error('Redis cache set error:', err);
+      }
+
+      res.json({
+        status: 'success',
+        msg: 'Dashboard KPIs retrieved',
+        data: result
+      });
+    } catch (error) {
+      console.error('Dashboard KPIs API error:', error);
+      
+      // If we have stale cache, return it
+      if (cached) {
+        console.log('⚠️ Returning stale cache due to error');
+        return res.json({
+          status: 'success',
+          msg: 'Dashboard KPIs retrieved (cached)',
+          data: cached
+        });
+      }
+      
+      res.status(500).json({
+        status: 'error',
+        msg: 'Error loading dashboard KPIs',
+        data: null
+      });
+    }
+  }
+
+  // Background cache refresh helper
+  static async _refreshKPIsCache(cacheKey) {
     try {
       const [
         shops,
@@ -76,48 +180,109 @@ class AdminPanelController {
         v2_door_step_buyers_count
       };
 
-      // Cache for 30 minutes (1800 seconds) - KPIs don't change frequently
+      await RedisCache.set(cacheKey, result, 7200);
+      console.log('🔄 Background cache refresh completed');
+    } catch (err) {
+      console.error('Background cache refresh error:', err);
+    }
+  }
+
+  // Dashboard Charts (monthly statistics) - Optimized for performance
+  static async dashboardCharts(req, res) {
+    console.log('✅ AdminPanelController.dashboardCharts called');
+    
+    const cacheKey = RedisCache.adminKey('dashboard_charts');
+    let cached = null;
+    
+    // Check cache first and return immediately if available
+    try {
+      cached = await RedisCache.get(cacheKey);
+      if (cached) {
+        console.log('⚡ Dashboard charts cache hit - returning immediately');
+        // Return cached data immediately
+        res.json({
+          status: 'success',
+          msg: 'Dashboard charts retrieved',
+          data: cached
+        });
+        
+        // Refresh cache in background (don't await)
+        this._refreshChartsCache(cacheKey).catch(err => {
+          console.error('Background cache refresh error:', err);
+        });
+        
+        return;
+      }
+    } catch (err) {
+      console.error('Redis get error:', err);
+    }
+    
+    // If no cache, fetch with timeout protection
+    try {
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Query timeout')), 25000); // 25 second timeout
+      });
+      
+      const dataPromise = Promise.all([
+        User.getMonthlyCountByUserType('C'),
+        User.getMonthlyCountByUserType('S'),
+        Order.getMonthlyCount(),
+        Order.getMonthlyCount(4),
+        Order.getMonthlyPendingCount()
+      ]);
+
+      const [
+        month_wise_customers_count,
+        month_wise_vendor_count,
+        month_wise_orders_count,
+        month_wise_completed_orders_count,
+        month_wise_pending_orders_count
+      ] = await Promise.race([dataPromise, timeoutPromise]);
+
+      const result = {
+        month_wise_customers_count,
+        month_wise_vendor_count,
+        month_wise_orders_count,
+        month_wise_completed_orders_count,
+        month_wise_pending_orders_count
+      };
+
+      // Cache for 2 hours (7200 seconds) - Chart data doesn't change frequently
       try {
-        await RedisCache.set(cacheKey, result, 1800);
-        console.log('💾 Dashboard KPIs cached for 30 minutes');
+        await RedisCache.set(cacheKey, result, 7200);
+        console.log('💾 Dashboard charts cached for 2 hours');
       } catch (err) {
         console.error('Redis cache set error:', err);
       }
 
       res.json({
         status: 'success',
-        msg: 'Dashboard KPIs retrieved',
+        msg: 'Dashboard charts retrieved',
         data: result
       });
     } catch (error) {
-      console.error('Dashboard KPIs API error:', error);
+      console.error('Dashboard charts API error:', error);
+      
+      // If we have stale cache, return it
+      if (cached) {
+        console.log('⚠️ Returning stale cache due to error');
+        return res.json({
+          status: 'success',
+          msg: 'Dashboard charts retrieved (cached)',
+          data: cached
+        });
+      }
+      
       res.status(500).json({
         status: 'error',
-        msg: 'Error loading dashboard KPIs',
+        msg: 'Error loading dashboard charts',
         data: null
       });
     }
   }
 
-  // Dashboard Charts (monthly statistics)
-  static async dashboardCharts(req, res) {
-    console.log('✅ AdminPanelController.dashboardCharts called');
-    
-    const cacheKey = RedisCache.adminKey('dashboard_charts');
-    try {
-      const cached = await RedisCache.get(cacheKey);
-      if (cached) {
-        console.log('⚡ Dashboard charts cache hit');
-        return res.json({
-          status: 'success',
-          msg: 'Dashboard charts retrieved',
-          data: cached
-        });
-      }
-    } catch (err) {
-      console.error('Redis get error:', err);
-    }
-    
+  // Background cache refresh helper for charts
+  static async _refreshChartsCache(cacheKey) {
     try {
       const [
         month_wise_customers_count,
@@ -141,26 +306,10 @@ class AdminPanelController {
         month_wise_pending_orders_count
       };
 
-      // Cache for 30 minutes (1800 seconds) - Chart data doesn't change frequently
-      try {
-        await RedisCache.set(cacheKey, result, 1800);
-        console.log('💾 Dashboard charts cached for 30 minutes');
-      } catch (err) {
-        console.error('Redis cache set error:', err);
-      }
-
-      res.json({
-        status: 'success',
-        msg: 'Dashboard charts retrieved',
-        data: result
-      });
-    } catch (error) {
-      console.error('Dashboard charts API error:', error);
-      res.status(500).json({
-        status: 'error',
-        msg: 'Error loading dashboard charts',
-        data: null
-      });
+      await RedisCache.set(cacheKey, result, 7200);
+      console.log('🔄 Background charts cache refresh completed');
+    } catch (err) {
+      console.error('Background charts cache refresh error:', err);
     }
   }
 
@@ -227,10 +376,10 @@ class AdminPanelController {
         return parsed;
       });
 
-      // Cache for 5 minutes (recent orders - balance between freshness and performance)
+      // Cache for 10 minutes (recent orders - balance between freshness and performance)
       try {
-        await RedisCache.set(cacheKey, parsedOrders, 300);
-        console.log('💾 Dashboard recent orders cached for 5 minutes');
+        await RedisCache.set(cacheKey, parsedOrders, 600);
+        console.log('💾 Dashboard recent orders cached for 10 minutes');
       } catch (err) {
         console.error('Redis cache set error:', err);
       }
@@ -280,10 +429,10 @@ class AdminPanelController {
         todayscalllogs
       };
 
-      // Cache for 15 minutes (call logs change moderately)
+      // Cache for 30 minutes (call logs change moderately)
       try {
-        await RedisCache.set(cacheKey, result, 900);
-        console.log('💾 Dashboard call logs cached for 15 minutes');
+        await RedisCache.set(cacheKey, result, 1800);
+        console.log('💾 Dashboard call logs cached for 30 minutes');
       } catch (err) {
         console.error('Redis cache set error:', err);
       }
@@ -1887,6 +2036,9 @@ console.log('hj');
           kyc_owner_url: shop.kyc_owner_url || '',
           approval_status: shop.approval_status || null,
           rejection_reason: shop.rejection_reason || null,
+          application_submitted_at: shop.application_submitted_at || null,
+          documents_verified_at: shop.documents_verified_at || null,
+          review_initiated_at: shop.review_initiated_at || null,
           created_at: shop.created_at,
           updated_at: shop.updated_at
         } : null
@@ -1952,6 +2104,21 @@ console.log('hj');
       } else if (approval_status !== 'rejected') {
         // Clear rejection reason if status is not rejected
         updateData.rejection_reason = null;
+      }
+
+      // Track timestamps for approval workflow
+      const currentTime = new Date().toISOString();
+      
+      // If status is being set to pending and review_initiated_at is not set, set it
+      if (approval_status === 'pending' && !shop.review_initiated_at) {
+        updateData.review_initiated_at = currentTime;
+        console.log('📋 Setting review_initiated_at for B2B user:', userId);
+      }
+      
+      // If status is being changed to approved or rejected, set documents_verified_at
+      if ((approval_status === 'approved' || approval_status === 'rejected') && !shop.documents_verified_at) {
+        updateData.documents_verified_at = currentTime;
+        console.log('📋 Setting documents_verified_at for B2B user:', userId);
       }
 
       // Update approval status and rejection reason
@@ -2060,7 +2227,8 @@ console.log('hj');
               contact: shop?.contact || user.mob_num || '',
               address: shop?.address || '',
               aadhar_card: shop?.aadhar_card || '',
-              driving_license: shop?.driving_license || ''
+              driving_license: shop?.driving_license || '',
+              approval_status: shop?.approval_status || null
             };
           } catch (err) {
             console.error(`Error fetching shop for user ${user.id}:`, err);
@@ -2156,7 +2324,8 @@ console.log('hj');
               contact: shop?.contact || user.mob_num || '',
               address: shop?.address || '',
               aadhar_card: shop?.aadhar_card || '',
-              driving_license: shop?.driving_license || ''
+              driving_license: shop?.driving_license || '',
+              approval_status: shop?.approval_status || null
             };
           } catch (err) {
             console.error(`Error fetching shop for user ${user.id}:`, err);
@@ -2216,6 +2385,222 @@ console.log('hj');
     }
   }
 
+  // Get Delivery users (door buyers) list
+  static async deliveryUsers(req, res) {
+    try {
+      console.log('✅ AdminPanelController.deliveryUsers called');
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 10;
+      const search = req.query.search || null;
+      
+      // Check Redis cache first (only if no search term)
+      const cacheKey = RedisCache.adminKey('delivery_users', null, { page, limit, search });
+      // Don't cache search results
+      if (!search) {
+        try {
+          const cached = await RedisCache.get(cacheKey);
+          if (cached) {
+            console.log('⚡ Delivery users cache hit');
+            return res.json({
+              status: 'success',
+              msg: 'Delivery users retrieved',
+              data: cached
+            });
+          }
+        } catch (err) {
+          console.error('Redis get error:', err);
+        }
+      }
+      
+      const User = require('../models/User');
+      const DeliveryBoy = require('../models/DeliveryBoy');
+      
+      let enrichedUsers;
+      let total;
+      const pageNumber = parseInt(page) || 1;
+      const pageSize = parseInt(limit) || 10;
+      
+      // If searching, get all users first (no pagination), then filter, then paginate
+      // If not searching, get paginated users directly
+      if (search && search.trim()) {
+        // Get all delivery users (no pagination) to search across entire database
+        const allResult = await User.getDeliveryUsers(1, 999999, null);
+        
+        console.log(`📊 Total delivery users fetched: ${allResult.total}, users in result: ${allResult.users.length}`);
+        
+        // Enrich all users with delivery boy data
+        enrichedUsers = await Promise.all(allResult.users.map(async (user) => {
+          try {
+            const deliveryBoy = await DeliveryBoy.findByUserId(user.id);
+            const deliveryData = Array.isArray(deliveryBoy) && deliveryBoy.length > 0 ? deliveryBoy[0] : deliveryBoy;
+            
+            return {
+              ...user,
+              delivery: deliveryData || null,
+              delivery_boy: deliveryData || null,
+              contact: deliveryData?.contact || user.mob_num || '',
+              address: deliveryData?.address || '',
+              aadhar_card: deliveryData?.aadhar_card || '',
+              driving_license: deliveryData?.driving_license || '',
+              approval_status: deliveryData?.approval_status || 'pending'
+            };
+          } catch (err) {
+            console.error(`Error fetching delivery boy for user ${user.id}:`, err);
+            return {
+              ...user,
+              delivery: null,
+              delivery_boy: null,
+              contact: user.mob_num || '',
+              address: '',
+              aadhar_card: '',
+              driving_license: '',
+              approval_status: 'pending'
+            };
+          }
+        }));
+        
+        // Apply search filter after enriching with delivery boy data
+        const searchTerm = search.trim();
+        const searchTermLower = searchTerm.toLowerCase();
+        const searchAsNumber = !isNaN(searchTerm) && searchTerm.length > 0 ? parseInt(searchTerm) : null;
+        
+        console.log(`🔍 Searching for: "${searchTerm}" (as number: ${searchAsNumber})`);
+        
+        enrichedUsers = enrichedUsers.filter(user => {
+          // Search by phone number (mob_num from user)
+          let userPhoneMatch = false;
+          if (user.mob_num !== null && user.mob_num !== undefined) {
+            const userPhoneStr = user.mob_num.toString();
+            if (userPhoneStr.toLowerCase().includes(searchTermLower)) {
+              userPhoneMatch = true;
+            }
+            if (searchAsNumber !== null && user.mob_num === searchAsNumber) {
+              userPhoneMatch = true;
+            }
+          }
+          
+          // Search by contact number (contact from delivery boy)
+          let deliveryContactMatch = false;
+          if (user.contact !== null && user.contact !== undefined && user.contact !== '') {
+            const deliveryContactStr = user.contact.toString();
+            if (deliveryContactStr.toLowerCase().includes(searchTermLower)) {
+              deliveryContactMatch = true;
+            }
+            if (searchAsNumber !== null && user.contact === searchAsNumber) {
+              deliveryContactMatch = true;
+            }
+          }
+          
+          // Search by name
+          const nameMatch = user.name && typeof user.name === 'string' && 
+            user.name.toLowerCase().includes(searchTermLower);
+          
+          return userPhoneMatch || deliveryContactMatch || nameMatch;
+        });
+        
+        console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} users found after filtering`);
+        
+        // Re-sort enriched users by created_at (newest first)
+        enrichedUsers.sort((a, b) => {
+          let dateA = a.created_at ? new Date(a.created_at) : null;
+          let dateB = b.created_at ? new Date(b.created_at) : null;
+          
+          if (!dateA || isNaN(dateA.getTime())) {
+            dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
+          }
+          if (!dateB || isNaN(dateB.getTime())) {
+            dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
+          }
+          
+          return dateB.getTime() - dateA.getTime();
+        });
+        
+        // Apply pagination after filtering
+        total = enrichedUsers.length;
+        const skip = (pageNumber - 1) * pageSize;
+        const paginatedUsers = enrichedUsers.slice(skip, skip + pageSize);
+        enrichedUsers = paginatedUsers;
+        
+        console.log(`🔍 Paginated search results: Showing ${paginatedUsers.length} of ${total} users`);
+      } else {
+        // No search - use normal pagination
+        const result = await User.getDeliveryUsers(page, limit, null);
+        
+        // Enrich paginated users with delivery boy data
+        enrichedUsers = await Promise.all(result.users.map(async (user) => {
+          try {
+            const deliveryBoy = await DeliveryBoy.findByUserId(user.id);
+            const deliveryData = Array.isArray(deliveryBoy) && deliveryBoy.length > 0 ? deliveryBoy[0] : deliveryBoy;
+            
+            return {
+              ...user,
+              delivery: deliveryData || null,
+              delivery_boy: deliveryData || null,
+              contact: deliveryData?.contact || user.mob_num || '',
+              address: deliveryData?.address || '',
+              aadhar_card: deliveryData?.aadhar_card || '',
+              driving_license: deliveryData?.driving_license || '',
+              approval_status: deliveryData?.approval_status || 'pending'
+            };
+          } catch (err) {
+            console.error(`Error fetching delivery boy for user ${user.id}:`, err);
+            return {
+              ...user,
+              delivery: null,
+              delivery_boy: null,
+              contact: user.mob_num || '',
+              address: '',
+              aadhar_card: '',
+              driving_license: '',
+              approval_status: 'pending'
+            };
+          }
+        }));
+        
+        total = result.total;
+      }
+      
+      const responseData = {
+        users: enrichedUsers,
+        total: total,
+        page: pageNumber,
+        limit: pageSize,
+        totalPages: Math.ceil(total / pageSize),
+        hasMore: (pageNumber * pageSize) < total
+      };
+      
+      // Cache for 5 minutes (only if no search term)
+      if (!search) {
+        try {
+          await RedisCache.set(cacheKey, responseData, 'short');
+          console.log('💾 Delivery users cached');
+        } catch (err) {
+          console.error('Redis cache set error:', err);
+        }
+      }
+      
+      res.json({
+        status: 'success',
+        msg: 'Delivery users retrieved',
+        data: responseData
+      });
+    } catch (error) {
+      console.error('deliveryUsers error:', error);
+      res.json({
+        status: 'error',
+        msg: 'Error fetching delivery users',
+        data: {
+          users: [],
+          total: 0,
+          page: 1,
+          limit: 10,
+          totalPages: 0,
+          hasMore: false
+        }
+      });
+    }
+  }
+
   // Get B2C user details
   static async getB2CUserDetails(req, res) {
     try {
@@ -2261,6 +2646,9 @@ console.log('hj');
           driving_license: shop.driving_license || '',
           approval_status: shop.approval_status || null,
           rejection_reason: shop.rejection_reason || null,
+          application_submitted_at: shop.application_submitted_at || null,
+          documents_verified_at: shop.documents_verified_at || null,
+          review_initiated_at: shop.review_initiated_at || null,
           created_at: shop.created_at,
           updated_at: shop.updated_at
         } : null
@@ -2326,6 +2714,21 @@ console.log('hj');
       } else if (approval_status !== 'rejected') {
         // Clear rejection reason if status is not rejected
         updateData.rejection_reason = null;
+      }
+
+      // Track timestamps for approval workflow
+      const currentTime = new Date().toISOString();
+      
+      // If status is being set to pending and review_initiated_at is not set, set it
+      if (approval_status === 'pending' && !shop.review_initiated_at) {
+        updateData.review_initiated_at = currentTime;
+        console.log('📋 Setting review_initiated_at for B2C user:', userId);
+      }
+      
+      // If status is being changed to approved or rejected, set documents_verified_at
+      if ((approval_status === 'approved' || approval_status === 'rejected') && !shop.documents_verified_at) {
+        updateData.documents_verified_at = currentTime;
+        console.log('📋 Setting documents_verified_at for B2C user:', userId);
       }
 
       // Update approval status and rejection reason
@@ -2428,10 +2831,18 @@ console.log('hj');
           driving_license: deliveryBoy.driving_license || '',
           approval_status: deliveryBoy.approval_status || null,
           rejection_reason: deliveryBoy.rejection_reason || null,
+          application_submitted_at: deliveryBoy.application_submitted_at || null,
+          documents_verified_at: deliveryBoy.documents_verified_at || null,
+          review_initiated_at: deliveryBoy.review_initiated_at || null,
           created_at: deliveryBoy.created_at,
           updated_at: deliveryBoy.updated_at
         } : null
       };
+      
+      // Also add delivery object for consistency
+      if (deliveryBoy) {
+        userData.delivery = userData.delivery_boy;
+      }
 
       res.json({
         status: 'success',
@@ -2496,6 +2907,21 @@ console.log('hj');
         updateData.rejection_reason = null;
       }
 
+      // Track timestamps for approval workflow
+      const currentTime = new Date().toISOString();
+      
+      // If status is being set to pending and review_initiated_at is not set, set it
+      if (approval_status === 'pending' && !deliveryBoy.review_initiated_at) {
+        updateData.review_initiated_at = currentTime;
+        console.log('📋 Setting review_initiated_at for delivery user:', userId);
+      }
+      
+      // If status is being changed to approved or rejected, set documents_verified_at
+      if ((approval_status === 'approved' || approval_status === 'rejected') && !deliveryBoy.documents_verified_at) {
+        updateData.documents_verified_at = currentTime;
+        console.log('📋 Setting documents_verified_at for delivery user:', userId);
+      }
+
       // Update approval status and rejection reason
       await DeliveryBoy.update(deliveryBoy.id, updateData);
 
@@ -2528,4 +2954,3 @@ console.log('hj');
 }
 
 module.exports = AdminPanelController;
-

@@ -152,6 +152,36 @@ class V2AuthService {
       }
     }
 
+    // IMPORTANT: If user is found but has del_status === 2 (deleted), reset them for re-registration
+    if (user && user.del_status === 2) {
+      console.log(`♻️  Found deleted user (ID: ${user.id}) - resetting for re-registration`);
+      // Reset deleted user - clear del_status and set user_type to 'N' (new user)
+      const resetUserType = 'N'; // All re-registering users start as 'N' regardless of join type
+      
+      // Use UpdateCommand to remove del_status attribute and update user
+      const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+      const { getDynamoDBClient } = require('../../config/dynamodb');
+      const client = getDynamoDBClient();
+      
+      const updateParams = {
+        TableName: 'users',
+        Key: { id: user.id },
+        UpdateExpression: 'SET user_type = :userType, app_type = :appType, app_version = :appVersion, updated_at = :updated REMOVE del_status',
+        ExpressionAttributeValues: {
+          ':userType': resetUserType,
+          ':appType': 'vendor_app',
+          ':appVersion': 'v2',
+          ':updated': new Date().toISOString()
+        }
+      };
+      
+      await client.send(new UpdateCommand(updateParams));
+      console.log(`✅ Reset deleted user (ID: ${user.id}) to type '${resetUserType}' for re-registration`);
+      
+      // Update the user object to reflect the changes
+      user = { ...user, del_status: undefined, user_type: resetUserType, app_type: 'vendor_app', app_version: 'v2' };
+    }
+
     if (!user) {
       // New user registration - check if user exists in any app to prevent duplicates
       if (!joinType) {
@@ -166,23 +196,57 @@ class V2AuthService {
         // Find the most appropriate user to reuse
         let existingUser = null;
         
-        // Priority 1: Find vendor app user with matching type
-        const vendorUserWithMatchingType = allUsersCheck.find(u => {
-          const targetType = this.mapJoinTypeToUserType(joinType);
-          return (u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C')) && 
-                 u.user_type === targetType;
-        });
-        
-        if (vendorUserWithMatchingType) {
-          existingUser = vendorUserWithMatchingType;
-          console.log(`♻️  Reusing existing vendor app user (ID: ${existingUser.id}, Type: ${existingUser.user_type})`);
-        } else {
-          // Priority 2: Find any vendor app user
-          const anyVendorUser = allUsersCheck.find(u => 
-            u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C')
-          );
+        // Check for deleted users first - allow them to re-register as any type
+        const deletedUser = allUsersCheck.find(u => u.del_status === 2);
+        if (deletedUser) {
+          console.log(`♻️  Found deleted user (ID: ${deletedUser.id}) - allowing re-registration as ${joinType}`);
+          // Reset deleted user - clear del_status and set user_type to 'N' (new user)
+          // All users (including delivery) should start as 'N' until signup is complete
+          const resetUserType = 'N'; // All re-registering users start as 'N' regardless of join type
           
-          if (anyVendorUser) {
+          // Use UpdateCommand to remove del_status attribute and update user
+          const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+          const { getDynamoDBClient } = require('../../config/dynamodb');
+          const client = getDynamoDBClient();
+          
+          const updateParams = {
+            TableName: 'users',
+            Key: { id: deletedUser.id },
+            UpdateExpression: 'SET user_type = :userType, app_type = :appType, app_version = :appVersion, updated_at = :updated REMOVE del_status',
+            ExpressionAttributeValues: {
+              ':userType': resetUserType,
+              ':appType': 'vendor_app',
+              ':appVersion': 'v2',
+              ':updated': new Date().toISOString()
+            }
+          };
+          
+          await client.send(new UpdateCommand(updateParams));
+          console.log(`✅ Reset deleted user (ID: ${deletedUser.id}) to type '${resetUserType}' for re-registration`);
+          
+          existingUser = { ...deletedUser, del_status: undefined, user_type: resetUserType, app_type: 'vendor_app', app_version: 'v2' };
+        }
+        
+        // Priority 1: Find vendor app user with matching type (if not using deleted user)
+        if (!existingUser) {
+          const vendorUserWithMatchingType = allUsersCheck.find(u => {
+            const targetType = this.mapJoinTypeToUserType(joinType);
+            return (u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C')) && 
+                   u.user_type === targetType &&
+                   (u.del_status !== 2); // Exclude deleted users
+          });
+          
+          if (vendorUserWithMatchingType) {
+            existingUser = vendorUserWithMatchingType;
+            console.log(`♻️  Reusing existing vendor app user (ID: ${existingUser.id}, Type: ${existingUser.user_type})`);
+          } else {
+            // Priority 2: Find any vendor app user (excluding deleted)
+            const anyVendorUser = allUsersCheck.find(u => 
+              (u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C')) &&
+              (u.del_status !== 2) // Exclude deleted users
+            );
+            
+            if (anyVendorUser) {
             // Check if trying to register incompatible type
             const targetType = this.mapJoinTypeToUserType(joinType);
             
@@ -201,35 +265,30 @@ class V2AuthService {
               console.log(`📱 V1 user (ID: ${anyVendorUser.id}) - allowing registration as any type (no restrictions)`);
             }
             
-            // Update existing user to new type if compatible (or if v1 user)
-            existingUser = anyVendorUser;
-            console.log(`♻️  Reusing existing vendor app user (ID: ${existingUser.id}, Type: ${existingUser.user_type}, Version: ${existingUser.app_version || 'v1'})`);
-          } else {
-            // Priority 3: Customer app user - can register as any type
-            const customerAppUser = allUsersCheck.find(u => 
-              u.user_type === 'C' && (u.app_type === 'customer_app' || !u.app_type)
-            );
-            
-            if (customerAppUser) {
-              // Customer app user registering in vendor app - create new vendor app user
-              // IMPORTANT: For B2B/B2C, use 'N' (new_user) until signup is complete
-              // For delivery, use 'D' directly
-              let vendorUserType;
-              if (joinType === 'delivery') {
-                vendorUserType = 'D'; // Delivery can be set immediately
-              } else {
-                vendorUserType = 'N'; // B2B/B2C users start as 'N' until signup is complete
+              // Update existing user to new type if compatible (or if v1 user)
+              existingUser = anyVendorUser;
+              console.log(`♻️  Reusing existing vendor app user (ID: ${existingUser.id}, Type: ${existingUser.user_type}, Version: ${existingUser.app_version || 'v1'})`);
+            } else {
+              // Priority 3: Customer app user - can register as any type
+              const customerAppUser = allUsersCheck.find(u => 
+                u.user_type === 'C' && (u.app_type === 'customer_app' || !u.app_type)
+              );
+              
+              if (customerAppUser) {
+                // Customer app user registering in vendor app - create new vendor app user
+                // IMPORTANT: All new users (including delivery) should start as 'N' until signup is complete
+                const vendorUserType = 'N'; // All new users start as 'N' regardless of join type
+                console.log(`📱 Customer app user (ID: ${customerAppUser.id}) registering in vendor app as ${joinType} (${vendorUserType})`);
+                
+                // Create new vendor app user with type 'N' (will be updated to S/R/SR/D after signup completion)
+                const tempName = `User_${cleanedPhone}`;
+                const tempEmail = ''; // Don't auto-generate email
+                const newVendorUser = await User.create(tempName, tempEmail, cleanedPhone, vendorUserType, cleanedPhone, 'vendor_app', 'v2');
+                console.log(`📝 Created new vendor app user (ID: ${newVendorUser.id}) with type '${vendorUserType}' - will be updated after signup completion`);
+                
+                // Use the newly created user
+                existingUser = newVendorUser;
               }
-              console.log(`📱 Customer app user (ID: ${customerAppUser.id}) registering in vendor app as ${joinType} (${vendorUserType})`);
-              
-              // Create new vendor app user with type 'N' (will be updated to S/R/SR after signup completion)
-              const tempName = `User_${cleanedPhone}`;
-              const tempEmail = ''; // Don't auto-generate email
-              const newVendorUser = await User.create(tempName, tempEmail, cleanedPhone, vendorUserType, cleanedPhone, 'vendor_app', 'v2');
-              console.log(`📝 Created new vendor app user (ID: ${newVendorUser.id}) with type '${vendorUserType}' - will be updated after signup completion`);
-              
-              // Use the newly created user
-              existingUser = newVendorUser;
             }
           }
         }
@@ -294,15 +353,10 @@ class V2AuthService {
       if (user.user_type === 'C' && (user.app_type === 'customer_app' || !user.app_type)) {
         // Customer app user registering in vendor app - allow any joinType (B2B, B2C, or Delivery)
         if (joinType) {
-          // IMPORTANT: For delivery, use 'D' directly. For B2B/B2C, use 'N' (new_user) until signup is complete
-          let vendorUserType;
-          if (joinType === 'delivery') {
-            vendorUserType = 'D'; // Delivery can be set immediately
-          } else {
-            vendorUserType = 'N'; // B2B/B2C users start as 'N' until signup is complete
-          }
+          // IMPORTANT: All new users (including delivery) should start as 'N' until signup is complete
+          const vendorUserType = 'N'; // All new users start as 'N' regardless of join type
           console.log(`📱 Customer app user (ID: ${user.id}) registering in vendor app as ${joinType} (${vendorUserType})`);
-          // Create new vendor app user with type 'N' (will be updated to S/R/SR after signup completion)
+          // Create new vendor app user with type 'N' (will be updated to S/R/SR/D after signup completion)
           const tempName = `User_${cleanedPhone}`;
           const tempEmail = ''; // Don't auto-generate email
           user = await User.create(tempName, tempEmail, cleanedPhone, vendorUserType, cleanedPhone, 'vendor_app', 'v2');
@@ -456,12 +510,17 @@ class V2AuthService {
     // Get user's allowed dashboards for permission checking
     let allowedDashboards = [];
     try {
+      console.log(`🔍 Getting user dashboards for user ${user.id}, user_type: ${user.user_type}`);
       const dashboardInfo = await V2ShopTypeService.getUserDashboards(user.id);
+      console.log(`📋 getUserDashboards returned:`, JSON.stringify(dashboardInfo, null, 2));
       allowedDashboards = dashboardInfo.allowedDashboards || [];
+      console.log(`✅ Final allowedDashboards:`, allowedDashboards);
     } catch (error) {
-      console.error('Error getting user dashboards:', error);
+      console.error('❌ Error getting user dashboards:', error);
+      console.error('Error stack:', error.stack);
       // Fallback: use dashboardType to determine allowed dashboards
       allowedDashboards = [dashboardType];
+      console.log(`⚠️  Using fallback allowedDashboards:`, allowedDashboards);
     }
 
     // Check B2B signup status for B2B users (S or SR)
