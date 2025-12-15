@@ -204,6 +204,9 @@ functions:
           path: /api/v2/subcategories
           method: GET
       - httpApi:
+          path: /api/v2/subcategories/paginated
+          method: GET
+      - httpApi:
           path: /api/v2/categories/with-subcategories
           method: GET
       - httpApi:

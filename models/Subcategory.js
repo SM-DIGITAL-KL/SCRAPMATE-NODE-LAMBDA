@@ -92,6 +92,64 @@ class Subcategory {
     }
   }
 
+  // Get paginated subcategories
+  static async getPaginated(page = 1, limit = 20, categoryId = null) {
+    try {
+      const client = getDynamoDBClient();
+      const pageNumber = parseInt(page) || 1;
+      const pageSize = parseInt(limit) || 20;
+      const skip = (pageNumber - 1) * pageSize;
+
+      let allItems = [];
+      let lastKey = null;
+      let scannedCount = 0;
+
+      // First, get all items (with optional category filter)
+      do {
+        const params = {
+          TableName: TABLE_NAME
+        };
+
+        if (categoryId) {
+          const catId = typeof categoryId === 'string' && !isNaN(categoryId) ? parseInt(categoryId) : categoryId;
+          params.FilterExpression = 'main_category_id = :mainCategoryId';
+          params.ExpressionAttributeValues = {
+            ':mainCategoryId': catId
+          };
+        }
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+
+        if (response.Items) {
+          allItems.push(...response.Items);
+        }
+
+        scannedCount += response.ScannedCount || 0;
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      // Apply pagination
+      const total = allItems.length;
+      const paginatedItems = allItems.slice(skip, skip + pageSize);
+
+      return {
+        items: paginatedItems,
+        total: total,
+        page: pageNumber,
+        limit: pageSize,
+        totalPages: Math.ceil(total / pageSize),
+        hasMore: (pageNumber * pageSize) < total
+      };
+    } catch (err) {
+      throw err;
+    }
+  }
+
   // Create
   static async create(data) {
     try {

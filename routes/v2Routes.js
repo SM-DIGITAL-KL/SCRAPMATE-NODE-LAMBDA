@@ -161,6 +161,17 @@ router.get('/categories', V2CategoryController.getCategories);
 router.get('/subcategories', V2CategoryController.getSubcategories);
 
 /**
+ * GET /api/v2/subcategories/paginated?page=1&limit=20&categoryId=1&userType=b2b|b2c|all
+ * Get paginated subcategories with B2B/B2C availability information
+ * Query params:
+ *   - page (optional) - page number (default: 1)
+ *   - limit (optional) - items per page (default: 20)
+ *   - categoryId (optional) - filter by main category ID
+ *   - userType (optional) - 'b2b', 'b2c', or 'all' (default: 'all')
+ */
+router.get('/subcategories/paginated', V2CategoryController.getSubcategoriesPaginated);
+
+/**
  * GET /api/v2/categories/with-subcategories?userType=b2b|b2c|all
  * Get categories with their subcategories grouped
  * Query params: userType (optional) - 'b2b', 'b2c', or 'all' (default: 'all')
