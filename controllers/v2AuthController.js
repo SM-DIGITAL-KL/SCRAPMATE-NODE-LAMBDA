@@ -9,7 +9,7 @@ class V2AuthController {
    */
   static async login(req, res) {
     try {
-      const { phoneNumber } = req.body;
+      const { phoneNumber, appType } = req.body;
 
       if (!phoneNumber) {
         return res.status(400).json({
@@ -19,7 +19,7 @@ class V2AuthController {
         });
       }
 
-      const result = await V2AuthService.generateOtp(phoneNumber);
+      const result = await V2AuthService.generateOtp(phoneNumber, appType);
 
       return res.json({
         status: 'success',
@@ -46,7 +46,7 @@ class V2AuthController {
    */
   static async verifyOtp(req, res) {
     try {
-      const { phoneNumber, otp, joinType } = req.body;
+      const { phoneNumber, otp, joinType, appType } = req.body;
 
       if (!phoneNumber || !otp) {
         return res.status(400).json({
@@ -56,7 +56,7 @@ class V2AuthController {
         });
       }
 
-      const result = await V2AuthService.verifyOtpAndLogin(phoneNumber, otp, joinType);
+      const result = await V2AuthService.verifyOtpAndLogin(phoneNumber, otp, joinType, appType);
 
       // Log the result to debug
       console.log('📋 V2AuthController.verifyOtp - Result keys:', Object.keys(result));

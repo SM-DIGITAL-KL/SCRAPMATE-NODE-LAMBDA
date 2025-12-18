@@ -721,6 +721,77 @@ class ShopController {
           await RedisCache.delete(RedisCache.userKey(userId));
           await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userId, table: 'shops' }));
         }
+        // Invalidate shops cache (used for B2B/B2C availability in categories)
+        await RedisCache.invalidateV2ApiCache('shops', null, {});
+      } catch (redisErr) {
+        console.error('Redis cache invalidation error:', redisErr);
+        // Continue even if Redis fails
+      }
+
+      res.status(200).json({
+        status: 'success',
+        msg: 'Successfull',
+        data: updatedShop
+      });
+    } catch (err) {
+      console.error('Shop ads type edit error:', err);
+      res.status(201).json({
+        status: 'error',
+        msg: 'Update failed',
+        data: ''
+      });
+    }
+  }
+}
+
+module.exports = ShopController;
+
+
+        error: err.message
+      });
+    }
+  }
+
+  // Shop ads type edit
+  static async shopAdsTypeEdit(req, res) {
+    try {
+      const { shop_id, address, lat_log } = req.body;
+
+      if (!shop_id) {
+        return res.status(201).json({
+          status: 'error',
+          msg: 'empty param',
+          data: ''
+        });
+      }
+
+      const shop = await Shop.findById(shop_id);
+      if (!shop) {
+        return res.status(201).json({
+          status: 'error',
+          msg: 'Shop not found',
+          data: ''
+        });
+      }
+
+      const updateData = {};
+      if (address !== undefined) updateData.address = address;
+      if (lat_log !== undefined) updateData.lat_log = lat_log;
+
+      await Shop.update(shop_id, updateData);
+
+      const updatedShop = await Shop.findById(shop_id);
+
+      // Invalidate user profile cache after shop update
+      try {
+        if (updatedShop && updatedShop.user_id) {
+          const userId = String(updatedShop.user_id);
+          await RedisCache.delete(RedisCache.userKey(userId, 'profile'));
+          await RedisCache.delete(RedisCache.userKey(userId));
+          await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userId, table: 'shops' }));
+        }
+        // Invalidate shops cache (used for B2B/B2C availability in categories)
+        await RedisCache.invalidateV2ApiCache('shops', null, {});
       } catch (redisErr) {
         console.error('Redis cache invalidation error:', redisErr);
         // Continue even if Redis fails

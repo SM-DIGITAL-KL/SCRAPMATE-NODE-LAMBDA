@@ -34,17 +34,32 @@ class RedisCache {
   static async get(key) {
     try {
       if (!redis) {
+        console.log(`⚠️  Redis client not available for key: ${key}`);
+        return null;
+      }
+      
+      // Check if redis is a mock client
+      const getFuncStr = redis.get ? redis.get.toString() : '';
+      if (getFuncStr.includes('async () => null') || getFuncStr.includes('async() => null')) {
+        console.log(`⚠️  Redis client is a mock. Cache get will always return null for key: ${key}`);
         return null;
       }
       
       const cached = await redis.get(key);
-      if (cached) {
+      if (cached !== null && cached !== undefined && cached !== '') {
         console.log(`⚡ Redis cache hit: ${key}`);
-        return typeof cached === 'string' ? JSON.parse(cached) : cached;
+        try {
+          return typeof cached === 'string' ? JSON.parse(cached) : cached;
+        } catch (parseErr) {
+          console.error(`❌ Error parsing cached data for key ${key}:`, parseErr);
+          return null;
+        }
       }
+      console.log(`💾 Redis cache miss: ${key}`);
       return null;
     } catch (err) {
-      console.error(`Redis get error for key ${key}:`, err);
+      console.error(`❌ Redis get error for key ${key}:`, err);
+      console.error(`   Error stack:`, err.stack);
       return null;
     }
   }
@@ -63,15 +78,38 @@ class RedisCache {
         return false;
       }
       
+      // Check if redis is a mock client
+      if (typeof redis.get === 'function') {
+        const getFuncStr = redis.get.toString();
+        if (getFuncStr.includes('async () => null') || getFuncStr.includes('async() => null')) {
+          console.warn(`⚠️  Redis client is a mock. Cache set will not work for key: ${key}`);
+          return false;
+        }
+      }
+      
       // If ttl is a string, treat it as a cache type and get TTL from env
       const ttlSeconds = typeof ttl === 'string' ? this.getTTL(ttl) : ttl;
       
       const serialized = typeof value === 'string' ? value : JSON.stringify(value);
-      await redis.set(key, serialized, { ex: ttlSeconds });
-      console.log(`💾 Redis cache set: ${key} (TTL: ${ttlSeconds}s${typeof ttl === 'string' ? ` [${ttl}]` : ''})`);
+      console.log(`💾 [RedisCache.set] Setting cache for key: ${key}, TTL: ${ttlSeconds}s, Value size: ${serialized.length} bytes`);
+      
+      const result = await redis.set(key, serialized, { ex: ttlSeconds });
+      console.log(`💾 Redis cache set: ${key} (TTL: ${ttlSeconds}s${typeof ttl === 'string' ? ` [${ttl}]` : ''}) - Result: ${result}`);
+      
+      // Verify the cache was set by immediately checking it
+      const verify = await redis.get(key);
+      if (verify) {
+        console.log(`✅ Cache verification: ${key} is stored in Redis`);
+      } else {
+        console.warn(`⚠️  Cache verification failed: ${key} not found after setting`);
+        console.warn(`   This might indicate a Redis connection issue or the cache was not actually set`);
+      }
+      
       return true;
     } catch (err) {
-      console.error(`Redis set error for key ${key}:`, err);
+      console.error(`❌ Redis set error for key ${key}:`, err);
+      console.error(`   Error message: ${err.message}`);
+      console.error(`   Error stack: ${err.stack}`);
       return false;
     }
   }
@@ -421,6 +459,190 @@ class RedisCache {
       return deleted;
     } catch (err) {
       console.error(`Redis invalidate table cache error for ${tableName}:`, err);
+      return 0;
+    }
+  }
+
+  /**
+   * Invalidate v2 API cache keys for a specific endpoint and user
+   * @param {string} endpoint - Endpoint type (e.g., 'profile', 'categories', 'subcategories', 'orders')
+   * @param {number|string} userId - User ID
+   * @param {object} options - Additional options for cache key generation
+   * @returns {Promise<number>} - Number of keys deleted
+   */
+  static async invalidateV2ApiCache(endpoint, userId = null, options = {}) {
+    try {
+      const keysToDelete = [];
+      const userIdNum = userId ? parseInt(userId) : null;
+
+      switch (endpoint) {
+        case 'profile':
+          if (userIdNum) {
+            keysToDelete.push(
+              this.userKey(userIdNum, 'profile'),
+              this.userKey(userIdNum, 'dashboards'),
+              this.userKey(userIdNum, 'categories'),
+              this.userKey(userIdNum, 'subcategories')
+            );
+          }
+          break;
+
+        case 'user_categories':
+          if (userIdNum) {
+            keysToDelete.push(
+              this.userKey(userIdNum, 'categories'),
+              this.userKey(userIdNum, 'profile') // Profile might include categories
+            );
+          }
+          break;
+
+        case 'user_subcategories':
+          if (userIdNum) {
+            keysToDelete.push(
+              this.userKey(userIdNum, 'subcategories'),
+              this.userKey(userIdNum, 'profile') // Profile might include subcategories
+            );
+          }
+          break;
+
+        case 'available_pickup_requests':
+          // Invalidate all available pickup request caches (they're location-based)
+          // Since we can't easily match all location combinations, we'll use a pattern
+          // For now, we'll invalidate common patterns
+          keysToDelete.push(
+            this.listKey('available_pickup_requests', { user_id: options.user_id || 'all', user_type: options.user_type || 'all' })
+          );
+          break;
+
+        case 'active_pickup':
+          if (userIdNum) {
+            keysToDelete.push(
+              this.userKey(userIdNum, `active_pickup_${options.user_type || 'all'}`)
+            );
+          }
+          break;
+
+        case 'recycling_stats':
+          if (userIdNum) {
+            keysToDelete.push(
+              this.userKey(userIdNum, `recycling_stats_${options.type || 'customer'}`)
+            );
+          }
+          break;
+
+        case 'earnings':
+          if (userIdNum) {
+            keysToDelete.push(
+              this.userKey(userIdNum, `earnings_monthly_${options.type || 'customer'}_${options.months || 6}`)
+            );
+          }
+          break;
+
+        case 'categories':
+          // Invalidate all category-related caches
+          keysToDelete.push(
+            this.listKey('categories', { userType: 'all' }),
+            this.listKey('categories', { userType: 'b2b' }),
+            this.listKey('categories', { userType: 'b2c' }),
+            this.listKey('categories_with_subcategories', { userType: 'all' }),
+            this.listKey('categories_with_subcategories', { userType: 'b2b' }),
+            this.listKey('categories_with_subcategories', { userType: 'b2c' }),
+            this.listKey('categories_all') // Cache for all categories list
+          );
+          break;
+
+        case 'shops':
+          // Invalidate shops cache (used for B2B/B2C availability)
+          keysToDelete.push(
+            this.listKey('shops_all')
+          );
+          // Also invalidate category/subcategory caches since they depend on shops for B2B/B2C availability
+          keysToDelete.push(
+            this.listKey('categories', { userType: 'all' }),
+            this.listKey('categories', { userType: 'b2b' }),
+            this.listKey('categories', { userType: 'b2c' }),
+            this.listKey('subcategories', { categoryId: 'all', userType: 'all' }),
+            this.listKey('subcategories', { categoryId: 'all', userType: 'b2b' }),
+            this.listKey('subcategories', { categoryId: 'all', userType: 'b2c' })
+          );
+          break;
+
+        case 'subcategories':
+          // Invalidate all subcategory-related caches
+          keysToDelete.push(
+            this.listKey('subcategories', { categoryId: 'all', userType: 'all' }),
+            this.listKey('subcategories', { categoryId: 'all', userType: 'b2b' }),
+            this.listKey('subcategories', { categoryId: 'all', userType: 'b2c' }),
+            this.listKey('subcategories_paginated', { page: 'all', limit: 'all', categoryId: 'all', userType: 'all' })
+          );
+          // If specific categoryId provided, invalidate that too
+          if (options.categoryId) {
+            keysToDelete.push(
+              this.listKey('subcategories', { categoryId: options.categoryId, userType: 'all' }),
+              this.listKey('subcategories', { categoryId: options.categoryId, userType: 'b2b' }),
+              this.listKey('subcategories', { categoryId: options.categoryId, userType: 'b2c' })
+            );
+            // Invalidate all paginated subcategories for this category
+            for (let page = 1; page <= 10; page++) {
+              for (const limit of [20, 50, 100]) {
+                keysToDelete.push(
+                  this.listKey('subcategories_paginated', { page, limit, categoryId: options.categoryId, userType: 'all' }),
+                  this.listKey('subcategories_paginated', { page, limit, categoryId: options.categoryId, userType: 'b2b' }),
+                  this.listKey('subcategories_paginated', { page, limit, categoryId: options.categoryId, userType: 'b2c' })
+                );
+              }
+            }
+          }
+          break;
+
+        case 'subscription_packages':
+          keysToDelete.push(
+            this.listKey('subscription_packages_b2b'),
+            this.listKey('subscription_packages_b2c')
+          );
+          break;
+
+        case 'shop_types':
+          keysToDelete.push(
+            this.listKey('shop_types')
+          );
+          break;
+
+        case 'order':
+          // When order is created or updated, invalidate related caches
+          if (options.order_id) {
+            keysToDelete.push(
+              this.orderKey(options.order_id)
+            );
+          }
+          // Also invalidate available pickup requests and active pickup for related users
+          if (options.customer_id) {
+            keysToDelete.push(
+              this.userKey(options.customer_id, 'active_pickup_all')
+            );
+          }
+          if (options.user_id && options.user_type) {
+            keysToDelete.push(
+              this.userKey(options.user_id, `active_pickup_${options.user_type}`),
+              this.listKey('available_pickup_requests', { user_id: options.user_id, user_type: options.user_type })
+            );
+          }
+          break;
+      }
+
+      let deleted = 0;
+      for (const key of keysToDelete) {
+        const result = await this.delete(key);
+        if (result) deleted++;
+      }
+
+      if (deleted > 0) {
+        console.log(`🗑️  Invalidated ${deleted} v2 API cache key(s) for endpoint: ${endpoint}${userIdNum ? `, userId: ${userIdNum}` : ''}`);
+      }
+
+      return deleted;
+    } catch (err) {
+      console.error(`Redis invalidate v2 API cache error for ${endpoint}:`, err);
       return 0;
     }
   }

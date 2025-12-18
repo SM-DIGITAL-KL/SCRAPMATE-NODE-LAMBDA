@@ -12,9 +12,10 @@ class V2AuthService {
   /**
    * Generate OTP for phone number
    * @param {string} phoneNumber - Phone number
+   * @param {string} appType - App type ('customer_app' | 'vendor_app')
    * @returns {Promise<{otp: string, isNewUser: boolean, userType: string|null, userId: number|null}>}
    */
-  static async generateOtp(phoneNumber) {
+  static async generateOtp(phoneNumber, appType = null) {
     // Clean phone number (remove non-digits)
     const cleanedPhone = phoneNumber.replace(/\D/g, '');
 
@@ -31,44 +32,71 @@ class V2AuthService {
       otp = '487600';
     }
 
-    // Check for vendor app users first (app_type='vendor_app' or no app_type for vendor app)
-    let user = await User.findByMobileAndAppType(cleanedPhone, 'vendor_app');
-    let isCustomerAppUser = false;
+    // Determine target app type: if appType is provided, use it; otherwise default to vendor_app
+    const targetAppType = appType || 'vendor_app';
+    console.log(`📱 generateOtp: targetAppType=${targetAppType}`);
+
+    let user = null;
     
-    // If not found, check all users by mobile
-    if (!user) {
-      const allUsers = await User.findAllByMobile(cleanedPhone);
-      
-      if (allUsers && allUsers.length > 0) {
-        // Find vendor app user (app_type='vendor_app' or no app_type for backward compatibility)
-        user = allUsers.find(u => u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C'));
+    try {
+      if (targetAppType === 'customer_app') {
+        // For customer app, look for customer app users first
+        try {
+          user = await User.findByMobileAndAppType(cleanedPhone, 'customer_app');
+        } catch (err) {
+          console.error('Error finding customer app user by app type:', err);
+          // Continue to check all users
+        }
         
-        // If no vendor app user found, check for customer app user
+        // If not found, check all users by mobile
         if (!user) {
-          const customerAppUser = allUsers.find(u => 
-            u.user_type === 'C' && (u.app_type === 'customer_app' || !u.app_type)
-          );
-          
-          if (customerAppUser) {
-            // Customer app user exists - treat as new user for vendor app registration
-            isCustomerAppUser = true;
-            console.log(`📱 Customer app user (ID: ${customerAppUser.id}) found - will create new vendor app user`);
-          } else {
-            // For backward compatibility: use first user if not type 'C'
-            user = allUsers.find(u => u.user_type !== 'C') || allUsers[0];
+          try {
+            const allUsers = await User.findAllByMobile(cleanedPhone);
+            
+            if (allUsers && allUsers.length > 0) {
+              // Find customer app user (user_type='C' with customer_app app_type, not deleted)
+              user = allUsers.find(u => 
+                u.user_type === 'C' && 
+                (u.app_type === 'customer_app' || (!u.app_type && u.user_type === 'C')) &&
+                (u.del_status !== 2 || !u.del_status)
+              );
+            }
+          } catch (err) {
+            console.error('Error finding all users by mobile:', err);
+            // Continue - will treat as new user
+          }
+        }
+      } else {
+        // For vendor app, check for vendor app users first
+        try {
+          user = await User.findByMobileAndAppType(cleanedPhone, 'vendor_app');
+        } catch (err) {
+          console.error('Error finding vendor app user by app type:', err);
+          // Continue to check all users
+        }
+        
+        // If not found, check all users by mobile
+        if (!user) {
+          try {
+            const allUsers = await User.findAllByMobile(cleanedPhone);
+            
+            if (allUsers && allUsers.length > 0) {
+              // Find vendor app user (app_type='vendor_app' or no app_type for backward compatibility)
+              user = allUsers.find(u => 
+                (u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C')) &&
+                (u.del_status !== 2 || !u.del_status)
+              );
+            }
+          } catch (err) {
+            console.error('Error finding all users by mobile:', err);
+            // Continue - will treat as new user
           }
         }
       }
-    }
-
-    // If customer app user exists, treat as new user (will create vendor app user in verifyOtpAndLogin)
-    if (isCustomerAppUser) {
-      return {
-        otp,
-        isNewUser: true,
-        userType: null,
-        userId: null
-      };
+    } catch (err) {
+      console.error('Unexpected error in generateOtp user lookup:', err);
+      console.error('Error stack:', err.stack);
+      // Continue - will treat as new user
     }
 
     if (user) {
@@ -77,8 +105,7 @@ class V2AuthService {
         throw new Error('This number is registered as admin. Please use web login.');
       }
 
-      // Map user_type to dashboard type
-      // For SC users, return 'b2b' as default (they can switch to b2c)
+      // Map user_type to dashboard type (returns null for customer app users)
       const dashboardType = this.mapUserTypeToDashboard(user.user_type);
 
       return {
@@ -105,7 +132,7 @@ class V2AuthService {
    * @param {string} joinType - Join type for new users ('b2b' | 'b2c' | 'delivery')
    * @returns {Promise<{user: object, token: string, dashboardType: string}>}
    */
-  static async verifyOtpAndLogin(phoneNumber, otp, joinType = null) {
+  static async verifyOtpAndLogin(phoneNumber, otp, joinType = null, appType = null) {
     // Clean phone number
     const cleanedPhone = phoneNumber.replace(/\D/g, '');
 
@@ -123,31 +150,71 @@ class V2AuthService {
     // In production, verify OTP from your OTP service here
     // For now, we accept any 6-digit OTP for development
 
-    // Check for vendor app users first
-    let user = await User.findByMobileAndAppType(cleanedPhone, 'vendor_app');
+    // Determine target app type: if appType is provided, use it; otherwise default to vendor_app
+    const targetAppType = appType || 'vendor_app';
+    console.log(`📱 verifyOtpAndLogin: targetAppType=${targetAppType}, joinType=${joinType}`);
+
+    // Check for users based on target app type
+    let user = null;
     
-    // If not found, check all users by mobile
-    if (!user) {
-      const allUsers = await User.findAllByMobile(cleanedPhone);
+    if (targetAppType === 'customer_app') {
+      // For customer app, look for customer app users first
+      user = await User.findByMobileAndAppType(cleanedPhone, 'customer_app');
       
-      if (allUsers && allUsers.length > 0) {
-        // Find vendor app user (app_type='vendor_app' or no app_type for backward compatibility)
-        user = allUsers.find(u => u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C'));
+      // If not found, check all users by mobile
+      if (!user) {
+        const allUsers = await User.findAllByMobile(cleanedPhone);
         
-        // If no vendor app user found, check for customer app user
-        const customerAppUser = allUsers.find(u => 
-          u.user_type === 'C' && (u.app_type === 'customer_app' || !u.app_type)
-        );
+        if (allUsers && allUsers.length > 0) {
+          // Find customer app user (user_type='C' with customer_app app_type, not deleted)
+          user = allUsers.find(u => 
+            u.user_type === 'C' && 
+            (u.app_type === 'customer_app' || (!u.app_type && u.user_type === 'C')) &&
+            (u.del_status !== 2 || !u.del_status)
+          );
+          
+          // If no customer app user found, check if there's a vendor app user
+          // Customer app should NOT use vendor app users - will create separate customer app user
+          if (!user) {
+            const vendorAppUser = allUsers.find(u => 
+              (u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C')) &&
+              (u.del_status !== 2 || !u.del_status)
+            );
+            
+            if (vendorAppUser) {
+              console.log(`⚠️  Found vendor app user (ID: ${vendorAppUser.id}) but request is from customer app - will create new customer app user`);
+              user = null; // Will create new customer app user below
+            }
+          }
+        }
+      }
+    } else {
+      // For vendor app, check for vendor app users first
+      user = await User.findByMobileAndAppType(cleanedPhone, 'vendor_app');
+      
+      // If not found, check all users by mobile
+      if (!user) {
+        const allUsers = await User.findAllByMobile(cleanedPhone);
         
-        // If customer app user exists, they can register as any type in vendor app
-        // This will be handled in the registration logic below
-        if (customerAppUser && !user) {
-          console.log(`📱 Customer app user (ID: ${customerAppUser.id}) can register in vendor app`);
-          user = null; // Will be handled in registration logic below
-        } else if (!user) {
-          // For backward compatibility: if user has no app_type and is not type 'C', treat as vendor app user
-          // Otherwise, use the first user found
-          user = allUsers.find(u => u.user_type !== 'C') || allUsers[0];
+        if (allUsers && allUsers.length > 0) {
+          // Find vendor app user (app_type='vendor_app' or no app_type for backward compatibility)
+          user = allUsers.find(u => u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C'));
+          
+          // If no vendor app user found, check for customer app user
+          const customerAppUser = allUsers.find(u => 
+            u.user_type === 'C' && (u.app_type === 'customer_app' || !u.app_type)
+          );
+          
+          // If customer app user exists, they can register as any type in vendor app
+          // This will be handled in the registration logic below
+          if (customerAppUser && !user) {
+            console.log(`📱 Customer app user (ID: ${customerAppUser.id}) can register in vendor app`);
+            user = null; // Will be handled in registration logic below
+          } else if (!user) {
+            // For backward compatibility: if user has no app_type and is not type 'C', treat as vendor app user
+            // Otherwise, use the first user found
+            user = allUsers.find(u => u.user_type !== 'C') || allUsers[0];
+          }
         }
       }
     }
@@ -155,8 +222,16 @@ class V2AuthService {
     // IMPORTANT: If user is found but has del_status === 2 (deleted), reset them for re-registration
     if (user && user.del_status === 2) {
       console.log(`♻️  Found deleted user (ID: ${user.id}) - resetting for re-registration`);
-      // Reset deleted user - clear del_status and set user_type to 'N' (new user)
-      const resetUserType = 'N'; // All re-registering users start as 'N' regardless of join type
+      
+      // Determine reset user type and app type based on target app
+      let resetUserType, resetAppType;
+      if (targetAppType === 'customer_app') {
+        resetUserType = 'C';
+        resetAppType = 'customer_app';
+      } else {
+        resetUserType = 'N'; // All re-registering vendor app users start as 'N' regardless of join type
+        resetAppType = 'vendor_app';
+      }
       
       // Use UpdateCommand to remove del_status attribute and update user
       const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
@@ -169,26 +244,112 @@ class V2AuthService {
         UpdateExpression: 'SET user_type = :userType, app_type = :appType, app_version = :appVersion, updated_at = :updated REMOVE del_status',
         ExpressionAttributeValues: {
           ':userType': resetUserType,
-          ':appType': 'vendor_app',
+          ':appType': resetAppType,
           ':appVersion': 'v2',
           ':updated': new Date().toISOString()
         }
       };
       
       await client.send(new UpdateCommand(updateParams));
-      console.log(`✅ Reset deleted user (ID: ${user.id}) to type '${resetUserType}' for re-registration`);
+      console.log(`✅ Reset deleted user (ID: ${user.id}) to type '${resetUserType}' for ${resetAppType} re-registration`);
       
       // Update the user object to reflect the changes
-      user = { ...user, del_status: undefined, user_type: resetUserType, app_type: 'vendor_app', app_version: 'v2' };
+      user = { ...user, del_status: undefined, user_type: resetUserType, app_type: resetAppType, app_version: 'v2' };
+    }
+    
+    // IMPORTANT: If user is found but app_type doesn't match target app, handle accordingly
+    if (user && targetAppType === 'customer_app' && user.app_type !== 'customer_app' && user.app_type !== null) {
+      // User exists but is from vendor app - create separate customer app user
+      console.log(`⚠️  Found vendor app user (ID: ${user.id}, app_type: ${user.app_type}) but request is from customer app - creating separate customer app user`);
+      
+      // Check if customer app user already exists
+      const allUsersCheck = await User.findAllByMobile(cleanedPhone);
+      const existingCustomerAppUser = allUsersCheck.find(u => 
+        u.user_type === 'C' && u.app_type === 'customer_app' && (u.del_status !== 2 || !u.del_status)
+      );
+      
+      if (existingCustomerAppUser) {
+        user = existingCustomerAppUser;
+        console.log(`✅ Using existing customer app user (ID: ${user.id})`);
+      } else {
+        // Create new customer app user
+        const tempName = `User_${cleanedPhone}`;
+        const tempEmail = '';
+        user = await User.create(tempName, tempEmail, cleanedPhone, 'C', cleanedPhone, 'customer_app', 'v2');
+        console.log(`📝 Created new customer app user (ID: ${user.id})`);
+      }
+    } else if (user && targetAppType === 'vendor_app' && user.app_type === 'customer_app' && !joinType) {
+      // User exists but is from customer app and no joinType provided - this shouldn't happen for vendor app
+      // But if it does, we'll handle it in the registration logic below
+      console.log(`⚠️  Found customer app user (ID: ${user.id}) but request is from vendor app without joinType`);
     }
 
     if (!user) {
-      // New user registration - check if user exists in any app to prevent duplicates
-      if (!joinType) {
+      // New user registration
+      // For customer app, no joinType is needed - create user with user_type 'C'
+      if (targetAppType === 'customer_app') {
+        // Check if user exists with this phone number in any app
+        const allUsersCheck = await User.findAllByMobile(cleanedPhone);
+        
+        if (allUsersCheck && allUsersCheck.length > 0) {
+          // Check for deleted users first - allow them to re-register
+          const deletedUser = allUsersCheck.find(u => u.del_status === 2);
+          if (deletedUser) {
+            console.log(`♻️  Found deleted user (ID: ${deletedUser.id}) - resetting for customer app re-registration`);
+            // Reset deleted user - clear del_status and set user_type to 'C' for customer app
+            const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+            const { getDynamoDBClient } = require('../../config/dynamodb');
+            const client = getDynamoDBClient();
+            
+            const updateParams = {
+              TableName: 'users',
+              Key: { id: deletedUser.id },
+              UpdateExpression: 'SET user_type = :userType, app_type = :appType, app_version = :appVersion, updated_at = :updated REMOVE del_status',
+              ExpressionAttributeValues: {
+                ':userType': 'C',
+                ':appType': 'customer_app',
+                ':appVersion': 'v2',
+                ':updated': new Date().toISOString()
+              }
+            };
+            
+            await client.send(new UpdateCommand(updateParams));
+            console.log(`✅ Reset deleted user (ID: ${deletedUser.id}) to customer app user`);
+            
+            user = { ...deletedUser, del_status: undefined, user_type: 'C', app_type: 'customer_app', app_version: 'v2' };
+          } else {
+            // User exists but is not deleted - check if it's a vendor app user
+            const vendorAppUser = allUsersCheck.find(u => 
+              u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C')
+            );
+            
+            if (vendorAppUser) {
+              // Vendor app user exists - create separate customer app user
+              console.log(`📱 Vendor app user exists (ID: ${vendorAppUser.id}) - creating separate customer app user`);
+              const tempName = `User_${cleanedPhone}`;
+              const tempEmail = '';
+              user = await User.create(tempName, tempEmail, cleanedPhone, 'C', cleanedPhone, 'customer_app', 'v2');
+              console.log(`📝 Created new customer app user (ID: ${user.id})`);
+            } else {
+              // No vendor app user - create customer app user
+              const tempName = `User_${cleanedPhone}`;
+              const tempEmail = '';
+              user = await User.create(tempName, tempEmail, cleanedPhone, 'C', cleanedPhone, 'customer_app', 'v2');
+              console.log(`📝 Created new customer app user (ID: ${user.id})`);
+            }
+          }
+        } else {
+          // No existing user - create new customer app user
+          const tempName = `User_${cleanedPhone}`;
+          const tempEmail = '';
+          user = await User.create(tempName, tempEmail, cleanedPhone, 'C', cleanedPhone, 'customer_app', 'v2');
+          console.log(`📝 Created new customer app user (ID: ${user.id})`);
+        }
+      } else if (!joinType) {
+        // For vendor app, joinType is required
         throw new Error('Join type is required for new users');
-      }
-
-      // Check if user exists with this phone number in any app
+      } else {
+        // Check if user exists with this phone number in any app
       const allUsersCheck = await User.findAllByMobile(cleanedPhone);
       
       if (allUsersCheck && allUsersCheck.length > 0) {
@@ -314,6 +475,7 @@ class V2AuthService {
         const tempEmail = ''; // Don't auto-generate email
         user = await User.create(tempName, tempEmail, cleanedPhone, userType, cleanedPhone, 'vendor_app', 'v2');
         console.log(`📝 Created new user (ID: ${user.id}) with type 'N' (new_user) - will be updated to S/R/SR after signup completion`);
+      }
       }
     } else {
       // Existing user - validate cross-login restrictions
@@ -467,31 +629,56 @@ class V2AuthService {
     // Determine dashboard type based on signup completion
     // If signup is not complete, use joinType to direct to signup screen
     // If signup is complete, use the appropriate dashboard
+    // For customer app users (user_type 'C'), no dashboard type is needed
     let dashboardType;
+    let allowedDashboards = [];
     
-    // New users (type 'N') - always use joinType to direct to signup screen
-    if (user.user_type === 'N') {
-      dashboardType = joinType || 'b2c'; // Default to b2c if no joinType
-    } else if (joinType) {
-      // Use joinType if provided (user selected B2B or B2C)
-      // This will direct them to the signup screen if incomplete, or dashboard if complete
-      dashboardType = joinType;
-    } else if (isB2BComplete && isB2CComplete && user.user_type === 'SR') {
-      // Both complete - default to b2b
-      dashboardType = 'b2b';
-    } else if (isB2BComplete && (user.user_type === 'S' || user.user_type === 'SR')) {
-      // B2B signup complete - can access B2B dashboard
-      dashboardType = 'b2b';
-    } else if (isB2CComplete && (user.user_type === 'R' || user.user_type === 'SR')) {
-      // B2C signup complete - can access B2C dashboard
-      dashboardType = 'b2c';
+    // Customer app users (user_type 'C') - no dashboard needed
+    if (user.user_type === 'C' && targetAppType === 'customer_app') {
+      dashboardType = null; // Customer app doesn't use dashboards
+      allowedDashboards = []; // No dashboards for customer app
+      console.log(`📋 Customer app user (ID: ${user.id}) - no dashboard type needed`);
     } else {
-      // Signup not complete - use joinType if provided, otherwise map from user_type
-      // This will direct to signup screen
-      dashboardType = joinType || this.mapUserTypeToDashboard(user.user_type, joinType);
+      // Vendor app users - determine dashboard type
+      // New users (type 'N') - always use joinType to direct to signup screen
+      if (user.user_type === 'N') {
+        dashboardType = joinType || 'b2c'; // Default to b2c if no joinType
+      } else if (joinType) {
+        // Use joinType if provided (user selected B2B or B2C)
+        // This will direct them to the signup screen if incomplete, or dashboard if complete
+        dashboardType = joinType;
+      } else if (isB2BComplete && isB2CComplete && user.user_type === 'SR') {
+        // Both complete - default to b2b
+        dashboardType = 'b2b';
+      } else if (isB2BComplete && (user.user_type === 'S' || user.user_type === 'SR')) {
+        // B2B signup complete - can access B2B dashboard
+        dashboardType = 'b2b';
+      } else if (isB2CComplete && (user.user_type === 'R' || user.user_type === 'SR')) {
+        // B2C signup complete - can access B2C dashboard
+        dashboardType = 'b2c';
+      } else {
+        // Signup not complete - use joinType if provided, otherwise map from user_type
+        // This will direct to signup screen
+        dashboardType = joinType || this.mapUserTypeToDashboard(user.user_type, joinType);
+      }
+      
+      console.log(`📋 Dashboard type determined: ${dashboardType} (B2B complete: ${isB2BComplete}, B2C complete: ${isB2CComplete}, user_type: ${user.user_type}, joinType: ${joinType})`);
+      
+      // Get user's allowed dashboards for permission checking (only for vendor app)
+      try {
+        console.log(`🔍 Getting user dashboards for user ${user.id}, user_type: ${user.user_type}`);
+        const dashboardInfo = await V2ShopTypeService.getUserDashboards(user.id);
+        console.log(`📋 getUserDashboards returned:`, JSON.stringify(dashboardInfo, null, 2));
+        allowedDashboards = dashboardInfo.allowedDashboards || [];
+        console.log(`✅ Final allowedDashboards:`, allowedDashboards);
+      } catch (error) {
+        console.error('❌ Error getting user dashboards:', error);
+        console.error('Error stack:', error.stack);
+        // Fallback: use dashboardType to determine allowed dashboards
+        allowedDashboards = dashboardType ? [dashboardType] : [];
+        console.log(`⚠️  Using fallback allowedDashboards:`, allowedDashboards);
+      }
     }
-    
-    console.log(`📋 Dashboard type determined: ${dashboardType} (B2B complete: ${isB2BComplete}, B2C complete: ${isB2CComplete}, user_type: ${user.user_type}, joinType: ${joinType})`);
 
     // Generate JWT token
     const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
@@ -507,27 +694,10 @@ class V2AuthService {
       { expiresIn }
     );
 
-    // Get user's allowed dashboards for permission checking
-    let allowedDashboards = [];
-    try {
-      console.log(`🔍 Getting user dashboards for user ${user.id}, user_type: ${user.user_type}`);
-      const dashboardInfo = await V2ShopTypeService.getUserDashboards(user.id);
-      console.log(`📋 getUserDashboards returned:`, JSON.stringify(dashboardInfo, null, 2));
-      allowedDashboards = dashboardInfo.allowedDashboards || [];
-      console.log(`✅ Final allowedDashboards:`, allowedDashboards);
-    } catch (error) {
-      console.error('❌ Error getting user dashboards:', error);
-      console.error('Error stack:', error.stack);
-      // Fallback: use dashboardType to determine allowed dashboards
-      allowedDashboards = [dashboardType];
-      console.log(`⚠️  Using fallback allowedDashboards:`, allowedDashboards);
-    }
-
-    // Check B2B signup status for B2B users (S or SR)
+    // Check B2B signup status for B2B users (S or SR) - only for vendor app
     let b2bStatus = null;
-    console.log(`🔍 Checking B2B status for user ${user.id}, user_type: ${user.user_type}`);
-    
-    if (user.user_type === 'S' || user.user_type === 'SR') {
+    if (targetAppType === 'vendor_app' && (user.user_type === 'S' || user.user_type === 'SR')) {
+      console.log(`🔍 Checking B2B status for user ${user.id}, user_type: ${user.user_type}`);
       try {
         console.log(`📋 User is B2B (${user.user_type}), checking shop record...`);
         const Shop = require('../../models/Shop');
@@ -629,10 +799,178 @@ class V2AuthService {
           : 'b2b';
       case 'R': // Retailer (B2C in vendor app)
         return 'b2c';
-      case 'C': // Customer (customer app - Flutter)
-        // Customer app users can register in vendor app as any type
-        // This is handled in verifyOtpAndLogin
-        return 'b2c'; // Default, but will be overridden based on joinType
+      case 'C': // Customer (customer app - common users)
+        // Customer app users don't use dashboards - return null
+        return null;
+      default:
+        return 'b2c';
+    }
+  }
+
+  /**
+   * Map joinType to user_type
+   * @param {string} joinType - Join type ('b2b', 'b2c', 'delivery')
+   * @returns {string} User type ('S', 'R', 'D')
+   * Note: 'C' is reserved for customer app (Flutter), 'R' is for B2C in vendor app
+   */
+  static mapJoinTypeToUserType(joinType) {
+    switch (joinType) {
+      case 'b2b':
+        return 'S'; // Shop owner (B2B)
+      case 'delivery':
+        return 'D'; // Delivery boy
+      case 'b2c':
+      default:
+        return 'R'; // Retailer (B2C in vendor app) - separate from 'C' (customer app)
+    }
+  }
+}
+
+module.exports = V2AuthService;
+
+
+      }
+      
+      console.log(`📋 Dashboard type determined: ${dashboardType} (B2B complete: ${isB2BComplete}, B2C complete: ${isB2CComplete}, user_type: ${user.user_type}, joinType: ${joinType})`);
+      
+      // Get user's allowed dashboards for permission checking (only for vendor app)
+      try {
+        console.log(`🔍 Getting user dashboards for user ${user.id}, user_type: ${user.user_type}`);
+        const dashboardInfo = await V2ShopTypeService.getUserDashboards(user.id);
+        console.log(`📋 getUserDashboards returned:`, JSON.stringify(dashboardInfo, null, 2));
+        allowedDashboards = dashboardInfo.allowedDashboards || [];
+        console.log(`✅ Final allowedDashboards:`, allowedDashboards);
+      } catch (error) {
+        console.error('❌ Error getting user dashboards:', error);
+        console.error('Error stack:', error.stack);
+        // Fallback: use dashboardType to determine allowed dashboards
+        allowedDashboards = dashboardType ? [dashboardType] : [];
+        console.log(`⚠️  Using fallback allowedDashboards:`, allowedDashboards);
+      }
+    }
+
+    // Generate JWT token
+    const jwtSecret = process.env.JWT_SECRET || 'your-secret-key';
+    const expiresIn = process.env.JWT_EXPIRES_IN || '30d';
+
+    const token = jwt.sign(
+      {
+        id: user.id,
+        mob_num: user.mob_num,
+        user_type: user.user_type
+      },
+      jwtSecret,
+      { expiresIn }
+    );
+
+    // Check B2B signup status for B2B users (S or SR) - only for vendor app
+    let b2bStatus = null;
+    if (targetAppType === 'vendor_app' && (user.user_type === 'S' || user.user_type === 'SR')) {
+      console.log(`🔍 Checking B2B status for user ${user.id}, user_type: ${user.user_type}`);
+      try {
+        console.log(`📋 User is B2B (${user.user_type}), checking shop record...`);
+        const Shop = require('../../models/Shop');
+        const shop = await Shop.findByUserId(user.id);
+        
+        console.log(`📋 Shop lookup result:`, shop ? `Found shop ID ${shop.id}` : 'No shop found');
+        
+        if (!shop || !shop.id) {
+          // No shop record - new user (even if v1 user with user_type S or SR)
+          b2bStatus = 'new_user';
+          console.log(`✅ B2B status set to: new_user (no shop record)`);
+        } else {
+          // Check if all required B2B signup fields are filled
+          const hasCompanyName = shop.company_name && shop.company_name.trim() !== '';
+          const hasGstNumber = shop.gst_number && shop.gst_number.trim() !== '';
+          const hasAllDocuments = shop.business_license_url && shop.business_license_url.trim() !== '' &&
+                                  shop.gst_certificate_url && shop.gst_certificate_url.trim() !== '' &&
+                                  shop.address_proof_url && shop.address_proof_url.trim() !== '' &&
+                                  shop.kyc_owner_url && shop.kyc_owner_url.trim() !== '';
+          
+          // User is only considered a B2B user if BOTH form is complete AND all documents are uploaded
+          const isCompleteB2BSignup = hasCompanyName && hasGstNumber && hasAllDocuments;
+          
+          console.log(`📋 Shop fields check:`, {
+            hasCompanyName,
+            hasGstNumber,
+            hasAllDocuments,
+            isCompleteB2BSignup,
+            approval_status: shop.approval_status
+          });
+          
+          if (!isCompleteB2BSignup) {
+            // Signup incomplete - new user (even if v1 user with user_type S or SR)
+            b2bStatus = 'new_user';
+            console.log(`✅ B2B status set to: new_user (incomplete signup - missing form fields or documents)`);
+          } else {
+            // Complete B2B signup (form + all documents) - check approval status
+            if (shop.approval_status === 'approved') {
+              b2bStatus = 'approved';
+            } else if (shop.approval_status === 'rejected') {
+              b2bStatus = 'rejected';
+            } else {
+              // pending or null - user is a B2B user but awaiting approval
+              b2bStatus = 'pending';
+            }
+            console.log(`✅ B2B status set to: ${b2bStatus} (complete signup, approval_status: ${shop.approval_status})`);
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error checking B2B signup status:', error);
+        console.error('Error stack:', error.stack);
+        // Default to new_user if error
+        b2bStatus = 'new_user';
+        console.log(`✅ B2B status set to: new_user (error fallback)`);
+      }
+    } else {
+      console.log(`📋 User is not B2B (${user.user_type}), b2bStatus will be null`);
+    }
+    
+    console.log(`📋 Final b2bStatus for user ${user.id}: ${b2bStatus}`);
+
+    // Return user data without password
+    const { password: _, ...userWithoutPassword } = user;
+
+    const responseData = {
+      user: userWithoutPassword,
+      token,
+      dashboardType,
+      allowedDashboards,
+      b2bStatus // 'new_user', 'pending', 'approved', or null (for non-B2B users)
+    };
+    
+    console.log(`📋 Returning response data with b2bStatus: ${responseData.b2bStatus}`);
+    console.log(`📋 Response data keys:`, Object.keys(responseData));
+    
+    return responseData;
+  }
+
+  /**
+   * Map user_type to dashboard type
+   * @param {string} userType - User type ('S', 'R', 'C', 'D', 'SR', etc.)
+   * @param {string} preferredDashboard - Preferred dashboard if user has multiple access ('b2b' | 'b2c')
+   * @returns {string} Dashboard type ('b2b', 'b2c', 'delivery')
+   */
+  static mapUserTypeToDashboard(userType, preferredDashboard = null) {
+    switch (userType) {
+      case 'N': // New user - not yet registered, use preferred dashboard or default to b2c
+        return preferredDashboard && (preferredDashboard === 'b2b' || preferredDashboard === 'b2c') 
+          ? preferredDashboard 
+          : 'b2c';
+      case 'S': // Shop owner (B2B)
+        return 'b2b';
+      case 'D': // Delivery boy
+        return 'delivery';
+      case 'SR': // Shop owner + Retailer (B2B + B2C in vendor app)
+        // If preferred dashboard is provided, use it; otherwise default to B2B
+        return preferredDashboard && (preferredDashboard === 'b2b' || preferredDashboard === 'b2c') 
+          ? preferredDashboard 
+          : 'b2b';
+      case 'R': // Retailer (B2C in vendor app)
+        return 'b2c';
+      case 'C': // Customer (customer app - common users)
+        // Customer app users don't use dashboards - return null
+        return null;
       default:
         return 'b2c';
     }

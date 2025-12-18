@@ -9,8 +9,8 @@ export API_KEY=zyubkfzeumeoviaqzcsrvfwdzbiwnlnn
 # Redis/Upstash Redis credentials
 # Get these from your Upstash Redis dashboard: https://console.upstash.com/
 # Or from your Redis provider
-export REDIS_URL=your-redis-url-here
-export REDIS_TOKEN=your-redis-token-here
+export REDIS_URL=https://open-honeybee-9527.upstash.io
+export REDIS_TOKEN=ASU3AAImcDJmYTQ1MjQwNGIzNTA0ZWNlYmRkMDU2OGM3OGRmZWY4NXAyOTUyNw
 # Alternative variable names (also supported):
 # export UPSTASH_REDIS_REST_URL=your-redis-url-here
 # export UPSTASH_REDIS_REST_TOKEN=your-redis-token-here

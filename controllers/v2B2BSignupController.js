@@ -5,6 +5,7 @@
 
 const V2B2BSignupService = require('../services/shop/v2B2BSignupService');
 const { uploadBufferToS3 } = require('../utils/s3Upload');
+const RedisCache = require('../utils/redisCache');
 const path = require('path');
 
 class V2B2BSignupController {
@@ -63,6 +64,14 @@ class V2B2BSignupController {
         };
         await Shop.update(shop.id, updateData);
         console.log(`📋 B2B document upload (${documentType}) - changing approval_status from 'rejected' to 'pending' for user ${userId} (resubmission)`);
+      }
+
+      // Invalidate v2 API caches
+      try {
+        await RedisCache.invalidateV2ApiCache('profile', userId);
+        console.log(`🗑️  Invalidated v2 profile cache for user ${userId} (B2B document upload)`);
+      } catch (err) {
+        console.error('Cache invalidation error:', err);
       }
 
       return res.json({
@@ -128,11 +137,51 @@ class V2B2BSignupController {
 
       const shop = await V2B2BSignupService.submitB2BSignup(userId, signupData);
 
+      // Invalidate v2 API caches
+      try {
+        await RedisCache.invalidateV2ApiCache('profile', userId);
+        await RedisCache.invalidateV2ApiCache('user_categories', userId);
+        await RedisCache.invalidateV2ApiCache('user_subcategories', userId);
+        console.log(`🗑️  Invalidated v2 profile cache for user ${userId} (B2B signup submitted)`);
+      } catch (err) {
+        console.error('Cache invalidation error:', err);
+      }
+
       return res.json({
         status: 'success',
         msg: 'B2B signup submitted successfully',
         data: shop,
       });
+    } catch (error) {
+      console.error('V2B2BSignupController.submitSignup error:', error);
+
+      if (error.message === 'USER_NOT_FOUND') {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'User not found',
+          data: null,
+        });
+      }
+
+      if (error.message === 'INVALID_USER_TYPE') {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Delivery users cannot submit B2B signup',
+          data: null,
+        });
+      }
+
+      return res.status(500).json({
+        status: 'error',
+        msg: error.message || 'Failed to submit B2B signup',
+        data: null,
+      });
+    }
+  }
+}
+
+module.exports = V2B2BSignupController;
+
     } catch (error) {
       console.error('V2B2BSignupController.submitSignup error:', error);
 

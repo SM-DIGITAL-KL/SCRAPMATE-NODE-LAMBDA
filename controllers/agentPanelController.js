@@ -523,6 +523,8 @@ class AgentPanelController {
         await RedisCache.delete(RedisCache.shopKey(id, 'agent'));
         await RedisCache.delete(RedisCache.shopKey(id, 'view'));
         await RedisCache.delete(RedisCache.listKey('agent_shops'));
+        // Invalidate shops cache (used for B2B/B2C availability in categories)
+        await RedisCache.invalidateV2ApiCache('shops', null, {});
         console.log('🗑️  Invalidated shop caches after status change');
       } catch (err) {
         console.error('Redis cache invalidation error:', err);
@@ -564,6 +566,8 @@ class AgentPanelController {
         await RedisCache.delete(RedisCache.shopKey(id, 'agent'));
         await RedisCache.delete(RedisCache.shopKey(id, 'view'));
         await RedisCache.delete(RedisCache.listKey('agent_shops'));
+        // Invalidate shops cache (used for B2B/B2C availability in categories)
+        await RedisCache.invalidateV2ApiCache('shops', null, {});
         console.log('🗑️  Invalidated shop caches after delete');
       } catch (err) {
         console.error('Redis cache invalidation error:', err);
@@ -576,6 +580,10 @@ class AgentPanelController {
     }
   }
 }
+
+module.exports = AgentPanelController;
+
+
 
 module.exports = AgentPanelController;
 

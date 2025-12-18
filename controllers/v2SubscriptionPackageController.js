@@ -20,10 +20,11 @@ exports.getSubscriptionPackages = async (req, res) => {
     
     // Try to get from cache
     const cached = await RedisCache.get(cacheKey);
-    if (cached) {
+    if (cached !== null && cached !== undefined) {
       return res.json({
         status: 'success',
         data: cached,
+        hitBy: 'Redis'
       });
     }
 
@@ -79,6 +80,7 @@ exports.getSubscriptionPackages = async (req, res) => {
     res.json({
       status: 'success',
       data: sortedPackages,
+      hitBy: 'DynamoDB'
     });
   } catch (error) {
     console.error('Error fetching subscription packages:', error);
@@ -89,4 +91,6 @@ exports.getSubscriptionPackages = async (req, res) => {
     });
   }
 };
+
+
 

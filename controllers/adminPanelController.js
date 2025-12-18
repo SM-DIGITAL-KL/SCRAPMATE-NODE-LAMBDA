@@ -2601,6 +2601,593 @@ console.log('hj');
     }
   }
 
+  // Get Customers (common users) list with pagination and search
+  static async customers(req, res) {
+    try {
+      console.log('✅ AdminPanelController.customers called');
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 10;
+      const search = req.query.search || null;
+      
+      // Check Redis cache first (only if no search term)
+      const cacheKey = RedisCache.adminKey('customers', null, { page, limit, search });
+      // Don't cache search results
+      if (!search) {
+        try {
+          const cached = await RedisCache.get(cacheKey);
+          if (cached) {
+            console.log('⚡ Customers cache hit');
+            return res.json({
+              status: 'success',
+              msg: 'Customers retrieved',
+              data: cached
+            });
+          }
+        } catch (err) {
+          console.error('Redis get error:', err);
+        }
+      }
+      
+      const User = require('../models/User');
+      const Customer = require('../models/Customer');
+      
+      let enrichedUsers;
+      let total;
+      const pageNumber = parseInt(page) || 1;
+      const pageSize = parseInt(limit) || 10;
+      
+      // If searching, get all users first (no pagination), then filter, then paginate
+      // If not searching, get paginated users directly
+      if (search && search.trim()) {
+        // Get all customers (no pagination) to search across entire database
+        const allResult = await User.getCustomers(1, 999999, null);
+        
+        console.log(`📊 Total customers fetched: ${allResult.total}, users in result: ${allResult.users.length}`);
+        
+        // Enrich all users with customer data
+        enrichedUsers = await Promise.all(allResult.users.map(async (user) => {
+          try {
+            const customer = await Customer.findByUserId(user.id);
+            
+            return {
+              ...user,
+              customer: customer || null,
+              contact: customer?.contact ? String(customer.contact) : (user.mob_num ? String(user.mob_num) : ''),
+              address: customer?.address || '',
+              email: customer?.email || user.email || '',
+              location: customer?.location || '',
+              state: customer?.state || '',
+              place: customer?.place || ''
+            };
+          } catch (err) {
+            console.error(`Error fetching customer for user ${user.id}:`, err);
+            return {
+              ...user,
+              customer: null,
+              contact: user.mob_num ? String(user.mob_num) : '',
+              address: '',
+              email: user.email || '',
+              location: '',
+              state: '',
+              place: ''
+            };
+          }
+        }));
+        
+        // Apply search filter after enriching with customer data
+        const searchTerm = search.trim();
+        const searchTermLower = searchTerm.toLowerCase();
+        const searchAsNumber = !isNaN(searchTerm) && searchTerm.length > 0 ? parseInt(searchTerm) : null;
+        const searchAsNumberStr = searchAsNumber ? searchAsNumber.toString() : null;
+        
+        console.log(`🔍 Searching for: "${searchTerm}" (as number: ${searchAsNumber})`);
+        
+        enrichedUsers = enrichedUsers.filter(user => {
+          // Search by phone number (mob_num from user)
+          let userPhoneMatch = false;
+          if (user.mob_num !== null && user.mob_num !== undefined) {
+            const userPhoneStr = user.mob_num.toString();
+            if (userPhoneStr.toLowerCase().includes(searchTermLower)) {
+              userPhoneMatch = true;
+            }
+            if (searchAsNumber !== null && user.mob_num === searchAsNumber) {
+              userPhoneMatch = true;
+            }
+          }
+          
+          // Search by contact number (contact from customer)
+          let customerContactMatch = false;
+          if (user.contact !== null && user.contact !== undefined && user.contact !== '') {
+            const customerContactStr = user.contact.toString();
+            if (customerContactStr.toLowerCase().includes(searchTermLower)) {
+              customerContactMatch = true;
+            }
+            if (searchAsNumber !== null && user.contact === searchAsNumber) {
+              customerContactMatch = true;
+            }
+          }
+          
+          // Search by name
+          const nameMatch = user.name && typeof user.name === 'string' && 
+            user.name.toLowerCase().includes(searchTermLower);
+          
+          // Search by email
+          const emailMatch = user.email && typeof user.email === 'string' && 
+            user.email.toLowerCase().includes(searchTermLower);
+          
+          return userPhoneMatch || customerContactMatch || nameMatch || emailMatch;
+        });
+        
+        console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} customers found after filtering`);
+        
+        // Re-sort enriched users by created_at (newest first)
+        enrichedUsers.sort((a, b) => {
+          let dateA = a.created_at ? new Date(a.created_at) : null;
+          let dateB = b.created_at ? new Date(b.created_at) : null;
+          
+          if (!dateA || isNaN(dateA.getTime())) {
+            dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
+          }
+          if (!dateB || isNaN(dateB.getTime())) {
+            dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
+          }
+          
+          return dateB.getTime() - dateA.getTime();
+        });
+        
+        // Apply pagination after filtering
+        total = enrichedUsers.length;
+        const skip = (pageNumber - 1) * pageSize;
+        const paginatedUsers = enrichedUsers.slice(skip, skip + pageSize);
+        enrichedUsers = paginatedUsers;
+        
+        console.log(`🔍 Paginated search results: Showing ${paginatedUsers.length} of ${total} customers`);
+      } else {
+        // No search - use normal pagination
+        const result = await User.getCustomers(page, limit, null);
+        
+        // Enrich paginated users with customer data
+        enrichedUsers = await Promise.all(result.users.map(async (user) => {
+          try {
+            const customer = await Customer.findByUserId(user.id);
+            
+            return {
+              ...user,
+              customer: customer || null,
+              contact: customer?.contact ? String(customer.contact) : (user.mob_num ? String(user.mob_num) : ''),
+              address: customer?.address || '',
+              email: customer?.email || user.email || '',
+              location: customer?.location || '',
+              state: customer?.state || '',
+              place: customer?.place || ''
+            };
+          } catch (err) {
+            console.error(`Error fetching customer for user ${user.id}:`, err);
+            return {
+              ...user,
+              customer: null,
+              contact: user.mob_num ? String(user.mob_num) : '',
+              address: '',
+              email: user.email || '',
+              location: '',
+              state: '',
+              place: ''
+            };
+          }
+        }));
+        
+        total = result.total;
+      }
+      
+      const responseData = {
+        users: enrichedUsers,
+        total: total,
+        page: pageNumber,
+        limit: pageSize,
+        totalPages: Math.ceil(total / pageSize),
+        hasMore: (pageNumber * pageSize) < total
+      };
+      
+      // Cache for 5 minutes (only if no search term)
+      if (!search) {
+        try {
+          await RedisCache.set(cacheKey, responseData, 'short');
+          console.log('💾 Customers cached');
+        } catch (err) {
+          console.error('Redis cache set error:', err);
+        }
+      }
+      
+      res.json({
+        status: 'success',
+        msg: 'Customers retrieved',
+        data: responseData
+      });
+    } catch (error) {
+      console.error('customers error:', error);
+      res.json({
+        status: 'error',
+        msg: 'Error fetching customers',
+        data: {
+          users: [],
+          total: 0,
+          page: 1,
+          limit: 10,
+          totalPages: 0,
+          hasMore: false
+        }
+      });
+    }
+  }
+
+  // Get B2C user details
+  static async getB2CUserDetails(req, res) {
+    try {
+      console.log('✅ AdminPanelController.getB2CUserDetails called');
+      const userId = req.params.userId;
+      
+      if (!userId) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'User ID is required',
+          data: null
+        });
+      }
+
+      // Get user
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'User not found',
+          data: null
+        });
+      }
+
+      // Get shop data with documents
+      const shop = await Shop.findByUserId(userId);
+      
+      const userData = {
+        id: user.id,
+        name: user.name || '',
+        email: user.email || '',
+        phone: user.mob_num || '',
+        user_type: user.user_type,
+        app_type: user.app_type,
+        created_at: user.created_at,
+        updated_at: user.updated_at,
+        shop: shop ? {
+          id: shop.id,
+          shopname: shop.shopname || '',
+          address: shop.address || '',
+          contact: shop.contact || '',
+          aadhar_card: shop.aadhar_card || '',
+          driving_license: shop.driving_license || '',
+          approval_status: shop.approval_status || null,
+          rejection_reason: shop.rejection_reason || null,
+          application_submitted_at: shop.application_submitted_at || null,
+          documents_verified_at: shop.documents_verified_at || null,
+          review_initiated_at: shop.review_initiated_at || null,
+          created_at: shop.created_at,
+          updated_at: shop.updated_at
+        } : null
+      };
+
+      res.json({
+        status: 'success',
+        msg: 'B2C user details retrieved',
+        data: userData
+      });
+    } catch (error) {
+      console.error('getB2CUserDetails error:', error);
+      res.status(500).json({
+        status: 'error',
+        msg: 'Error fetching B2C user details',
+        data: null
+      });
+    }
+  }
+
+  // Update B2C approval status
+  static async updateB2CApprovalStatus(req, res) {
+    try {
+      console.log('✅ AdminPanelController.updateB2CApprovalStatus called');
+      const userId = req.params.userId;
+      const { approval_status, rejection_reason } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'User ID is required',
+          data: null
+        });
+      }
+
+      if (!approval_status || !['approved', 'rejected', 'pending'].includes(approval_status)) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Valid approval_status is required (approved, rejected, or pending)',
+          data: null
+        });
+      }
+
+      // Get shop by user_id
+      const shop = await Shop.findByUserId(userId);
+      if (!shop) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Shop record not found for this user',
+          data: null
+        });
+      }
+
+      // Prepare update data
+      const updateData = {
+        approval_status: approval_status
+      };
+
+      // Add rejection reason if status is rejected
+      if (approval_status === 'rejected' && rejection_reason) {
+        updateData.rejection_reason = rejection_reason;
+        console.log('📋 Rejection reason:', rejection_reason);
+      } else if (approval_status !== 'rejected') {
+        // Clear rejection reason if status is not rejected
+        updateData.rejection_reason = null;
+      }
+
+      // Track timestamps for approval workflow
+      const currentTime = new Date().toISOString();
+      
+      // If status is being set to pending and review_initiated_at is not set, set it
+      if (approval_status === 'pending' && !shop.review_initiated_at) {
+        updateData.review_initiated_at = currentTime;
+        console.log('📋 Setting review_initiated_at for B2C user:', userId);
+      }
+      
+      // If status is being changed to approved or rejected, set documents_verified_at
+      if ((approval_status === 'approved' || approval_status === 'rejected') && !shop.documents_verified_at) {
+        updateData.documents_verified_at = currentTime;
+        console.log('📋 Setting documents_verified_at for B2C user:', userId);
+      }
+
+      // Update approval status and rejection reason
+      // Note: Shop.update automatically sets updated_at, so don't include it here
+      await Shop.update(shop.id, updateData);
+
+      // Invalidate B2C users cache
+      try {
+        await RedisCache.invalidateB2CUsersCache();
+        console.log('🗑️  Invalidated B2C users cache after approval status update');
+      } catch (err) {
+        console.error('Redis cache invalidation error:', err);
+      }
+
+      // Invalidate user profile cache to ensure fresh data in React Native app
+      try {
+        const userIdStr = String(userId);
+        console.log(`🗑️  Invalidating profile cache for user ${userIdStr} after approval status update`);
+        
+        // Invalidate user profile cache
+        await RedisCache.delete(RedisCache.userKey(userIdStr, 'profile'));
+        await RedisCache.delete(RedisCache.userKey(userIdStr));
+        
+        // Invalidate get_user_by_id cache for shops table
+        await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'shops' }));
+        
+        // Invalidate shops table cache
+        await RedisCache.invalidateTableCache('shops');
+        
+        console.log(`✅ Profile cache invalidated for user ${userIdStr}`);
+      } catch (err) {
+        console.error('Redis profile cache invalidation error:', err);
+      }
+
+      res.json({
+        status: 'success',
+        msg: `B2C approval status updated to ${approval_status}`,
+        data: {
+          userId: userId,
+          shopId: shop.id,
+          approval_status: approval_status
+        }
+      });
+    } catch (error) {
+      console.error('updateB2CApprovalStatus error:', error);
+      res.status(500).json({
+        status: 'error',
+        msg: 'Error updating approval status',
+        data: null
+      });
+    }
+  }
+
+  // Get Delivery/Door Step user details
+  static async getDeliveryUserDetails(req, res) {
+    try {
+      console.log('✅ AdminPanelController.getDeliveryUserDetails called');
+      const userId = req.params.userId;
+      
+      if (!userId) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'User ID is required',
+          data: null
+        });
+      }
+
+      // Get user
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'User not found',
+          data: null
+        });
+      }
+
+      // Get delivery boy data with documents
+      const DeliveryBoy = require('../models/DeliveryBoy');
+      const deliveryBoy = await DeliveryBoy.findByUserId(userId);
+      
+      const userData = {
+        id: user.id,
+        name: user.name || '',
+        email: user.email || '',
+        phone: user.mob_num || '',
+        user_type: user.user_type,
+        app_type: user.app_type,
+        created_at: user.created_at,
+        updated_at: user.updated_at,
+        delivery_boy: deliveryBoy ? {
+          id: deliveryBoy.id,
+          name: deliveryBoy.name || '',
+          address: deliveryBoy.address || '',
+          contact: deliveryBoy.contact || '',
+          vehicle_type: deliveryBoy.vehicle_type || '',
+          vehicle_model: deliveryBoy.vehicle_model || '',
+          vehicle_registration_number: deliveryBoy.vehicle_registration_number || '',
+          aadhar_card: deliveryBoy.aadhar_card || '',
+          driving_license: deliveryBoy.driving_license || '',
+          approval_status: deliveryBoy.approval_status || null,
+          rejection_reason: deliveryBoy.rejection_reason || null,
+          application_submitted_at: deliveryBoy.application_submitted_at || null,
+          documents_verified_at: deliveryBoy.documents_verified_at || null,
+          review_initiated_at: deliveryBoy.review_initiated_at || null,
+          created_at: deliveryBoy.created_at,
+          updated_at: deliveryBoy.updated_at
+        } : null
+      };
+      
+      // Also add delivery object for consistency
+      if (deliveryBoy) {
+        userData.delivery = userData.delivery_boy;
+      }
+
+      res.json({
+        status: 'success',
+        msg: 'Delivery user details retrieved',
+        data: userData
+      });
+    } catch (error) {
+      console.error('getDeliveryUserDetails error:', error);
+      res.status(500).json({
+        status: 'error',
+        msg: 'Error fetching delivery user details',
+        data: null
+      });
+    }
+  }
+
+  // Update Delivery/Door Step approval status
+  static async updateDeliveryApprovalStatus(req, res) {
+    try {
+      console.log('✅ AdminPanelController.updateDeliveryApprovalStatus called');
+      const userId = req.params.userId;
+      const { approval_status, rejection_reason } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'User ID is required',
+          data: null
+        });
+      }
+
+      if (!approval_status || !['approved', 'rejected', 'pending'].includes(approval_status)) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Valid approval_status is required (approved, rejected, or pending)',
+          data: null
+        });
+      }
+
+      // Get delivery boy by user_id
+      const DeliveryBoy = require('../models/DeliveryBoy');
+      const deliveryBoy = await DeliveryBoy.findByUserId(userId);
+      if (!deliveryBoy) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Delivery boy record not found for this user',
+          data: null
+        });
+      }
+
+      // Prepare update data
+      const updateData = {
+        approval_status: approval_status
+      };
+
+      // Add rejection reason if status is rejected
+      if (approval_status === 'rejected' && rejection_reason) {
+        updateData.rejection_reason = rejection_reason;
+        console.log('📋 Rejection reason:', rejection_reason);
+      } else if (approval_status !== 'rejected') {
+        // Clear rejection reason if status is not rejected
+        updateData.rejection_reason = null;
+      }
+
+      // Track timestamps for approval workflow
+      const currentTime = new Date().toISOString();
+      
+      // If status is being set to pending and review_initiated_at is not set, set it
+      if (approval_status === 'pending' && !deliveryBoy.review_initiated_at) {
+        updateData.review_initiated_at = currentTime;
+        console.log('📋 Setting review_initiated_at for delivery user:', userId);
+      }
+      
+      // If status is being changed to approved or rejected, set documents_verified_at
+      if ((approval_status === 'approved' || approval_status === 'rejected') && !deliveryBoy.documents_verified_at) {
+        updateData.documents_verified_at = currentTime;
+        console.log('📋 Setting documents_verified_at for delivery user:', userId);
+      }
+
+      // Update approval status and rejection reason
+      await DeliveryBoy.update(deliveryBoy.id, updateData);
+
+      // Invalidate user profile cache to ensure fresh data in React Native app
+      try {
+        const RedisCache = require('../utils/redisCache');
+        await RedisCache.invalidateUserProfileCache(userId);
+        console.log('🗑️  Invalidated user profile cache after delivery approval status update');
+      } catch (err) {
+        console.error('Redis cache invalidation error:', err);
+      }
+
+      res.json({
+        status: 'success',
+        msg: 'Delivery approval status updated successfully',
+        data: {
+          approval_status: approval_status,
+          rejection_reason: approval_status === 'rejected' ? rejection_reason : null
+        }
+      });
+    } catch (error) {
+      console.error('updateDeliveryApprovalStatus error:', error);
+      res.status(500).json({
+        status: 'error',
+        msg: 'Error updating approval status',
+        data: null
+      });
+    }
+  }
+}
+
+module.exports = AdminPanelController;
+
+        status: 'error',
+        msg: 'Error fetching customers',
+        data: {
+          users: [],
+          total: 0,
+          page: 1,
+          limit: 10,
+          totalPages: 0,
+          hasMore: false
+        }
+      });
+    }
+  }
+
   // Get B2C user details
   static async getB2CUserDetails(req, res) {
     try {

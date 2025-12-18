@@ -192,7 +192,9 @@ class V2B2BSignupService {
         // Invalidate B2B users cache immediately after shop update
         try {
           await RedisCache.invalidateB2BUsersCache();
-          console.log('🗑️  Invalidated B2B users cache after shop update');
+          // Also invalidate shops cache (used for B2B/B2C availability in categories)
+          await RedisCache.invalidateV2ApiCache('shops', null, {});
+          console.log('🗑️  Invalidated B2B users cache and shops cache after shop update');
         } catch (err) {
           console.error('Redis cache invalidation error:', err);
         }
@@ -301,6 +303,43 @@ class V2B2BSignupService {
           console.log(`🔄 B2B signup complete - setting user type to S (B2B) for user ${userId}`);
           updatedUserType = 'S';
           const updateData = { user_type: 'S' };
+          if (isV1User) {
+            updateData.app_version = 'v2';
+            console.log(`📱 Upgrading V1 user to V2 after B2B signup completion`);
+          }
+          await User.updateProfile(userId, updateData);
+          console.log(`✅ User type updated to S for user ${userId}`);
+        }
+        
+        // Invalidate B2B users cache after user type update
+        try {
+          await RedisCache.invalidateB2BUsersCache();
+          console.log('🗑️  Invalidated B2B users cache after user type update');
+        } catch (err) {
+          console.error('Redis cache invalidation error:', err);
+        }
+      }
+
+      // Invalidate B2B users cache since a new B2B user/shop was created or updated
+      try {
+        await RedisCache.invalidateB2BUsersCache();
+        console.log('🗑️  Invalidated B2B users cache after signup');
+      } catch (err) {
+        console.error('Redis cache invalidation error:', err);
+      }
+
+      console.log(`✅ B2B signup submitted successfully for shop ${shop.id}`);
+      return shop;
+    } catch (error) {
+      console.error('❌ V2B2BSignupService.submitB2BSignup error:', error);
+      throw error;
+    }
+  }
+}
+
+module.exports = V2B2BSignupService;
+
+
           if (isV1User) {
             updateData.app_version = 'v2';
             console.log(`📱 Upgrading V1 user to V2 after B2B signup completion`);

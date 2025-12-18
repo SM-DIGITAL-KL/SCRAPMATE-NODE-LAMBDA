@@ -210,6 +210,9 @@ functions:
           path: /api/v2/categories/with-subcategories
           method: GET
       - httpApi:
+          path: /api/v2/categories/incremental-updates
+          method: GET
+      - httpApi:
           path: /api/v2/recycling/stats/{userId}
           method: GET
       - httpApi:
@@ -475,6 +478,65 @@ functions:
           method: GET
       - httpApi:
           path: /api/versionCheck/{version}
+          method: GET
+      - httpApi:
+          path: /api/smstesting
+          method: GET
+      - httpApi:
+          path: /api/PermanentDelete
+          method: POST
+      - httpApi:
+          path: /api/failedJobs
+          method: POST
+      - httpApi:
+          path: /api/clear_redis_cache
+          method: POST
+      - httpApi:
+          path: /api/metrics
+          method: GET
+
+  # ==================== HEALTH CHECK ====================
+  health-service:
+    handler: services/health/handler.handler
+    description: Health check and test endpoints
+    memorySize: 128
+    timeout: 10
+    events:
+      - httpApi:
+          path: /api/health
+          method: GET
+      - httpApi:
+          path: /api/test
+          method: GET
+
+plugins:
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    httpPort: 3000
+    noPrependStageInUrl: true
+
+package:
+  patterns:
+    - '!node_modules/**'
+    - '!public/**'
+    - '!.git/**'
+    - '!*.md'
+    - '!*.txt'
+    - '!.env*'
+    - '!aws.txt'
+    - '!scripts/**'
+    - '!dist/**'
+    - '!.DS_Store'
+    - '!test-*.js'
+    - '!Postman_*.json'
+    - '!nginx.conf'
+    - '!nodemon.json'
+  individually: true
+  excludeDevDependencies: true
+
+
           method: GET
       - httpApi:
           path: /api/smstesting

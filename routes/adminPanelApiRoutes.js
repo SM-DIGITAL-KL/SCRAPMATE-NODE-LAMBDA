@@ -48,6 +48,7 @@ router.get('/admin/dashboard/call-logs', AdminController.dashboardCallLogs);
 // Legacy dashboard endpoint (kept for backward compatibility)
 router.get('/admin/dashboard', AdminController.dashboard);
 router.get('/admin/b2b-users', AdminController.b2bUsers);
+router.get('/admin/customers', AdminController.customers);
 router.get('/admin/b2b-users/:userId', AdminController.getB2BUserDetails);
 router.post('/admin/b2b-users/:userId/approval-status', AdminController.updateB2BApprovalStatus);
 router.get('/admin/b2c-users', AdminController.b2cUsers);
@@ -198,6 +199,10 @@ router.get('/subscription-packages/:id', SubscriptionPackageController.getSubscr
 router.post('/subscription-packages', SubscriptionPackageController.upsertSubscriptionPackage);
 router.put('/subscription-packages/:id', SubscriptionPackageController.updateSubscriptionPackage);
 router.delete('/subscription-packages/:id', SubscriptionPackageController.deleteSubscriptionPackage);
+
+module.exports = router;
+
+
 
 module.exports = router;
 

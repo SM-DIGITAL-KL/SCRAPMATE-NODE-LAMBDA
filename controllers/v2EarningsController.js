@@ -4,6 +4,7 @@
  */
 
 const Order = require('../models/Order');
+const RedisCache = require('../utils/redisCache');
 
 /**
  * Get monthly earnings breakdown for a user
@@ -30,6 +31,23 @@ class V2EarningsController {
 
       const userIdNum = parseInt(userId);
       const monthsNum = parseInt(months);
+
+      // Check Redis cache first
+      const cacheKey = RedisCache.userKey(userIdNum, `earnings_monthly_${type}_${monthsNum}`);
+      try {
+        const cached = await RedisCache.get(cacheKey);
+        if (cached !== null && cached !== undefined) {
+          console.log('⚡ Monthly earnings breakdown cache hit');
+          return res.json({
+            status: 'success',
+            msg: 'Monthly breakdown retrieved successfully',
+            data: cached,
+            hitBy: 'Redis'
+          });
+        }
+      } catch (err) {
+        console.error('Redis get error:', err);
+      }
 
       // Get orders based on type
       let orders = [];
@@ -101,16 +119,27 @@ class V2EarningsController {
       const totalEarnings = monthlyBreakdown.reduce((sum, month) => sum + month.earnings, 0);
       const totalOrders = monthlyBreakdown.reduce((sum, month) => sum + month.orderCount, 0);
 
+      const result = {
+        monthlyBreakdown,
+        totalEarnings: parseFloat(totalEarnings.toFixed(2)),
+        totalOrders,
+        currency: type === 'delivery' ? 'USD' : 'INR', // Delivery might use USD
+        period: `Last ${monthsNum} months`
+      };
+
+      // Cache the result (cache for 30 minutes - earnings can change with new orders)
+      try {
+        await RedisCache.set(cacheKey, result, 'long');
+        console.log('💾 Monthly earnings breakdown cached');
+      } catch (err) {
+        console.error('Redis cache set error:', err);
+      }
+
       return res.json({
         status: 'success',
         msg: 'Monthly breakdown retrieved successfully',
-        data: {
-          monthlyBreakdown,
-          totalEarnings: parseFloat(totalEarnings.toFixed(2)),
-          totalOrders,
-          currency: type === 'delivery' ? 'USD' : 'INR', // Delivery might use USD
-          period: `Last ${monthsNum} months`
-        }
+        data: result,
+        hitBy: 'DynamoDB'
       });
     } catch (error) {
       console.error('Error fetching monthly breakdown:', error);
@@ -124,6 +153,8 @@ class V2EarningsController {
 }
 
 module.exports = V2EarningsController;
+
+
 
 
 

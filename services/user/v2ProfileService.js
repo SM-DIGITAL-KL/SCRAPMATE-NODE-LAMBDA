@@ -50,6 +50,22 @@ class V2ProfileService {
           created_at: user.created_at,
           updated_at: user.updated_at,
         };
+
+        // Add user object for new/deleted users as well
+        profileData.user = {
+          id: user.id,
+          name: user.name || '',
+          email: user.email || '',
+          phone: user.mob_num ? String(user.mob_num) : '',
+          user_type: userType,
+          app_type: user.app_type || 'vendor_app',
+          app_version: user.app_version || 'v1',
+          profile_image: user.profile_image || user.profile_photo || null,
+          operating_categories: user.operating_categories || [],
+          operating_subcategories: user.operating_subcategories || [],
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+        };
         
         // IMPORTANT: Check if delivery_boy or shop data exists even for new users
         // This allows them to see approval status during signup
@@ -106,8 +122,31 @@ class V2ProfileService {
             };
             console.log(`✅ Added shop data to profile for new user (approval_status: ${shop.approval_status || 'null'})`);
           }
+
+          // Check for customer data (for common users - user_type 'C')
+          const customer = await Customer.findByUserId(userId);
+          if (customer) {
+            profileData.customer = {
+              id: customer.id,
+              name: customer.name || '',
+              email: customer.email || '',
+              contact: customer.contact ? String(customer.contact) : '',
+              address: customer.address || '',
+              location: customer.location || '',
+              state: customer.state || '',
+              place: customer.place || '',
+              language: customer.language || '',
+              profile_photo: customer.profile_photo || null,
+              pincode: customer.pincode || '',
+              lat_log: customer.lat_log || '',
+              place_id: customer.place_id || '',
+              created_at: customer.created_at,
+              updated_at: customer.updated_at,
+            };
+            console.log(`✅ Added customer data to profile for new user`);
+          }
         } catch (err) {
-          console.error('❌ Error fetching delivery/shop data for new user:', err);
+          console.error('❌ Error fetching delivery/shop/customer data for new user:', err);
           // Continue with minimal profile if there's an error
         }
         
@@ -124,6 +163,23 @@ class V2ProfileService {
         user_type: user.user_type,
         app_type: user.app_type || 'vendor_app',
         profile_image: user.profile_image || user.profile_photo || null, // Support both field names
+        created_at: user.created_at,
+        updated_at: user.updated_at,
+      };
+
+      // Add user object for ALL user types (B2B, B2C, Delivery, and regular Users with category 'U')
+      // This ensures all users have a consistent user object in the profile response
+      profileData.user = {
+        id: user.id,
+        name: user.name || '',
+        email: user.email || '',
+        phone: user.mob_num ? String(user.mob_num) : '',
+        user_type: user.user_type,
+        app_type: user.app_type || 'vendor_app',
+        app_version: user.app_version || 'v1',
+        profile_image: user.profile_image || user.profile_photo || null,
+        operating_categories: user.operating_categories || [],
+        operating_subcategories: user.operating_subcategories || [],
         created_at: user.created_at,
         updated_at: user.updated_at,
       };
@@ -192,6 +248,71 @@ class V2ProfileService {
             shop_type: '',
             aadhar_card: null,
             driving_license: null,
+          };
+        }
+      }
+
+      // Add customer data for regular users (user_type 'C' - common users)
+      if (user.user_type === 'C') {
+        try {
+          const customer = await Customer.findByUserId(userId);
+          console.log(`🔍 Customer lookup for user ${userId}:`, customer ? `Found ID ${customer.id}` : 'Not found');
+          
+          if (customer) {
+            profileData.customer = {
+              id: customer.id,
+              name: customer.name || '',
+              email: customer.email || '',
+              contact: customer.contact ? String(customer.contact) : '',
+              address: customer.address || '',
+              location: customer.location || '',
+              state: customer.state || '',
+              place: customer.place || '',
+              language: customer.language || '',
+              profile_photo: customer.profile_photo || null,
+              pincode: customer.pincode || '',
+              lat_log: customer.lat_log || '',
+              place_id: customer.place_id || '',
+              created_at: customer.created_at,
+              updated_at: customer.updated_at,
+            };
+            console.log(`✅ Customer data added to profile:`, profileData.customer);
+          } else {
+            // Always include customer object for regular users, even if record doesn't exist
+            profileData.customer = {
+              id: null,
+              name: user.name || '',
+              email: user.email || '',
+              contact: user.mob_num ? String(user.mob_num) : '',
+              address: '',
+              location: '',
+              state: '',
+              place: '',
+              language: '',
+              profile_photo: null,
+              pincode: '',
+              lat_log: '',
+              place_id: '',
+            };
+            console.log(`⚠️ Customer record not found, using empty customer object`);
+          }
+        } catch (err) {
+          console.error('❌ Error fetching customer data:', err);
+          // Still include empty customer object on error
+          profileData.customer = {
+            id: null,
+            name: user.name || '',
+            email: user.email || '',
+            contact: user.mob_num ? String(user.mob_num) : '',
+            address: '',
+            location: '',
+            state: '',
+            place: '',
+            language: '',
+            profile_photo: null,
+            pincode: '',
+            lat_log: '',
+            place_id: '',
           };
         }
       }
@@ -1300,6 +1421,127 @@ class V2ProfileService {
           console.log(`✅ del_status reset from 2 to 1 for user ${userId}`);
         }
       }
+
+      // Invalidate user caches after user type update
+      try {
+        const userIdStr = String(userId);
+        await RedisCache.delete(RedisCache.userKey(userIdStr, 'profile'));
+        await RedisCache.delete(RedisCache.userKey(userIdStr));
+        await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'users' }));
+        await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'delivery_boy' }));
+        await RedisCache.invalidateTableCache('users');
+        await RedisCache.invalidateTableCache('delivery_boy');
+        console.log('🗑️  Invalidated user caches after user type update');
+      } catch (err) {
+        console.error('Redis cache invalidation error:', err);
+      }
+    }
+
+    // Set approval_status to 'pending' if not already set
+    if (!delivery.approval_status) {
+      const currentTime = new Date().toISOString();
+      const updateData = { approval_status: 'pending' };
+      
+      // Set application_submitted_at when signup is completed for the first time
+      if (!delivery.application_submitted_at) {
+        updateData.application_submitted_at = currentTime;
+        console.log(`📋 Setting application_submitted_at for delivery ${delivery.id}`);
+      }
+      
+      // Set review_initiated_at when status is set to pending for the first time
+      if (!delivery.review_initiated_at) {
+        updateData.review_initiated_at = currentTime;
+        console.log(`📋 Setting review_initiated_at for delivery ${delivery.id}`);
+      }
+      
+      console.log(`📋 Setting approval_status to 'pending' for delivery ${delivery.id}`);
+      await DeliveryBoy.update(delivery.id, updateData);
+      console.log(`✅ Delivery approval_status set to 'pending' for delivery ${delivery.id}`);
+    }
+
+    // Return updated profile
+    return await V2ProfileService.getProfile(userId);
+  }
+
+  /**
+   * Delete user account (soft delete)
+   * @param {string|number} userId - User ID
+   * @returns {Promise<Object>} Deletion result
+   */
+  static async deleteAccount(userId) {
+    try {
+      const user = await User.findById(userId);
+      
+      if (!user) {
+        throw new Error('USER_NOT_FOUND');
+      }
+
+      // Soft delete based on user type
+      if (user.user_type === 'S' || user.user_type === 'R' || user.user_type === 'SR') {
+        const shop = await Shop.findByUserId(userId);
+        if (shop) {
+          await Shop.update(shop.id, { del_status: 2 });
+          console.log(`✅ Soft deleted shop ${shop.id} for user ${userId}`);
+        }
+      } else if (user.user_type === 'D') {
+        const deliveryBoy = await DeliveryBoy.findByUserId(userId);
+        if (deliveryBoy) {
+          await DeliveryBoy.update(deliveryBoy.id, { del_status: 2 });
+          console.log(`✅ Soft deleted delivery boy ${deliveryBoy.id} for user ${userId}`);
+        }
+      } else if (user.user_type === 'C') {
+        const customer = await Customer.findByUserId(userId);
+        if (customer) {
+          await Customer.update(customer.id, { del_status: 2 });
+          console.log(`✅ Soft deleted customer ${customer.id} for user ${userId}`);
+        }
+      }
+
+      // Reset user to new/unregistered state by setting user_type to 'N'
+      await User.updateProfile(userId, { user_type: 'N', del_status: 2 });
+      console.log(`✅ Reset user ${userId} to type 'N' (new/unregistered)`);
+
+      // Invalidate all user-related caches
+      try {
+        const userIdStr = String(userId);
+        await RedisCache.delete(RedisCache.userKey(userIdStr, 'profile'));
+        await RedisCache.delete(RedisCache.userKey(userIdStr));
+        
+        // Invalidate get_user_by_id cache for all possible tables
+        await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'users' }));
+        if (user.user_type === 'S' || user.user_type === 'R' || user.user_type === 'SR') {
+          await RedisCache.delete(RedisCache.dashboardKey('shop', userIdStr));
+          await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'shops' }));
+        } else if (user.user_type === 'D') {
+          await RedisCache.delete(RedisCache.dashboardKey('deliveryboy', userIdStr));
+          await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'delivery_boy' }));
+        }
+        
+        // Invalidate name-based cache if user had a name
+        if (user.name) {
+          await RedisCache.delete(RedisCache.userKey(`name:${user.name}`, 'search'));
+          await RedisCache.delete(RedisCache.userKey(`name:${user.name}`, 'exact'));
+        }
+        
+        console.log(`🗑️  Invalidated all user caches for user_id: ${userIdStr}`);
+      } catch (redisErr) {
+        console.error('Redis cache invalidation error:', redisErr);
+      }
+
+      return {
+        userId: userId,
+        deleted: true,
+        message: 'Account deleted successfully'
+      };
+    } catch (error) {
+      console.error('V2ProfileService.deleteAccount error:', error);
+      throw error;
+    }
+  }
+}
+
+module.exports = V2ProfileService;
+
 
       // Invalidate user caches after user type update
       try {

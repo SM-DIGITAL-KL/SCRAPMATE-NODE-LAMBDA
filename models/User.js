@@ -121,6 +121,11 @@ class User {
       
       console.log(`🔍 findByMobileAndAppType: Searching for mobile ${mobNum} with app_type=${appType}`);
       
+      if (!appType) {
+        console.log('⚠️  appType is null/undefined in findByMobileAndAppType - returning null');
+        return null;
+      }
+      
       let lastKey = null;
       let scanCount = 0;
       
@@ -128,7 +133,7 @@ class User {
         scanCount++;
         const params = {
           TableName: TABLE_NAME,
-          FilterExpression: 'mob_num = :mobile AND app_type = :appType',
+          FilterExpression: 'mob_num = :mobile AND attribute_exists(app_type) AND app_type = :appType',
           ExpressionAttributeValues: {
             ':mobile': mobileValue,
             ':appType': appType
@@ -155,6 +160,7 @@ class User {
       return null;
     } catch (err) {
       console.error('Error in findByMobileAndAppType:', err);
+      console.error('Error stack:', err.stack);
       throw err;
     }
   }
@@ -1213,6 +1219,279 @@ class User {
       };
     } catch (err) {
       console.error('User.getDeliveryUsers error:', err);
+      throw err;
+    }
+  }
+
+  // Get Customers (common users) with pagination (user_type = 'C')
+  static async getCustomers(page = 1, limit = 10, search = null) {
+    try {
+      const client = getDynamoDBClient();
+      const pageNumber = parseInt(page) || 1;
+      const pageSize = parseInt(limit) || 20;
+      const skip = (pageNumber - 1) * pageSize;
+      
+      let lastKey = null;
+      const allUsers = [];
+      
+      // Collect all Customer users (user_type = 'C')
+      // This includes both old customers (no app_type) and new customer_app users (app_type = 'customer_app')
+      console.log('🔍 Scanning users for user_type = "C" (Customers - including customer_app users)...');
+      do {
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'user_type = :userType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+          ExpressionAttributeValues: {
+            ':userType': 'C',
+            ':deleted': 2
+          }
+        };
+        
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        
+        if (response.Items) {
+          // Filter to include only customer_app users or users without app_type (old customers)
+          // Exclude vendor_app users even if they have user_type = 'C' (shouldn't happen, but safety check)
+          const customerUsers = response.Items.filter(user => 
+            !user.app_type || 
+            user.app_type === 'customer_app' || 
+            user.app_type === '' ||
+            user.app_type === null
+          );
+          allUsers.push(...customerUsers);
+        }
+        
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+      
+      // Sort by created_at descending (newest first)
+      allUsers.sort((a, b) => {
+        let dateA = a.created_at ? new Date(a.created_at) : null;
+        let dateB = b.created_at ? new Date(b.created_at) : null;
+        
+        if (!dateA || isNaN(dateA.getTime())) {
+          dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
+        }
+        if (!dateB || isNaN(dateB.getTime())) {
+          dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
+        }
+        
+        return dateB.getTime() - dateA.getTime();
+      });
+      
+      console.log(`✅ Sorted ${allUsers.length} Customer users by newest first`);
+      
+      // Get total count
+      const total = allUsers.length;
+      
+      // Apply pagination (if limit is very large, return all users)
+      const paginatedUsers = pageSize >= 999999 ? allUsers : allUsers.slice(skip, skip + pageSize);
+      
+      // Remove password from results
+      const usersWithoutPassword = paginatedUsers.map(user => {
+        const { password: _, ...userWithoutPassword } = user;
+        return userWithoutPassword;
+      });
+      
+      return {
+        users: usersWithoutPassword,
+        total: total,
+        page: pageNumber,
+        limit: pageSize,
+        totalPages: Math.ceil(total / pageSize),
+        hasMore: skip + pageSize < total
+      };
+    } catch (err) {
+      console.error('User.getCustomers error:', err);
+      throw err;
+    }
+  }
+}
+
+module.exports = User;
+      throw err;
+    }
+  }
+
+  // Get Delivery users with pagination (user_type = 'D')
+  static async getDeliveryUsers(page = 1, limit = 10, search = null) {
+    try {
+      const client = getDynamoDBClient();
+      const pageNumber = parseInt(page) || 1;
+      const pageSize = parseInt(limit) || 20;
+      const skip = (pageNumber - 1) * pageSize;
+      
+      let lastKey = null;
+      const allUsers = [];
+      
+      // Collect all Delivery users (user_type = 'D')
+      console.log('🔍 Scanning users for user_type = "D" (Delivery)...');
+      do {
+        const params = {
+          TableName: TABLE_NAME
+        };
+        
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        
+        if (response.Items) {
+          // Filter for Delivery users: user_type = 'D'
+          const deliveryUsers = response.Items.filter(user => {
+            return user.user_type === 'D';
+          });
+          
+          allUsers.push(...deliveryUsers);
+        }
+        
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+      
+      // Sort by created_at descending (newest first)
+      allUsers.sort((a, b) => {
+        // Handle missing or invalid dates - use created_at or fallback to updated_at
+        let dateA = a.created_at ? new Date(a.created_at) : null;
+        let dateB = b.created_at ? new Date(b.created_at) : null;
+        
+        // If dates are invalid or missing, use updated_at as fallback
+        if (!dateA || isNaN(dateA.getTime())) {
+          dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
+        }
+        if (!dateB || isNaN(dateB.getTime())) {
+          dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
+        }
+        
+        // Sort descending (newest first)
+        return dateB.getTime() - dateA.getTime();
+      });
+      
+      console.log(`✅ Sorted ${allUsers.length} Delivery users by newest first`);
+      if (allUsers.length > 0) {
+        console.log(`   First user: ${allUsers[0].name} (created: ${allUsers[0].created_at})`);
+        if (allUsers.length > 1) {
+          console.log(`   Last user: ${allUsers[allUsers.length - 1].name} (created: ${allUsers[allUsers.length - 1].created_at})`);
+        }
+      }
+      
+      // Get total count
+      const total = allUsers.length;
+      
+      // Apply pagination (if limit is very large, return all users)
+      const paginatedUsers = pageSize >= 999999 ? allUsers : allUsers.slice(skip, skip + pageSize);
+      
+      // Remove password from results
+      const usersWithoutPassword = paginatedUsers.map(user => {
+        const { password: _, ...userWithoutPassword } = user;
+        return userWithoutPassword;
+      });
+      
+      return {
+        users: usersWithoutPassword,
+        total: total,
+        page: pageNumber,
+        limit: pageSize,
+        totalPages: Math.ceil(total / pageSize),
+        hasMore: skip + pageSize < total
+      };
+    } catch (err) {
+      console.error('User.getDeliveryUsers error:', err);
+      throw err;
+    }
+  }
+
+  // Get Customers (common users) with pagination (user_type = 'C')
+  static async getCustomers(page = 1, limit = 10, search = null) {
+    try {
+      const client = getDynamoDBClient();
+      const pageNumber = parseInt(page) || 1;
+      const pageSize = parseInt(limit) || 20;
+      const skip = (pageNumber - 1) * pageSize;
+      
+      let lastKey = null;
+      const allUsers = [];
+      
+      // Collect all Customer users (user_type = 'C')
+      // This includes both old customers (no app_type) and new customer_app users (app_type = 'customer_app')
+      console.log('🔍 Scanning users for user_type = "C" (Customers - including customer_app users)...');
+      do {
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'user_type = :userType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+          ExpressionAttributeValues: {
+            ':userType': 'C',
+            ':deleted': 2
+          }
+        };
+        
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        
+        if (response.Items) {
+          // Filter to include only customer_app users or users without app_type (old customers)
+          // Exclude vendor_app users even if they have user_type = 'C' (shouldn't happen, but safety check)
+          const customerUsers = response.Items.filter(user => 
+            !user.app_type || 
+            user.app_type === 'customer_app' || 
+            user.app_type === '' ||
+            user.app_type === null
+          );
+          allUsers.push(...customerUsers);
+        }
+        
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+      
+      // Sort by created_at descending (newest first)
+      allUsers.sort((a, b) => {
+        let dateA = a.created_at ? new Date(a.created_at) : null;
+        let dateB = b.created_at ? new Date(b.created_at) : null;
+        
+        if (!dateA || isNaN(dateA.getTime())) {
+          dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
+        }
+        if (!dateB || isNaN(dateB.getTime())) {
+          dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
+        }
+        
+        return dateB.getTime() - dateA.getTime();
+      });
+      
+      console.log(`✅ Sorted ${allUsers.length} Customer users by newest first`);
+      
+      // Get total count
+      const total = allUsers.length;
+      
+      // Apply pagination (if limit is very large, return all users)
+      const paginatedUsers = pageSize >= 999999 ? allUsers : allUsers.slice(skip, skip + pageSize);
+      
+      // Remove password from results
+      const usersWithoutPassword = paginatedUsers.map(user => {
+        const { password: _, ...userWithoutPassword } = user;
+        return userWithoutPassword;
+      });
+      
+      return {
+        users: usersWithoutPassword,
+        total: total,
+        page: pageNumber,
+        limit: pageSize,
+        totalPages: Math.ceil(total / pageSize),
+        hasMore: skip + pageSize < total
+      };
+    } catch (err) {
+      console.error('User.getCustomers error:', err);
       throw err;
     }
   }
