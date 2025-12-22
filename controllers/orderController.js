@@ -321,12 +321,22 @@ class OrderController {
         });
       }
 
-      // Get last order number using model method
+      // Get last order number and generate new one in standard format
       const lastOrderNumber = await Order.getLastOrderNumber();
       let orderNumber = 10000;
-      if (lastOrderNumber) {
-        orderNumber = lastOrderNumber + 1;
+      if (lastOrderNumber && !isNaN(lastOrderNumber)) {
+        const lastNum = typeof lastOrderNumber === 'string' ? parseInt(lastOrderNumber) : lastOrderNumber;
+        // Ensure order number is in valid range (10000 to 999999999)
+        if (lastNum >= 10000 && lastNum < 999999999) {
+          orderNumber = lastNum + 1;
+        } else {
+          // If last order number is invalid, start from 10000
+          console.log(`⚠️  Invalid last order number (${lastOrderNumber}), starting from 10000`);
+          orderNumber = 10000;
+        }
       }
+      
+      console.log(`📝 Generated order number: ${orderNumber} (last was: ${lastOrderNumber || 'none'})`);
 
       const orderData = {
         order_number: orderNumber,

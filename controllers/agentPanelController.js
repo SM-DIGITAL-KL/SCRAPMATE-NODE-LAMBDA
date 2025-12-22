@@ -582,8 +582,3 @@ class AgentPanelController {
 }
 
 module.exports = AgentPanelController;
-
-
-
-module.exports = AgentPanelController;
-

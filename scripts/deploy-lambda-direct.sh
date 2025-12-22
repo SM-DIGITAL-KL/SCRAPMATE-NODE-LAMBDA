@@ -27,6 +27,37 @@ export SESSION_SECRET=${SESSION_SECRET:-'scrapmate-session-secret-change-in-prod
 export JWT_SECRET=${JWT_SECRET:-'scrapmate-jwt-secret-change-in-production'}
 export S3_BUCKET_NAME=${S3_BUCKET_NAME:-'scrapmate-images'}
 
+# Load Firebase service account - prioritize vendor app (partner) service account
+if [ -f "scrapmate-partner-android-firebase-adminsdk-fbsvc-709bbce0d4.json" ]; then
+    echo "📋 Loading vendor app Firebase service account from file..."
+    export FIREBASE_SERVICE_ACCOUNT=$(cat scrapmate-partner-android-firebase-adminsdk-fbsvc-709bbce0d4.json | jq -c .)
+    if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+        echo "⚠️  Warning: Failed to load vendor app Firebase service account from file"
+    else
+        echo "✅ Vendor app Firebase service account loaded (for vendor notifications)"
+    fi
+elif [ -f "scrapmate-partner-android-firebase-adminsdk-fbsvc-94a2c243ee.json" ]; then
+    echo "📋 Loading vendor app Firebase service account from file (old)..."
+    export FIREBASE_SERVICE_ACCOUNT=$(cat scrapmate-partner-android-firebase-adminsdk-fbsvc-94a2c243ee.json | jq -c .)
+    if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+        echo "⚠️  Warning: Failed to load vendor app Firebase service account from file"
+    else
+        echo "✅ Vendor app Firebase service account loaded (for vendor notifications)"
+    fi
+elif [ -f "firebase-service-account.json" ]; then
+    echo "📋 Loading customer app Firebase service account from file..."
+    export FIREBASE_SERVICE_ACCOUNT=$(cat firebase-service-account.json | jq -c .)
+    if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+        echo "⚠️  Warning: Failed to load Firebase service account from file"
+    else
+        echo "✅ Customer app Firebase service account loaded"
+    fi
+elif [ -n "$FIREBASE_SERVICE_ACCOUNT" ]; then
+    echo "✅ Using FIREBASE_SERVICE_ACCOUNT from environment"
+else
+    echo "⚠️  Warning: FIREBASE_SERVICE_ACCOUNT not set - FCM notifications may not work"
+fi
+
 echo "📦 Creating deployment package..."
 # Create a zip file with the code
 ZIP_FILE="/tmp/${FUNCTION_NAME}-$(date +%s).zip"
@@ -46,6 +77,9 @@ zip -r "$ZIP_FILE" . \
     -i "app.js" \
     -i "lambda.js" \
     -i "package.json" \
+    -i "firebase-service-account.json" \
+    -i "scrapmate-partner-android-firebase-adminsdk-fbsvc-709bbce0d4.json" \
+    -i "scrapmate-partner-android-firebase-adminsdk-fbsvc-94a2c243ee.json" \
     -x "*.git*" \
     -x "node_modules/.cache/*" \
     -x "node_modules/playwright-core/*" \
@@ -175,23 +209,28 @@ if [ $? -eq 0 ]; then
     
     # Update function configuration
     echo "⚙️  Updating function configuration..."
+    
+    # Build environment variables JSON
+    ENV_JSON="/tmp/lambda-env-${STAGE}-$(date +%s).json"
+    ./scripts/build-env-json.sh "$ENV_JSON"
+    
+    if [ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]; then
+        echo "   ✅ Including FIREBASE_SERVICE_ACCOUNT in environment variables"
+    else
+        echo "   ⚠️  FIREBASE_SERVICE_ACCOUNT not set - FCM notifications may not work"
+    fi
+    
     aws lambda update-function-configuration \
         --function-name "$FUNCTION_NAME" \
         --runtime nodejs20.x \
         --handler lambda.handler \
         --timeout 30 \
         --memory-size 1024 \
-        --environment "Variables={
-            NODE_ENV=production,
-            API_KEY=$API_KEY,
-            SESSION_SECRET=$SESSION_SECRET,
-            JWT_SECRET=$JWT_SECRET,
-            S3_BUCKET_NAME=$S3_BUCKET_NAME,
-            REDIS_URL=${REDIS_URL:-''},
-            REDIS_TOKEN=${REDIS_TOKEN:-''}
-        }" \
+        --environment "file://$ENV_JSON" \
         --region "$REGION" \
         --output json > /tmp/lambda-config.json 2>&1
+    
+    rm -f "$ENV_JSON"
     
     if [ $? -ne 0 ]; then
         echo "⚠️  Warning: Failed to update configuration (may need IAM permissions)"
@@ -235,6 +274,16 @@ else
         echo "✅ Using existing role: $ROLE_ARN"
     fi
     
+    # Build environment variables JSON
+    ENV_JSON="/tmp/lambda-env-create-${STAGE}-$(date +%s).json"
+    ./scripts/build-env-json.sh "$ENV_JSON"
+    
+    if [ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]; then
+        echo "   ✅ Including FIREBASE_SERVICE_ACCOUNT in environment variables"
+    else
+        echo "   ⚠️  FIREBASE_SERVICE_ACCOUNT not set - FCM notifications may not work"
+    fi
+    
     # Create function
     echo "📤 Creating Lambda function..."
     if [ "$USE_S3" = true ]; then
@@ -246,15 +295,7 @@ else
             --code "S3Bucket=${S3_BUCKET},S3Key=${S3_KEY}" \
             --timeout 30 \
             --memory-size 1024 \
-            --environment "Variables={
-                NODE_ENV=production,
-                API_KEY=$API_KEY,
-                SESSION_SECRET=$SESSION_SECRET,
-                JWT_SECRET=$JWT_SECRET,
-                S3_BUCKET_NAME=$S3_BUCKET_NAME,
-                REDIS_URL=${REDIS_URL:-''},
-                REDIS_TOKEN=${REDIS_TOKEN:-''}
-            }" \
+            --environment "file://$ENV_JSON" \
             --region "$REGION" \
             --output json > /tmp/lambda-create.json 2>&1
     else
@@ -266,18 +307,12 @@ else
             --zip-file "fileb://$ZIP_FILE" \
             --timeout 30 \
             --memory-size 1024 \
-            --environment "Variables={
-                NODE_ENV=production,
-                API_KEY=$API_KEY,
-                SESSION_SECRET=$SESSION_SECRET,
-                JWT_SECRET=$JWT_SECRET,
-                S3_BUCKET_NAME=$S3_BUCKET_NAME,
-                REDIS_URL=${REDIS_URL:-''},
-                REDIS_TOKEN=${REDIS_TOKEN:-''}
-            }" \
+            --environment "file://$ENV_JSON" \
             --region "$REGION" \
             --output json > /tmp/lambda-create.json 2>&1
     fi
+    
+    rm -f "$ENV_JSON"
     
     if [ $? -ne 0 ]; then
         echo "❌ Failed to create function"

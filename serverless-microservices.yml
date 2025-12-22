@@ -213,6 +213,9 @@ functions:
           path: /api/v2/categories/incremental-updates
           method: GET
       - httpApi:
+          path: /api/v2/categories/refresh-image
+          method: POST
+      - httpApi:
           path: /api/v2/recycling/stats/{userId}
           method: GET
       - httpApi:

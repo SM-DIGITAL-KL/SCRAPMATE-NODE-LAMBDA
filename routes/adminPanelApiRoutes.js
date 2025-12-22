@@ -201,8 +201,3 @@ router.put('/subscription-packages/:id', SubscriptionPackageController.updateSub
 router.delete('/subscription-packages/:id', SubscriptionPackageController.deleteSubscriptionPackage);
 
 module.exports = router;
-
-
-
-module.exports = router;
-

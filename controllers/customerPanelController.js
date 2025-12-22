@@ -143,20 +143,57 @@ class CustomerPanelController {
       const statusId = status_id ? parseInt(status_id) : null;
       const results = await Order.getAll(statusId);
       console.log(`✅ viewOrders: Found ${results.length} orders`);
-      if (results.length > 0) {
+      
+      // Enrich orders with app_version from customer data
+      const enrichedResults = await Promise.all(results.map(async (order) => {
+        try {
+          // Try to get app_version from customer_id
+          if (order.customer_id) {
+            const customer = await User.findById(order.customer_id);
+            if (customer && customer.app_version) {
+              order.app_version = customer.app_version;
+            }
+          }
+          // Also try to parse from customerdetails if it's a JSON string
+          if (!order.app_version && order.customerdetails) {
+            try {
+              let customerDetails = order.customerdetails;
+              if (typeof customerDetails === 'string') {
+                customerDetails = JSON.parse(customerDetails);
+              }
+              if (customerDetails && (customerDetails.app_version || customerDetails.appVersion)) {
+                order.app_version = customerDetails.app_version || customerDetails.appVersion;
+              }
+            } catch (e) {
+              // Ignore parsing errors
+            }
+          }
+          // Default to v1 if not found
+          if (!order.app_version) {
+            order.app_version = 'v1';
+          }
+        } catch (err) {
+          // If error fetching customer, default to v1
+          order.app_version = 'v1';
+        }
+        return order;
+      }));
+      
+      if (enrichedResults.length > 0) {
         console.log('   Sample order:', {
-          id: results[0].id,
-          order_number: results[0].order_number,
-          status: results[0].status,
-          customer_id: results[0].customer_id,
-          shop_id: results[0].shop_id
+          id: enrichedResults[0].id,
+          order_number: enrichedResults[0].order_number,
+          status: enrichedResults[0].status,
+          customer_id: enrichedResults[0].customer_id,
+          shop_id: enrichedResults[0].shop_id,
+          app_version: enrichedResults[0].app_version
         });
       }
       
       const response = {
         status: 'success',
         msg: 'Orders retrieved',
-        data: results 
+        data: enrichedResults 
       };
       
       // Cache orders list for 5 minutes

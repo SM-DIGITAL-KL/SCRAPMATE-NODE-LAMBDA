@@ -13,9 +13,10 @@ class V2ProfileService {
   /**
    * Get user profile
    * @param {string|number} userId - User ID
+   * @param {string} requestingAppType - App type making the request ('customer_app' | 'vendor_app' | null)
    * @returns {Promise<Object>} User profile data
    */
-  static async getProfile(userId) {
+  static async getProfile(userId, requestingAppType = null) {
     try {
       const user = await User.findById(userId);
       
@@ -69,10 +70,13 @@ class V2ProfileService {
         
         // IMPORTANT: Check if delivery_boy or shop data exists even for new users
         // This allows them to see approval status during signup
+        // BUT: Only include this data for vendor_app users, not customer_app
+        const isVendorAppForNewUser = (user.app_type || 'vendor_app') === 'vendor_app';
         try {
-          // Check for delivery_boy data (for delivery signup)
-          const deliveryBoy = await DeliveryBoy.findByUserId(userId);
-          if (deliveryBoy) {
+          // Check for delivery_boy data (for delivery signup) - ONLY for vendor_app
+          if (isVendorAppForNewUser) {
+            const deliveryBoy = await DeliveryBoy.findByUserId(userId);
+            if (deliveryBoy) {
             profileData.delivery = {
               id: deliveryBoy.id,
               name: deliveryBoy.name || '',
@@ -93,11 +97,13 @@ class V2ProfileService {
             };
             profileData.delivery_boy = profileData.delivery;
             console.log(`✅ Added delivery data to profile for new user (approval_status: ${deliveryBoy.approval_status || 'null'})`);
+            }
           }
           
-          // Check for shop data (for B2B/B2C signup)
-          const shop = await Shop.findByUserId(userId);
-          if (shop) {
+          // Check for shop data (for B2B/B2C signup) - ONLY for vendor_app
+          if (isVendorAppForNewUser) {
+            const shop = await Shop.findByUserId(userId);
+            if (shop) {
             profileData.shop = {
               id: shop.id,
               shopname: shop.shopname || '',
@@ -121,9 +127,11 @@ class V2ProfileService {
               review_initiated_at: shop.review_initiated_at || null,
             };
             console.log(`✅ Added shop data to profile for new user (approval_status: ${shop.approval_status || 'null'})`);
+            }
           }
 
           // Check for customer data (for common users - user_type 'C')
+          // Customer data should be available for both vendor_app and customer_app
           const customer = await Customer.findByUserId(userId);
           if (customer) {
             profileData.customer = {
@@ -155,13 +163,21 @@ class V2ProfileService {
 
       // Get additional profile data based on user type
       // Name will be updated based on user type (company_name for B2B, delivery name for Delivery)
+      // IMPORTANT: Use requestingAppType if provided, otherwise fall back to database app_type
+      // This ensures customer_app requests get customer data even if DB has vendor_app
+      const userAppType = user.app_type || 'vendor_app';
+      // Use requesting app type if provided (from request header/query), otherwise use DB app_type
+      const effectiveAppType = requestingAppType || userAppType;
+      // For customer_app requests, always treat as user_type 'C' regardless of database value
+      const effectiveUserType = effectiveAppType === 'customer_app' ? 'C' : user.user_type;
+      
       let profileData = {
         id: user.id,
         name: user.name || '', // Will be updated for B2B and Delivery users
         email: user.email || '',
         phone: user.mob_num ? String(user.mob_num) : '',
-        user_type: user.user_type,
-        app_type: user.app_type || 'vendor_app',
+        user_type: effectiveUserType, // Use 'C' for customer_app requests, actual type for vendor_app
+        app_type: effectiveAppType, // Use requesting app type, not DB app_type
         profile_image: user.profile_image || user.profile_photo || null, // Support both field names
         created_at: user.created_at,
         updated_at: user.updated_at,
@@ -169,13 +185,14 @@ class V2ProfileService {
 
       // Add user object for ALL user types (B2B, B2C, Delivery, and regular Users with category 'U')
       // This ensures all users have a consistent user object in the profile response
+      // For customer_app requests, use effectiveUserType ('C') instead of actual user_type
       profileData.user = {
         id: user.id,
         name: user.name || '',
         email: user.email || '',
         phone: user.mob_num ? String(user.mob_num) : '',
-        user_type: user.user_type,
-        app_type: user.app_type || 'vendor_app',
+        user_type: effectiveUserType, // Use 'C' for customer_app requests
+        app_type: effectiveAppType, // Use requesting app type
         app_version: user.app_version || 'v1',
         profile_image: user.profile_image || user.profile_photo || null,
         operating_categories: user.operating_categories || [],
@@ -184,8 +201,11 @@ class V2ProfileService {
         updated_at: user.updated_at,
       };
 
-      // Add shop data for B2B/B2C users
-      if (user.user_type === 'S' || user.user_type === 'R' || user.user_type === 'SR') {
+      // Add shop data for B2B/B2C users - ONLY for vendor_app requests
+      // Don't show shop data in customer_app even if user_type is S/R/SR
+      // Use effectiveAppType and effectiveUserType to ensure customer_app requests never get shop data
+      const isVendorApp = effectiveAppType === 'vendor_app';
+      if ((effectiveUserType === 'S' || effectiveUserType === 'R' || effectiveUserType === 'SR') && isVendorApp) {
         try {
           const shop = await Shop.findByUserId(userId);
           console.log(`🔍 Shop lookup for user ${userId}:`, shop ? `Found ID ${shop.id}` : 'Not found');
@@ -223,7 +243,25 @@ class V2ProfileService {
             
             console.log(`✅ Shop data added to profile:`, profileData.shop);
           } else {
-            // Always include shop object for B2B/B2C users, even if record doesn't exist
+            // Only include empty shop object for vendor_app users, not customer_app
+            if (isVendorApp) {
+              profileData.shop = {
+                id: null,
+                shopname: user.name || '',
+                ownername: '',
+                address: '',
+                contact: '',
+                shop_type: '',
+                aadhar_card: null,
+                driving_license: null,
+              };
+              console.log(`⚠️ Shop record not found, using empty shop object`);
+            }
+          }
+        } catch (err) {
+          console.error('❌ Error fetching shop data:', err);
+          // Only include empty shop object for vendor_app users, not customer_app
+          if (isVendorApp) {
             profileData.shop = {
               id: null,
               shopname: user.name || '',
@@ -234,26 +272,13 @@ class V2ProfileService {
               aadhar_card: null,
               driving_license: null,
             };
-            console.log(`⚠️ Shop record not found, using empty shop object`);
           }
-        } catch (err) {
-          console.error('❌ Error fetching shop data:', err);
-          // Still include empty shop object on error
-          profileData.shop = {
-            id: null,
-            shopname: user.name || '',
-            ownername: '',
-            address: '',
-            contact: '',
-            shop_type: '',
-            aadhar_card: null,
-            driving_license: null,
-          };
         }
       }
 
       // Add customer data for regular users (user_type 'C' - common users)
-      if (user.user_type === 'C') {
+      // For customer_app, always show customer data (effectiveUserType will be 'C')
+      if (effectiveUserType === 'C') {
         try {
           const customer = await Customer.findByUserId(userId);
           console.log(`🔍 Customer lookup for user ${userId}:`, customer ? `Found ID ${customer.id}` : 'Not found');
@@ -317,8 +342,10 @@ class V2ProfileService {
         }
       }
 
-      // Add delivery boy data for Delivery users
-      if (user.user_type === 'D') {
+      // Add delivery boy data for Delivery users - ONLY for vendor_app requests
+      // Don't show delivery data in customer_app even if user_type is D
+      // Use effectiveAppType and effectiveUserType to ensure customer_app requests never get delivery data
+      if (effectiveUserType === 'D' && isVendorApp) {
         try {
           const deliveryBoy = await DeliveryBoy.findByUserId(userId);
           console.log(`🔍 Delivery boy lookup for user ${userId}:`, deliveryBoy ? `Found ID ${deliveryBoy.id}` : 'Not found');
@@ -353,44 +380,66 @@ class V2ProfileService {
             
             console.log(`✅ Delivery boy data added to profile:`, profileData.delivery);
           } else {
-            // Always include delivery object for Delivery users, even if record doesn't exist
+            // Only include empty delivery object for vendor_app users, not customer_app
+            if (isVendorApp) {
+              profileData.delivery = {
+                id: null,
+                name: user.name || '',
+                address: '',
+                contact: '',
+                delivery_mode: 'deliver', // Default to 'deliver' if record doesn't exist
+                is_online: false, // Default to offline if record doesn't exist
+                aadhar_card: null,
+                driving_license: null,
+                vehicle_type: null,
+                vehicle_model: null,
+                vehicle_registration_number: null,
+                approval_status: null,
+                rejection_reason: null,
+              };
+              // Also add as delivery_boy for backward compatibility
+              profileData.delivery_boy = profileData.delivery;
+              console.log(`⚠️ Delivery boy record not found, using empty delivery object`);
+            }
+          }
+        } catch (err) {
+          console.error('❌ Error fetching delivery boy data:', err);
+          // Only include empty delivery object for vendor_app users, not customer_app
+          if (isVendorApp) {
             profileData.delivery = {
               id: null,
               name: user.name || '',
               address: '',
               contact: '',
-              delivery_mode: 'deliver', // Default to 'deliver' if record doesn't exist
-              is_online: false, // Default to offline if record doesn't exist
+              delivery_mode: 'deliver',
+              is_online: false,
               aadhar_card: null,
               driving_license: null,
-              vehicle_type: null,
-              vehicle_model: null,
-              vehicle_registration_number: null,
-              approval_status: null,
-              rejection_reason: null,
             };
-            // Also add as delivery_boy for backward compatibility
             profileData.delivery_boy = profileData.delivery;
-            console.log(`⚠️ Delivery boy record not found, using empty delivery object`);
           }
-        } catch (err) {
-          console.error('❌ Error fetching delivery boy data:', err);
-          // Still include empty delivery object on error
-          profileData.delivery = {
-            id: null,
-            name: user.name || '',
-            address: '',
-            contact: '',
-            delivery_mode: 'deliver',
-            is_online: false,
-            aadhar_card: null,
-            driving_license: null,
-          };
         }
       }
 
       // Calculate profile completion percentage
       profileData.completion_percentage = this.calculateCompletion(profileData);
+
+      // Final safety check: Remove shop/delivery data if app_type is customer_app
+      // This ensures no vendor data leaks to customer_app even if something went wrong above
+      // Also ensure user_type is 'C' for customer_app requests (even if DB has 'D' or other types)
+      const finalAppType = profileData.app_type || 'vendor_app';
+      if (finalAppType !== 'vendor_app') {
+        // Remove vendor-specific data for customer_app
+        delete profileData.shop;
+        delete profileData.delivery;
+        delete profileData.delivery_boy;
+        // Force user_type to 'C' for customer_app (override any 'D', 'S', 'R', 'SR' from DB)
+        profileData.user_type = 'C';
+        if (profileData.user) {
+          profileData.user.user_type = 'C';
+        }
+        console.log(`🔒 Service: Removed vendor data and set user_type to 'C' for ${finalAppType} request (DB user_type: ${user.user_type}, DB app_type: ${userAppType}, requesting app: ${requestingAppType || 'none'})`);
+      }
 
       return profileData;
     } catch (error) {
@@ -403,9 +452,10 @@ class V2ProfileService {
    * Update user profile
    * @param {string|number} userId - User ID
    * @param {Object} updateData - Data to update
+   * @param {string} requestingAppType - App type making the request ('customer_app' | 'vendor_app' | null)
    * @returns {Promise<Object>} Updated user profile
    */
-  static async updateProfile(userId, updateData) {
+  static async updateProfile(userId, updateData, requestingAppType = null) {
     try {
       const user = await User.findById(userId);
       
@@ -415,7 +465,10 @@ class V2ProfileService {
 
       // Prepare user update data
       const userUpdateData = {};
-      if (updateData.name !== undefined) userUpdateData.name = updateData.name;
+      if (updateData.name !== undefined) {
+        userUpdateData.name = updateData.name;
+        console.log(`📝 [updateProfile] Updating name for user ${userId}:`, updateData.name);
+      }
       if (updateData.email !== undefined) {
         // Check email uniqueness if changing
         if (updateData.email !== user.email) {
@@ -425,6 +478,7 @@ class V2ProfileService {
           }
         }
         userUpdateData.email = updateData.email;
+        console.log(`📝 [updateProfile] Updating email for user ${userId}:`, updateData.email);
       }
       if (updateData.profile_image !== undefined) {
         userUpdateData.profile_image = updateData.profile_image;
@@ -434,7 +488,15 @@ class V2ProfileService {
 
       // Update user if there's data to update
       if (Object.keys(userUpdateData).length > 0) {
+        console.log(`💾 [updateProfile] Saving user update data for user ${userId}:`, JSON.stringify(userUpdateData, null, 2));
         await User.updateProfile(userId, userUpdateData);
+        console.log(`✅ [updateProfile] User ${userId} updated successfully`);
+        
+        // Verify the update
+        const updatedUser = await User.findById(userId);
+        console.log(`✅ [updateProfile] Verified user ${userId} after update - name: ${updatedUser?.name}, email: ${updatedUser?.email}`);
+      } else {
+        console.log(`⚠️ [updateProfile] No user data to update for user ${userId}`);
       }
 
       // Update shop data for B2B/B2C users (including new users 'N' who are completing signup)
@@ -460,6 +522,40 @@ class V2ProfileService {
               address: updateData.shop.address || '',
               contact: updateData.shop.contact || '',
             };
+            
+            // Include location fields if provided
+            if (updateData.shop.lat_log !== undefined && updateData.shop.lat_log !== null && updateData.shop.lat_log !== '') {
+              shopData.lat_log = updateData.shop.lat_log;
+              console.log(`📝 Setting shop lat_log:`, shopData.lat_log);
+            }
+            if (updateData.shop.latitude !== undefined && updateData.shop.latitude !== null) {
+              const lat = typeof updateData.shop.latitude === 'string' ? parseFloat(updateData.shop.latitude) : updateData.shop.latitude;
+              if (!isNaN(lat)) {
+                shopData.latitude = lat;
+                console.log(`📝 Setting shop latitude:`, lat);
+              }
+            }
+            if (updateData.shop.longitude !== undefined && updateData.shop.longitude !== null) {
+              const lng = typeof updateData.shop.longitude === 'string' ? parseFloat(updateData.shop.longitude) : updateData.shop.longitude;
+              if (!isNaN(lng)) {
+                shopData.longitude = lng;
+                console.log(`📝 Setting shop longitude:`, lng);
+              }
+            }
+            
+            // Ensure lat_log is created from latitude/longitude if not provided
+            if (!shopData.lat_log && shopData.latitude !== undefined && shopData.longitude !== undefined) {
+              shopData.lat_log = `${shopData.latitude},${shopData.longitude}`;
+              console.log(`📝 Created lat_log from latitude/longitude: ${shopData.lat_log}`);
+            }
+            
+            // Include other location-related fields
+            if (updateData.shop.pincode !== undefined) shopData.pincode = updateData.shop.pincode || '';
+            if (updateData.shop.place_id !== undefined) shopData.place_id = updateData.shop.place_id || '';
+            if (updateData.shop.state !== undefined) shopData.state = updateData.shop.state || '';
+            if (updateData.shop.language !== undefined) shopData.language = updateData.shop.language || '';
+            if (updateData.shop.place !== undefined) shopData.place = updateData.shop.place || '';
+            if (updateData.shop.location !== undefined) shopData.location = updateData.shop.location || '';
             
             // Determine shop_type based on user type and signup context
             // For B2C signup (user_type N or R), set shop_type = 3 (Retailer B2C)
@@ -493,6 +589,9 @@ class V2ProfileService {
             }
             shop = await Shop.create(shopData);
             console.log(`✅ Shop created with ID ${shop.id}, shop_type: ${shop.shop_type}, address:`, shop.address);
+            if (shopData.lat_log) {
+              console.log(`✅ Shop location set: ${shopData.lat_log}`);
+            }
           }
           
           // Update existing shop
@@ -521,6 +620,76 @@ class V2ProfileService {
             if (updateData.shop.driving_license !== undefined) {
               shopUpdateData.driving_license = updateData.shop.driving_license;
               console.log(`📝 Updating shop ${shop.id} driving_license`);
+            }
+            
+            // Update location fields - lat_log, latitude, longitude
+            let parsedLatitude = undefined;
+            let parsedLongitude = undefined;
+            
+            if (updateData.shop.latitude !== undefined && updateData.shop.latitude !== null && updateData.shop.latitude !== '') {
+              parsedLatitude = typeof updateData.shop.latitude === 'string' ? parseFloat(updateData.shop.latitude) : updateData.shop.latitude;
+              if (!isNaN(parsedLatitude)) {
+                shopUpdateData.latitude = parsedLatitude;
+                console.log(`📝 Updating shop ${shop.id} latitude to:`, parsedLatitude);
+              }
+            }
+            
+            if (updateData.shop.longitude !== undefined && updateData.shop.longitude !== null && updateData.shop.longitude !== '') {
+              parsedLongitude = typeof updateData.shop.longitude === 'string' ? parseFloat(updateData.shop.longitude) : updateData.shop.longitude;
+              if (!isNaN(parsedLongitude)) {
+                shopUpdateData.longitude = parsedLongitude;
+                console.log(`📝 Updating shop ${shop.id} longitude to:`, parsedLongitude);
+              }
+            }
+            
+            // Handle lat_log: if provided, use it; otherwise create from latitude/longitude
+            if (updateData.shop.lat_log !== undefined && updateData.shop.lat_log !== null && updateData.shop.lat_log !== '') {
+              if (updateData.shop.lat_log.includes(',')) {
+                shopUpdateData.lat_log = updateData.shop.lat_log.trim();
+                console.log(`📝 Updating shop ${shop.id} lat_log to:`, shopUpdateData.lat_log);
+                
+                // If lat_log is provided but latitude/longitude are not, parse from lat_log
+                if (parsedLatitude === undefined && parsedLongitude === undefined) {
+                  const [lat, lng] = updateData.shop.lat_log.split(',').map(Number);
+                  if (!isNaN(lat) && !isNaN(lng)) {
+                    shopUpdateData.latitude = lat;
+                    shopUpdateData.longitude = lng;
+                    console.log(`📝 Parsed latitude/longitude from lat_log: ${lat}, ${lng}`);
+                  }
+                }
+              } else {
+                console.log(`⚠️ Invalid lat_log format for shop ${shop.id}, skipping`);
+              }
+            } else if (parsedLatitude !== undefined && parsedLongitude !== undefined) {
+              // If latitude/longitude are provided but lat_log is not, create lat_log from them
+              shopUpdateData.lat_log = `${parsedLatitude},${parsedLongitude}`;
+              console.log(`📝 Created lat_log from latitude/longitude: ${shopUpdateData.lat_log}`);
+            }
+            
+            // Update other location-related fields
+            if (updateData.shop.pincode !== undefined) {
+              shopUpdateData.pincode = updateData.shop.pincode || '';
+              console.log(`📝 Updating shop ${shop.id} pincode to:`, shopUpdateData.pincode);
+            }
+            if (updateData.shop.place_id !== undefined) {
+              shopUpdateData.place_id = updateData.shop.place_id || '';
+              console.log(`📝 Updating shop ${shop.id} place_id to:`, shopUpdateData.place_id);
+            }
+            if (updateData.shop.state !== undefined) {
+              shopUpdateData.state = updateData.shop.state || '';
+              console.log(`📝 Updating shop ${shop.id} state to:`, shopUpdateData.state);
+            }
+            if (updateData.shop.language !== undefined) {
+              shopUpdateData.language = updateData.shop.language || '';
+              console.log(`📝 Updating shop ${shop.id} language to:`, shopUpdateData.language);
+            }
+            if (updateData.shop.place !== undefined) {
+              shopUpdateData.place = updateData.shop.place || '';
+              console.log(`📝 Updating shop ${shop.id} place to:`, shopUpdateData.place);
+            }
+            if (updateData.shop.location !== undefined) {
+              shopUpdateData.location = updateData.shop.location || '';
+              console.log(`📝 Updating shop ${shop.id} location to:`, shopUpdateData.location);
             }
             
             // Update shop_type if user is completing B2C signup and shop_type is incorrect
@@ -1105,6 +1274,82 @@ class V2ProfileService {
         console.log(`⚠️ Full updateData:`, JSON.stringify(updateData, null, 2));
       }
 
+      // Update customer data for Customer users (user_type 'C')
+      if (user.user_type === 'C' && (updateData.name !== undefined || updateData.email !== undefined || updateData.customer)) {
+        try {
+          const Customer = require('../models/Customer');
+          let customer = await Customer.findByUserId(userId);
+          
+          if (customer) {
+            // Update existing customer record
+            const customerUpdateData = {};
+            
+            // Sync name from user to customer
+            if (updateData.name !== undefined) {
+              customerUpdateData.name = updateData.name;
+              console.log(`📝 [updateProfile] Updating customer ${customer.id} name to:`, updateData.name);
+            }
+            
+            // Sync email from user to customer
+            if (updateData.email !== undefined) {
+              customerUpdateData.email = updateData.email;
+              console.log(`📝 [updateProfile] Updating customer ${customer.id} email to:`, updateData.email);
+            }
+            
+            // Update customer-specific fields if provided
+            if (updateData.customer) {
+              if (updateData.customer.address !== undefined) {
+                customerUpdateData.address = updateData.customer.address;
+              }
+              if (updateData.customer.contact !== undefined) {
+                customerUpdateData.contact = updateData.customer.contact;
+              }
+              if (updateData.customer.pincode !== undefined) {
+                customerUpdateData.pincode = updateData.customer.pincode;
+              }
+              if (updateData.customer.state !== undefined) {
+                customerUpdateData.state = updateData.customer.state;
+              }
+              if (updateData.customer.place !== undefined) {
+                customerUpdateData.place = updateData.customer.place;
+              }
+              if (updateData.customer.location !== undefined) {
+                customerUpdateData.location = updateData.customer.location;
+              }
+              if (updateData.customer.language !== undefined) {
+                customerUpdateData.language = updateData.customer.language;
+              }
+              if (updateData.customer.place_id !== undefined) {
+                customerUpdateData.place_id = updateData.customer.place_id;
+              }
+              if (updateData.customer.lat_log !== undefined) {
+                customerUpdateData.lat_log = updateData.customer.lat_log;
+              }
+              if (updateData.customer.latitude !== undefined) {
+                customerUpdateData.latitude = updateData.customer.latitude;
+              }
+              if (updateData.customer.longitude !== undefined) {
+                customerUpdateData.longitude = updateData.customer.longitude;
+              }
+            }
+            
+            if (Object.keys(customerUpdateData).length > 0) {
+              await Customer.update(customer.id, customerUpdateData);
+              console.log(`✅ Customer ${customer.id} updated successfully`);
+              
+              // Verify the update
+              const updatedCustomer = await Customer.findById(customer.id);
+              console.log(`✅ Verified customer ${customer.id} after update - name: ${updatedCustomer?.name}, email: ${updatedCustomer?.email}`);
+            }
+          } else {
+            console.log(`⚠️ Customer record not found for user ${userId}, skipping customer update`);
+          }
+        } catch (err) {
+          console.error('❌ Error updating customer data:', err);
+          // Don't throw - allow user update to proceed even if customer update fails
+        }
+      }
+
       // Invalidate all Redis caches related to this user
       try {
         const userIdStr = String(userId);
@@ -1124,6 +1369,9 @@ class V2ProfileService {
         } else if (user.user_type === 'D') {
           await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'delivery_boy' }));
           await RedisCache.invalidateTableCache('delivery_boy');
+        } else if (user.user_type === 'C') {
+          await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'customer' }));
+          await RedisCache.invalidateTableCache('customer');
         }
         
         await RedisCache.invalidateTableCache('users');
@@ -1134,10 +1382,13 @@ class V2ProfileService {
       }
 
       // Return updated profile (fresh from database, no cache)
-      const updatedProfile = await this.getProfile(userId);
+      // Pass requestingAppType to ensure correct data filtering
+      const updatedProfile = await this.getProfile(userId, requestingAppType);
       console.log('📤 Returning updated profile with address:', {
         shop_address: updatedProfile.shop?.address,
         delivery_address: updatedProfile.delivery?.address,
+        name: updatedProfile.name,
+        email: updatedProfile.email,
       });
       return updatedProfile;
     } catch (error) {
@@ -1541,125 +1792,3 @@ class V2ProfileService {
 }
 
 module.exports = V2ProfileService;
-
-
-      // Invalidate user caches after user type update
-      try {
-        const userIdStr = String(userId);
-        await RedisCache.delete(RedisCache.userKey(userIdStr, 'profile'));
-        await RedisCache.delete(RedisCache.userKey(userIdStr));
-        await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'users' }));
-        await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'delivery_boy' }));
-        await RedisCache.invalidateTableCache('users');
-        await RedisCache.invalidateTableCache('delivery_boy');
-        console.log('🗑️  Invalidated user caches after user type update');
-      } catch (err) {
-        console.error('Redis cache invalidation error:', err);
-      }
-    }
-
-    // Set approval_status to 'pending' if not already set
-    if (!delivery.approval_status) {
-      const currentTime = new Date().toISOString();
-      const updateData = { approval_status: 'pending' };
-      
-      // Set application_submitted_at when signup is completed for the first time
-      if (!delivery.application_submitted_at) {
-        updateData.application_submitted_at = currentTime;
-        console.log(`📋 Setting application_submitted_at for delivery ${delivery.id}`);
-      }
-      
-      // Set review_initiated_at when status is set to pending for the first time
-      if (!delivery.review_initiated_at) {
-        updateData.review_initiated_at = currentTime;
-        console.log(`📋 Setting review_initiated_at for delivery ${delivery.id}`);
-      }
-      
-      console.log(`📋 Setting approval_status to 'pending' for delivery ${delivery.id}`);
-      await DeliveryBoy.update(delivery.id, updateData);
-      console.log(`✅ Delivery approval_status set to 'pending' for delivery ${delivery.id}`);
-    }
-
-    // Return updated profile
-    return await V2ProfileService.getProfile(userId);
-  }
-
-  /**
-   * Delete user account (soft delete)
-   * @param {string|number} userId - User ID
-   * @returns {Promise<Object>} Deletion result
-   */
-  static async deleteAccount(userId) {
-    try {
-      const user = await User.findById(userId);
-      
-      if (!user) {
-        throw new Error('USER_NOT_FOUND');
-      }
-
-      // Soft delete based on user type
-      if (user.user_type === 'S' || user.user_type === 'R' || user.user_type === 'SR') {
-        const shop = await Shop.findByUserId(userId);
-        if (shop) {
-          await Shop.update(shop.id, { del_status: 2 });
-          console.log(`✅ Soft deleted shop ${shop.id} for user ${userId}`);
-        }
-      } else if (user.user_type === 'D') {
-        const deliveryBoy = await DeliveryBoy.findByUserId(userId);
-        if (deliveryBoy) {
-          await DeliveryBoy.update(deliveryBoy.id, { del_status: 2 });
-          console.log(`✅ Soft deleted delivery boy ${deliveryBoy.id} for user ${userId}`);
-        }
-      } else if (user.user_type === 'C') {
-        const customer = await Customer.findByUserId(userId);
-        if (customer) {
-          await Customer.update(customer.id, { del_status: 2 });
-          console.log(`✅ Soft deleted customer ${customer.id} for user ${userId}`);
-        }
-      }
-
-      // Reset user to new/unregistered state by setting user_type to 'N'
-      await User.updateProfile(userId, { user_type: 'N', del_status: 2 });
-      console.log(`✅ Reset user ${userId} to type 'N' (new/unregistered)`);
-
-      // Invalidate all user-related caches
-      try {
-        const userIdStr = String(userId);
-        await RedisCache.delete(RedisCache.userKey(userIdStr, 'profile'));
-        await RedisCache.delete(RedisCache.userKey(userIdStr));
-        
-        // Invalidate get_user_by_id cache for all possible tables
-        await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'users' }));
-        if (user.user_type === 'S' || user.user_type === 'R' || user.user_type === 'SR') {
-          await RedisCache.delete(RedisCache.dashboardKey('shop', userIdStr));
-          await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'shops' }));
-        } else if (user.user_type === 'D') {
-          await RedisCache.delete(RedisCache.dashboardKey('deliveryboy', userIdStr));
-          await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userIdStr, table: 'delivery_boy' }));
-        }
-        
-        // Invalidate name-based cache if user had a name
-        if (user.name) {
-          await RedisCache.delete(RedisCache.userKey(`name:${user.name}`, 'search'));
-          await RedisCache.delete(RedisCache.userKey(`name:${user.name}`, 'exact'));
-        }
-        
-        console.log(`🗑️  Invalidated all user caches for user_id: ${userIdStr}`);
-      } catch (redisErr) {
-        console.error('Redis cache invalidation error:', redisErr);
-      }
-
-      return {
-        userId: userId,
-        deleted: true,
-        message: 'Account deleted successfully'
-      };
-    } catch (error) {
-      console.error('V2ProfileService.deleteAccount error:', error);
-      throw error;
-    }
-  }
-}
-
-module.exports = V2ProfileService;
-

@@ -682,7 +682,14 @@ class UserController {
     try {
       const { user_id, fcm_token } = req.body;
 
+      console.log('📥 FCM Token Store Request:', {
+        user_id,
+        fcm_token_preview: fcm_token ? fcm_token.substring(0, 30) + '...' : 'missing',
+        fcm_token_length: fcm_token ? fcm_token.length : 0
+      });
+
       if (!user_id || !fcm_token) {
+        console.error('❌ FCM Token Store: Missing required parameters', { user_id: !!user_id, fcm_token: !!fcm_token });
         return res.status(201).json({
           status: 'error',
           msg: 'empty param',
@@ -690,17 +697,43 @@ class UserController {
         });
       }
 
+      // Verify user exists before updating
+      const user = await User.findById(user_id);
+      if (!user) {
+        console.error('❌ FCM Token Store: User not found', { user_id });
+        return res.status(201).json({
+          status: 'error',
+          msg: 'User Not Found',
+          data: ''
+        });
+      }
+
+      console.log('✅ FCM Token Store: User found', {
+        user_id: user.id,
+        name: user.name,
+        user_type: user.user_type,
+        app_type: user.app_type
+      });
+
+      // Update FCM token in database
       await User.updateFcmToken(user_id, fcm_token);
-      // Update fcm_token_time using User model
-      await User.updateProfile(user_id, { fcm_token_time: Math.floor(Date.now() / 1000) });
+      console.log('✅ FCM Token Store: Token updated in database');
+
+      // Update fcm_token_time timestamp
+      const fcmTokenTime = Math.floor(Date.now() / 1000);
+      await User.updateProfile(user_id, { fcm_token_time: fcmTokenTime });
+      console.log('✅ FCM Token Store: Token timestamp updated', { fcm_token_time: fcmTokenTime });
 
       // Invalidate user cache after FCM token update
       try {
         await RedisCache.delete(RedisCache.userKey(user_id));
+        console.log('✅ FCM Token Store: Cache invalidated');
       } catch (redisErr) {
-        console.error('Redis cache invalidation error:', redisErr);
+        console.error('⚠️ FCM Token Store: Redis cache invalidation error:', redisErr);
         // Continue even if Redis fails
       }
+
+      console.log('✅ FCM Token Store: Successfully saved FCM token for user', user_id);
 
       res.status(200).json({
         status: 'success',
@@ -708,10 +741,11 @@ class UserController {
         data: ''
       });
     } catch (err) {
-      console.error('FCM token store error:', err);
+      console.error('❌ FCM Token Store Error:', err);
+      console.error('   Error stack:', err.stack);
       res.status(201).json({
         status: 'error',
-        msg: 'User Not Found',
+        msg: err.message || 'User Not Found',
         data: ''
       });
     }

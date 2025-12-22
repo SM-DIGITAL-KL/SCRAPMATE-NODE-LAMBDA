@@ -686,7 +686,7 @@ class ShopController {
   // Shop ads type edit
   static async shopAdsTypeEdit(req, res) {
     try {
-      const { shop_id, address, lat_log } = req.body;
+      const { shop_id, address, lat_log, latitude, longitude, pincode, place_id, state, language, place, location } = req.body;
 
       if (!shop_id) {
         return res.status(201).json({
@@ -707,76 +707,51 @@ class ShopController {
 
       const updateData = {};
       if (address !== undefined) updateData.address = address;
-      if (lat_log !== undefined) updateData.lat_log = lat_log;
-
-      await Shop.update(shop_id, updateData);
-
-      const updatedShop = await Shop.findById(shop_id);
-
-      // Invalidate user profile cache after shop update
-      try {
-        if (updatedShop && updatedShop.user_id) {
-          const userId = String(updatedShop.user_id);
-          await RedisCache.delete(RedisCache.userKey(userId, 'profile'));
-          await RedisCache.delete(RedisCache.userKey(userId));
-          await RedisCache.delete(RedisCache.listKey('user_by_id', { user_id: userId, table: 'shops' }));
+      
+      // Parse and validate latitude/longitude
+      let parsedLatitude = undefined;
+      let parsedLongitude = undefined;
+      
+      if (latitude !== undefined && latitude !== null && latitude !== '') {
+        parsedLatitude = typeof latitude === 'string' ? parseFloat(latitude) : latitude;
+        if (!isNaN(parsedLatitude)) {
+          updateData.latitude = parsedLatitude;
         }
-        // Invalidate shops cache (used for B2B/B2C availability in categories)
-        await RedisCache.invalidateV2ApiCache('shops', null, {});
-      } catch (redisErr) {
-        console.error('Redis cache invalidation error:', redisErr);
-        // Continue even if Redis fails
       }
-
-      res.status(200).json({
-        status: 'success',
-        msg: 'Successfull',
-        data: updatedShop
-      });
-    } catch (err) {
-      console.error('Shop ads type edit error:', err);
-      res.status(201).json({
-        status: 'error',
-        msg: 'Update failed',
-        data: ''
-      });
-    }
-  }
-}
-
-module.exports = ShopController;
-
-
-        error: err.message
-      });
-    }
-  }
-
-  // Shop ads type edit
-  static async shopAdsTypeEdit(req, res) {
-    try {
-      const { shop_id, address, lat_log } = req.body;
-
-      if (!shop_id) {
-        return res.status(201).json({
-          status: 'error',
-          msg: 'empty param',
-          data: ''
-        });
+      
+      if (longitude !== undefined && longitude !== null && longitude !== '') {
+        parsedLongitude = typeof longitude === 'string' ? parseFloat(longitude) : longitude;
+        if (!isNaN(parsedLongitude)) {
+          updateData.longitude = parsedLongitude;
+        }
       }
-
-      const shop = await Shop.findById(shop_id);
-      if (!shop) {
-        return res.status(201).json({
-          status: 'error',
-          msg: 'Shop not found',
-          data: ''
-        });
+      
+      // Handle lat_log: if provided, use it; otherwise create from latitude/longitude
+      if (lat_log !== undefined && lat_log !== null && lat_log !== '') {
+        if (lat_log.includes(',')) {
+          updateData.lat_log = lat_log.trim();
+          
+          // If lat_log is provided but latitude/longitude are not, parse from lat_log
+          if (parsedLatitude === undefined && parsedLongitude === undefined) {
+            const [lat, lng] = lat_log.split(',').map(Number);
+            if (!isNaN(lat) && !isNaN(lng)) {
+              updateData.latitude = lat;
+              updateData.longitude = lng;
+            }
+          }
+        }
+      } else if (parsedLatitude !== undefined && parsedLongitude !== undefined) {
+        // If latitude/longitude are provided but lat_log is not, create lat_log from them
+        updateData.lat_log = `${parsedLatitude},${parsedLongitude}`;
       }
-
-      const updateData = {};
-      if (address !== undefined) updateData.address = address;
-      if (lat_log !== undefined) updateData.lat_log = lat_log;
+      
+      // Update other location-related fields
+      if (pincode !== undefined) updateData.pincode = pincode || '';
+      if (place_id !== undefined) updateData.place_id = place_id || '';
+      if (state !== undefined) updateData.state = state || '';
+      if (language !== undefined) updateData.language = language || '';
+      if (place !== undefined) updateData.place = place || '';
+      if (location !== undefined) updateData.location = location || '';
 
       await Shop.update(shop_id, updateData);
 

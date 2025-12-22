@@ -354,8 +354,27 @@ class Order {
       const orders = response.Items || [];
       if (orders.length === 0) return null;
       
-      orders.sort((a, b) => (b.id || 0) - (a.id || 0));
-      return orders[0].order_number || null;
+      // Sort by order_number (numeric) descending, filtering out invalid numbers
+      const validOrders = orders
+        .filter(order => {
+          const orderNum = order.order_number;
+          if (!orderNum) return false;
+          // Check if it's a valid numeric order number (not too large, reasonable format)
+          const num = typeof orderNum === 'string' ? parseInt(orderNum) : orderNum;
+          // Valid order numbers should be between 10000 and 999999999 (reasonable range)
+          return !isNaN(num) && num >= 10000 && num <= 999999999;
+        })
+        .sort((a, b) => {
+          const numA = typeof a.order_number === 'string' ? parseInt(a.order_number) : a.order_number;
+          const numB = typeof b.order_number === 'string' ? parseInt(b.order_number) : b.order_number;
+          return numB - numA; // Descending
+        });
+      
+      if (validOrders.length === 0) return null;
+      
+      const lastOrderNum = validOrders[0].order_number;
+      // Ensure it's a number
+      return typeof lastOrderNum === 'string' ? parseInt(lastOrderNum) : lastOrderNum;
     } catch (err) {
       throw err;
     }

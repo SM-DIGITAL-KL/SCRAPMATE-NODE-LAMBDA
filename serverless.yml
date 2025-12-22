@@ -109,6 +109,10 @@ package:
     - '!Postman_*.json'
     - '!nginx.conf'
     - '!nodemon.json'
+    # Include Firebase service account files
+    - 'firebase-service-account.json'
+    - 'scrapmate-partner-android-firebase-adminsdk-fbsvc-709bbce0d4.json'
+    - 'scrapmate-partner-android-firebase-adminsdk-fbsvc-94a2c243ee.json'
   individually: false
   excludeDevDependencies: true
 

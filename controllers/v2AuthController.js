@@ -46,7 +46,7 @@ class V2AuthController {
    */
   static async verifyOtp(req, res) {
     try {
-      const { phoneNumber, otp, joinType, appType } = req.body;
+      const { phoneNumber, otp, joinType, appType, fcm_token } = req.body;
 
       if (!phoneNumber || !otp) {
         return res.status(400).json({
@@ -56,7 +56,7 @@ class V2AuthController {
         });
       }
 
-      const result = await V2AuthService.verifyOtpAndLogin(phoneNumber, otp, joinType, appType);
+      const result = await V2AuthService.verifyOtpAndLogin(phoneNumber, otp, joinType, appType, fcm_token);
 
       // Log the result to debug
       console.log('📋 V2AuthController.verifyOtp - Result keys:', Object.keys(result));

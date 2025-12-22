@@ -181,33 +181,3 @@ class V2B2BSignupController {
 }
 
 module.exports = V2B2BSignupController;
-
-    } catch (error) {
-      console.error('V2B2BSignupController.submitSignup error:', error);
-
-      if (error.message === 'USER_NOT_FOUND') {
-        return res.status(404).json({
-          status: 'error',
-          msg: 'User not found',
-          data: null,
-        });
-      }
-
-      if (error.message === 'INVALID_USER_TYPE') {
-        return res.status(400).json({
-          status: 'error',
-          msg: 'Delivery users cannot submit B2B signup',
-          data: null,
-        });
-      }
-
-      return res.status(500).json({
-        status: 'error',
-        msg: error.message || 'Failed to submit B2B signup',
-        data: null,
-      });
-    }
-  }
-}
-
-module.exports = V2B2BSignupController;

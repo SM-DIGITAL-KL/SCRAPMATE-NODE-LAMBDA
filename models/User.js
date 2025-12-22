@@ -67,6 +67,7 @@ class User {
       // Note: Limit in ScanCommand limits items scanned, not filtered results
       let lastKey = null;
       let scanCount = 0;
+      const allMatchingUsers = [];
       
       do {
         scanCount++;
@@ -92,11 +93,7 @@ class User {
         console.log(`   Scanned ${response.Items?.length || 0} items in this batch`);
         
         if (response.Items && response.Items.length > 0) {
-          // Found the user
-          const user = response.Items[0];
-          console.log(`   ✅ Found user: ID=${user.id}, name=${user.name}, mob_num=${user.mob_num} (type: ${typeof user.mob_num})`);
-          const { password: _, ...userWithoutPassword } = user;
-          return userWithoutPassword;
+          allMatchingUsers.push(...response.Items);
         }
         
         lastKey = response.LastEvaluatedKey;
@@ -104,6 +101,56 @@ class User {
           console.log(`   More items to scan, continuing...`);
         }
       } while (lastKey);
+      
+      if (allMatchingUsers.length > 0) {
+        // Prioritize customer_app users with FCM tokens (for notifications)
+        const customerAppUsersWithToken = allMatchingUsers.filter(u => 
+          u.app_type === 'customer_app' && u.fcm_token
+        );
+        const customerAppUsersWithoutToken = allMatchingUsers.filter(u => 
+          u.app_type === 'customer_app' && !u.fcm_token
+        );
+        const otherUsers = allMatchingUsers.filter(u => u.app_type !== 'customer_app');
+        
+        // Prefer customer_app users with FCM tokens
+        if (customerAppUsersWithToken.length > 0) {
+          customerAppUsersWithToken.sort((a, b) => {
+            const dateA = new Date(a.updated_at || a.created_at || 0);
+            const dateB = new Date(b.updated_at || b.created_at || 0);
+            return dateB - dateA;
+          });
+          const user = customerAppUsersWithToken[0];
+          console.log(`   ✅ Found customer_app user with FCM token: ID=${user.id}, name=${user.name}, mob_num=${user.mob_num}`);
+          const { password: _, ...userWithoutPassword } = user;
+          return userWithoutPassword;
+        }
+        
+        // Then customer_app users without token
+        if (customerAppUsersWithoutToken.length > 0) {
+          customerAppUsersWithoutToken.sort((a, b) => {
+            const dateA = new Date(a.updated_at || a.created_at || 0);
+            const dateB = new Date(b.updated_at || b.created_at || 0);
+            return dateB - dateA;
+          });
+          const user = customerAppUsersWithoutToken[0];
+          console.log(`   ✅ Found customer_app user: ID=${user.id}, name=${user.name}, mob_num=${user.mob_num}`);
+          const { password: _, ...userWithoutPassword } = user;
+          return userWithoutPassword;
+        }
+        
+        // Finally, other users (most recently updated)
+        if (otherUsers.length > 0) {
+          otherUsers.sort((a, b) => {
+            const dateA = new Date(a.updated_at || a.created_at || 0);
+            const dateB = new Date(b.updated_at || b.created_at || 0);
+            return dateB - dateA;
+          });
+          const user = otherUsers[0];
+          console.log(`   ✅ Found user: ID=${user.id}, name=${user.name}, mob_num=${user.mob_num} (type: ${typeof user.mob_num})`);
+          const { password: _, ...userWithoutPassword } = user;
+          return userWithoutPassword;
+        }
+      }
       
       console.log(`   ❌ No user found with mobile number ${mobNum} after ${scanCount} scan(s)`);
       return null;
@@ -128,15 +175,17 @@ class User {
       
       let lastKey = null;
       let scanCount = 0;
+      const allMatchingUsers = [];
       
       do {
         scanCount++;
         const params = {
           TableName: TABLE_NAME,
-          FilterExpression: 'mob_num = :mobile AND attribute_exists(app_type) AND app_type = :appType',
+          FilterExpression: 'mob_num = :mobile AND attribute_exists(app_type) AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
           ExpressionAttributeValues: {
             ':mobile': mobileValue,
-            ':appType': appType
+            ':appType': appType,
+            ':deleted': 2
           }
         };
         
@@ -148,14 +197,43 @@ class User {
         const response = await client.send(command);
         
         if (response.Items && response.Items.length > 0) {
-          const user = response.Items[0];
-          console.log(`   ✅ Found user: ID=${user.id}, app_type=${user.app_type}`);
-          const { password: _, ...userWithoutPassword } = user;
-          return userWithoutPassword;
+          allMatchingUsers.push(...response.Items);
         }
         
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
+      
+      if (allMatchingUsers.length > 0) {
+        // Prioritize users with FCM tokens (for customer_app, this ensures notifications work)
+        const usersWithToken = allMatchingUsers.filter(u => u.fcm_token);
+        const usersWithoutToken = allMatchingUsers.filter(u => !u.fcm_token);
+        
+        // If there are users with FCM tokens, prefer the most recently updated one
+        if (usersWithToken.length > 0) {
+          usersWithToken.sort((a, b) => {
+            const dateA = new Date(a.updated_at || a.created_at || 0);
+            const dateB = new Date(b.updated_at || b.created_at || 0);
+            return dateB - dateA;
+          });
+          const user = usersWithToken[0];
+          console.log(`   ✅ Found user with FCM token: ID=${user.id}, app_type=${user.app_type}`);
+          const { password: _, ...userWithoutPassword } = user;
+          return userWithoutPassword;
+        }
+        
+        // Otherwise, use the most recently updated user without token
+        if (usersWithoutToken.length > 0) {
+          usersWithoutToken.sort((a, b) => {
+            const dateA = new Date(a.updated_at || a.created_at || 0);
+            const dateB = new Date(b.updated_at || b.created_at || 0);
+            return dateB - dateA;
+          });
+          const user = usersWithoutToken[0];
+          console.log(`   ✅ Found user: ID=${user.id}, app_type=${user.app_type}`);
+          const { password: _, ...userWithoutPassword } = user;
+          return userWithoutPassword;
+        }
+      }
       
       return null;
     } catch (err) {
@@ -285,6 +363,12 @@ class User {
       const client = getDynamoDBClient();
       const id = typeof userId === 'string' && !isNaN(userId) ? parseInt(userId) : userId;
       
+      console.log('💾 User.updateFcmToken: Updating FCM token in database', {
+        user_id: id,
+        fcm_token_preview: fcmToken ? fcmToken.substring(0, 30) + '...' : 'missing',
+        fcm_token_length: fcmToken ? fcmToken.length : 0
+      });
+      
       const command = new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: id },
@@ -295,9 +379,19 @@ class User {
         }
       });
 
-      await client.send(command);
+      const result = await client.send(command);
+      console.log('✅ User.updateFcmToken: FCM token successfully saved to database', {
+        user_id: id,
+        attributes_updated: result.Attributes ? Object.keys(result.Attributes) : []
+      });
+      
       return { affectedRows: 1 };
     } catch (err) {
+      console.error('❌ User.updateFcmToken: Error saving FCM token to database', {
+        user_id: userId,
+        error: err.message,
+        stack: err.stack
+      });
       throw err;
     }
   }
@@ -1308,12 +1402,6 @@ class User {
       };
     } catch (err) {
       console.error('User.getCustomers error:', err);
-      throw err;
-    }
-  }
-}
-
-module.exports = User;
       throw err;
     }
   }

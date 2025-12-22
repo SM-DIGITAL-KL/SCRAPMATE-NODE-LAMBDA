@@ -204,6 +204,37 @@ router.post('/shop_cat_edit', categoryImageUpload, ProductController.shopCatEdit
 router.get('/shop_cat_delete/:id', ProductController.shopCatDelete);
 router.get('/all_pro_category', ProductController.allProCategory);
 router.get('/category_img_list', ProductController.categoryImgList);
+
+// Create category (POST)
+router.post('/category_img_keywords', (req, res, next) => {
+  const timestamp = new Date().toISOString();
+
+  console.log(`\n${'='.repeat(80)}`);
+  console.log(`🔌 [POST API] Create Category from Admin Panel`);
+  console.log(`${'='.repeat(80)}`);
+  console.log(`   Timestamp: ${timestamp}`);
+  console.log(`   Endpoint: POST /category_img_keywords`);
+
+  categoryImageUploadMulter.single('category_image')(req, res, (err) => {
+    if (err) {
+      console.error(`❌ [MULTER ERROR] File upload processing failed!`);
+      if (err.message === 'Unexpected end of form' || err.code === 'LIMIT_UNEXPECTED_FILE' || err.message === 'Only image files are allowed!') {
+        req.file = null;
+        return next();
+      }
+      if (err instanceof multer.MulterError) {
+        return res.status(400).json({
+          status: 'error',
+          msg: err.code === 'LIMIT_FILE_SIZE' ? 'File too large (max 10MB)' : 'File upload error: ' + err.message,
+          data: null
+        });
+      }
+      return next(err);
+    }
+    next();
+  });
+}, CategoryController.createCategory);
+
 router.put('/category_img_keywords/:id', (req, res, next) => {
   const timestamp = new Date().toISOString();
   const categoryId = req.params.id;
@@ -378,6 +409,16 @@ router.post('/category_img_keywords/:id', (req, res, next) => {
     next();
   });
 }, CategoryController.updateCategory);
+
+router.delete('/category_img_keywords/:id', (req, res, next) => {
+  const { id } = req.params;
+  console.log(`\n🗑️  [DELETE CATEGORY] Request received`);
+  console.log(`   Endpoint: DELETE /category_img_keywords/:id`);
+  console.log(`   Category ID: ${id}`);
+  console.log(`   → Passing to CategoryController.deleteCategory()\n`);
+  next();
+}, CategoryController.deleteCategory);
+
 router.post('/shop_item_create', ProductController.shopItemCreate);
 router.post('/shop_item_edit/:id', ProductController.shopItemEdit);
 router.get('/shop_item_delete/:id', ProductController.shopItemDelete);

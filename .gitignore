@@ -43,3 +43,7 @@
 # !*.yml
 # !*.yaml
 
+# Ignore sensitive Firebase credentials
+firebase-service-account.json
+*firebase-adminsdk*.json
+

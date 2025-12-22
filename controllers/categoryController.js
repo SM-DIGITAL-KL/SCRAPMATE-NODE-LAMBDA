@@ -410,85 +410,123 @@ class CategoryController {
       });
     }
   }
-}
 
-module.exports = CategoryController;
+  // Create new category
+  static async createCategory(req, res) {
+    try {
+      console.log(`\n${'='.repeat(80)}`);
+      console.log(`➕ [CATEGORY CREATE] Starting create process`);
+      console.log(`${'='.repeat(80)}`);
+      console.log(`📥 [REQUEST RECEIVED]`);
+      console.log(`   Method: ${req.method}`);
+      console.log(`   URL: ${req.originalUrl || req.url}`);
+      console.log(`   Body keys:`, req.body ? Object.keys(req.body) : 'no body');
 
+      const category_name = req.body?.category_name;
+      const category_img = req.body?.category_img;
 
+      if (!category_name || !category_name.trim()) {
+        console.error(`❌ [VALIDATION ERROR] Category name is required`);
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Category name is required',
+          data: null
+        });
+      }
+
+      console.log(`\n📋 [REQUEST DATA]`);
+      console.log(`   Category name: ${category_name}`);
+      console.log(`   Category image URL: ${category_img ? `${category_img.substring(0, 50)}...` : 'not provided'}`);
+
+      // Store the new S3 URL here so we can use it in response
+      let uploadedS3Url = null;
+
+      // Handle file upload if provided
+      if (req.file) {
+        try {
+          console.log(`\n📤 [S3 UPLOAD] Starting upload process...`);
+          console.log(`   File name: ${req.file.originalname}`);
+          console.log(`   File size: ${req.file.size} bytes (${(req.file.size / 1024 / 1024).toFixed(2)} MB)`);
+          console.log(`   MIME type: ${req.file.mimetype}`);
+
+          const uploadStartTime = Date.now();
+          const s3Result = await uploadFileToS3(req.file, 'categories');
+          const uploadDuration = Date.now() - uploadStartTime;
+
+          uploadedS3Url = s3Result.s3Url;
+          console.log(`✅ [S3 UPLOAD] Upload completed in ${uploadDuration}ms`);
+          console.log(`   S3 URL: ${uploadedS3Url.substring(0, 100)}...`);
         } catch (uploadError) {
-          console.error(`\n❌ [S3 UPLOAD FAILED]`);
-          console.error(`   Category ID: ${id}`);
-          console.error(`   Error message: ${uploadError.message}`);
-          console.error(`   Error name: ${uploadError.name}`);
-          console.error(`   Error code: ${uploadError.code || 'N/A'}`);
-          console.error(`   Error stack:`, uploadError.stack);
-          console.error(`   File that failed:`, {
-            originalname: req.file?.originalname,
-            size: req.file?.size,
-            mimetype: req.file?.mimetype,
-            hasBuffer: !!req.file?.buffer
-          });
+          console.error(`❌ [S3 UPLOAD] Error uploading file:`, uploadError);
           return res.status(500).json({
             status: 'error',
-            msg: 'Failed to upload category image: ' + uploadError.message,
+            msg: 'Failed to upload image: ' + uploadError.message,
             data: null
           });
         }
-      } else if (category_img !== undefined && category_img !== null && category_img !== '') {
-        // If no file upload but URL provided, use the URL
-        const imageUrl = String(category_img).trim();
-        console.log(`\n📝 [USING PROVIDED URL]`);
-        console.log(`   URL: ${imageUrl.substring(0, 100)}${imageUrl.length > 100 ? '...' : ''}`);
-        console.log(`   URL length: ${imageUrl.length} characters`);
-        // Update both fields for consistency
-        updateData.category_img = imageUrl;
-        updateData.cat_img = imageUrl;
-        console.log(`✅ Using provided image URL (no file upload)`);
       }
 
-      if (Object.keys(updateData).length === 0) {
-        console.error(`\n❌ [VALIDATION ERROR] No fields to update`);
-        return res.status(400).json({
-          status: 'error',
-          msg: 'No fields to update. Please provide category_name, category_image file, or category_img URL.',
-          data: null
-        });
+      const categoryData = {
+        category_name: category_name.trim(),
+        category_img: uploadedS3Url || category_img || '',
+        cat_img: uploadedS3Url || category_img || '' // Also set cat_img for compatibility
+      };
+
+      console.log(`\n💾 [DATABASE] Creating category...`);
+      const createdCategory = await CategoryImgKeywords.create(categoryData);
+
+      console.log(`✅ [SUCCESS] Category created successfully`);
+      console.log(`   Category ID: ${createdCategory.id}`);
+      console.log(`   Category name: ${createdCategory.category_name}`);
+      console.log(`   Image URL: ${createdCategory.category_img ? `${createdCategory.category_img.substring(0, 100)}...` : 'none'}`);
+
+      // Invalidate caches
+      try {
+        const RedisCache = require('../utils/redisCache');
+        await RedisCache.invalidateTableCache('category_img_keywords');
+        await RedisCache.delete(RedisCache.listKey('category_img_list'));
+        console.log(`🗑️  Invalidated category caches after create`);
+      } catch (cacheError) {
+        console.error(`⚠️  Cache invalidation error:`, cacheError);
       }
 
-      console.log(`\n📝 [DATABASE UPDATE] Preparing to update category in DynamoDB...`);
-      console.log(`   Category ID: ${id}`);
-      console.log(`   Update data keys:`, Object.keys(updateData));
-      console.log(`   Update data:`, {
-        category_name: updateData.category_name || 'not updating',
-        category_img: updateData.category_img ? `${updateData.category_img.substring(0, 80)}...` : 'not updating',
-        cat_img: updateData.cat_img ? `${updateData.cat_img.substring(0, 80)}...` : 'not updating'
+      return res.json({
+        status: 'success',
+        msg: 'Category created successfully',
+        data: createdCategory
       });
+    } catch (err) {
+      console.error(`\n❌ [ERROR] Category creation failed`);
+      console.error(`   Error: ${err.message}`);
+      console.error(`   Stack: ${err.stack}`);
+      console.error(`${'='.repeat(80)}\n`);
 
-      // Validate category ID is a number
-      const categoryIdNum = parseInt(id);
-      if (isNaN(categoryIdNum)) {
-        console.error(`\n❌ [VALIDATION ERROR] Invalid category ID format`);
-        console.error(`   Provided ID: ${id}`);
-        console.error(`   Parsed as: ${categoryIdNum}`);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Error creating category: ' + err.message,
+        data: null
+      });
+    }
+  }
+
+  // Delete category
+  static async deleteCategory(req, res) {
+    try {
+      const { id } = req.params;
+
+      if (!id) {
         return res.status(400).json({
           status: 'error',
-          msg: 'Invalid category ID format',
+          msg: 'Category ID is required',
           data: null
         });
       }
 
-      console.log(`   Validated category ID: ${categoryIdNum} (number)`);
+      console.log(`\n🗑️  [CATEGORY DELETE] Starting delete process for category ID: ${id}`);
 
-      const dbUpdateStartTime = Date.now();
-      const result = await CategoryImgKeywords.update(categoryIdNum, updateData);
-      const dbUpdateDuration = Date.now() - dbUpdateStartTime;
-
-      console.log(`\n📊 [DATABASE UPDATE RESULT]`);
-      console.log(`   Update duration: ${dbUpdateDuration}ms`);
-      console.log(`   Affected rows: ${result.affectedRows}`);
-      console.log(`   Success: ${result.affectedRows > 0 ? 'Yes' : 'No'}`);
-
-      if (result.affectedRows === 0) {
+      // Check if category exists
+      const category = await CategoryImgKeywords.findById(parseInt(id));
+      if (!category) {
         return res.status(404).json({
           status: 'error',
           msg: 'Category not found',
@@ -496,216 +534,55 @@ module.exports = CategoryController;
         });
       }
 
-      // Wait longer to ensure DynamoDB update is fully propagated before returning
-      // DynamoDB eventual consistency can take a moment, especially after cache clear
-      console.log(`\n⏳ [WAITING] Waiting for DynamoDB update to propagate...`);
-      await new Promise(resolve => setTimeout(resolve, 2000)); // Increased to 2 seconds for better consistency
-      console.log(`   ✅ Wait complete (2s) - proceeding with cache clear and verification`);
+      // Check if already deleted
+      if (category.deleted) {
+        return res.json({
+          status: 'success',
+          msg: 'Category is already deleted',
+          data: null
+        });
+      }
 
-      // Clear Redis cache for category list to ensure updated image is shown
+      // Check if subcategories exist for this category (only non-deleted ones)
+      const Subcategory = require('../models/Subcategory');
+      const subcategories = await Subcategory.findByMainCategoryId(parseInt(id));
+      
+      if (subcategories && subcategories.length > 0) {
+        return res.json({
+          status: 'error',
+          msg: `Cannot delete category. ${subcategories.length} subcategory(ies) exist under this category. Please delete subcategories first.`,
+          data: {
+            subcategories_count: subcategories.length
+          }
+        });
+      }
+
+      // Delete the category
+      await CategoryImgKeywords.delete(parseInt(id));
+      console.log(`✅ Category deleted successfully: ID ${id}`);
+
+      // Clear Redis cache
       try {
         const RedisCache = require('../utils/redisCache');
-        // Use the same cache key format as categoryImgList
-        const cacheKey = RedisCache.listKey('category_img_list', { version: 's3' });
-        await RedisCache.delete(cacheKey);
-        console.log(`✅ Redis cache cleared for category_img_list: ${cacheKey}`);
-
-        // Also clear subcategories grouped cache since it uses category data
-        const subcategoriesCacheKey = RedisCache.listKey('subcategories_grouped', {});
-        await RedisCache.delete(subcategoriesCacheKey);
-        console.log(`✅ Redis cache cleared for subcategories_grouped: ${subcategoriesCacheKey}`);
-
-        // Invalidate v2 API caches
+        await RedisCache.delete(RedisCache.listKey('category_img_list', { version: 's3' }));
+        await RedisCache.delete(RedisCache.listKey('subcategories_grouped', {}));
         await RedisCache.invalidateV2ApiCache('categories', null, {});
-        await RedisCache.invalidateV2ApiCache('subcategories', null, { categoryId: id });
-        // Also invalidate cached categories list
         await RedisCache.delete(RedisCache.listKey('categories_all'));
-        console.log(`🗑️  Invalidated v2 categories and subcategories cache`);
+        console.log(`🗑️  Invalidated all category-related caches`);
       } catch (cacheError) {
         console.warn('⚠️  Failed to clear Redis cache:', cacheError.message);
-        // Continue even if cache clear fails
       }
 
-      // Fetch updated category to verify the update - retry if needed
-      let updatedCategory = null;
-      let retries = 3;
-      while (retries > 0 && !updatedCategory) {
-        updatedCategory = await CategoryImgKeywords.findById(parseInt(id));
-        if (!updatedCategory) {
-          console.warn(`⚠️  Category not found, retrying... (${retries} attempts left)`);
-          await new Promise(resolve => setTimeout(resolve, 200));
-          retries--;
-        }
-      }
-
-      if (updatedCategory) {
-        console.log(`\n📋 [VERIFICATION] Successfully fetched updated category from database`);
-        console.log(`   Category ID: ${updatedCategory?.id}`);
-        // ... (logging continues)
-      } else {
-        console.error(`\n❌ [VERIFICATION FAILED]`);
-        console.error(`   Failed to fetch updated category after 3 retries`);
-        console.error(`   Category ID: ${id}`);
-
-        // Construct fallback object if DB fetch fails but we have update data
-        if (Object.keys(updateData).length > 0) {
-          console.log(`   ⚠️  Creating fallback response object from update data`);
-          updatedCategory = {
-            id: parseInt(id),
-            ...updateData,
-            // Preserve existing values if we have them (we don't, but we have the new ones)
-          };
-
-          if (uploadedS3Url) {
-            updatedCategory.category_img = uploadedS3Url;
-            updatedCategory.cat_img = uploadedS3Url;
-          }
-        }
-      }
-
-      // Prepare response - ensure new S3 URL is used if file was uploaded
-      // If database still has old URL (eventual consistency), use the new S3 URL we just uploaded
-      if (updatedCategory && uploadedS3Url) {
-        const dbUrl = updatedCategory.category_img || updatedCategory.cat_img || '';
-        const isDbUrlOld = dbUrl && !dbUrl.includes('s3') && dbUrl.includes('app.scrapmate.co.in');
-
-        console.log(`\n🔄 [RESPONSE FIX] Ensuring new S3 URL is used in response (bypassing database eventual consistency)`);
-        console.log(`   Database URL: ${dbUrl.substring(0, 100)}${dbUrl.length > 100 ? '...' : ''}`);
-        console.log(`   Database URL is old external URL: ${isDbUrlOld}`);
-        console.log(`   New S3 URL (from upload): ${uploadedS3Url.substring(0, 100)}...`);
-
-        // Always override with the new S3 URL we just uploaded
-        updatedCategory.category_img = uploadedS3Url;
-        updatedCategory.cat_img = uploadedS3Url;
-
-        console.log(`   ✅ Response will use NEW S3 URL: ${uploadedS3Url.substring(0, 100)}...`);
-        console.log(`   ✅ OLD URL removed from response`);
-      }
-
-      // Prepare response BEFORE logging
-      const response = {
+      return res.json({
         status: 'success',
-        msg: 'Category updated successfully',
-        data: updatedCategory
-      };
-
-      const timestamp = new Date().toISOString();
-
-      // Log all success information BEFORE sending response - FORCE IMMEDIATE OUTPUT
-      console.log(`\n${'='.repeat(80)}`);
-      console.log(`📤 [RESPONSE] ${timestamp} - Preparing success response...`);
-      console.log(`   Response status: ${response.status}`);
-      console.log(`   Response message: ${response.msg}`);
-      console.log(`   Has data: ${!!response.data}`);
-
-      if (response.data) {
-        console.log(`   Data contains:`);
-        console.log(`     - Category ID: ${response.data.id || 'N/A'}`);
-        console.log(`     - Category Name: ${response.data.category_name || 'N/A'}`);
-        console.log(`     - Has category_img: ${!!response.data.category_img}`);
-        console.log(`     - Has cat_img: ${!!response.data.cat_img}`);
-        if (response.data.category_img) {
-          const imgUrl = response.data.category_img;
-          console.log(`     - category_img URL: ${imgUrl.substring(0, Math.min(100, imgUrl.length))}${imgUrl.length > 100 ? '...' : ''}`);
-          console.log(`     - category_img length: ${imgUrl.length} characters`);
-          console.log(`     - Full category_img URL: ${imgUrl}`);
-        }
-        if (response.data.cat_img) {
-          const catImgUrl = response.data.cat_img;
-          console.log(`     - cat_img URL: ${catImgUrl.substring(0, Math.min(100, catImgUrl.length))}${catImgUrl.length > 100 ? '...' : ''}`);
-          console.log(`     - cat_img length: ${catImgUrl.length} characters`);
-          console.log(`     - Full cat_img URL: ${catImgUrl}`);
-        }
-      } else {
-        console.log(`   ⚠️  WARNING: Response data is null or undefined!`);
-      }
-
-      console.log(`\n✅ [SUCCESS] ${timestamp} - Category update completed successfully!`);
-      console.log(`   Category ID: ${id}`);
-      console.log(`   Timestamp: ${timestamp}`);
-      console.log(`   Response will be sent to client now...`);
-      console.log(`${'='.repeat(80)}`);
-
-      // CRITICAL: Force immediate output with multiple methods
-      process.stdout.write('\n🚀 [FINAL] About to send response to client...\n\n');
-
-      // Log the exact response object
-      console.log(`📦 [RESPONSE OBJECT]`, JSON.stringify({
-        status: response.status,
-        msg: response.msg,
-        hasData: !!response.data,
-        dataKeys: response.data ? Object.keys(response.data) : [],
-        timestamp: timestamp
-      }, null, 2));
-
-      // FINAL SUCCESS SUMMARY - This should ALWAYS be visible
-      console.log(`\n`);
-      console.log(`${'='.repeat(80)}`);
-      console.log(`✅✅✅ SUCCESS: Category Update Completed ✅✅✅`);
-      console.log(`${'='.repeat(80)}`);
-      console.log(`   Timestamp: ${timestamp}`);
-      console.log(`   Category ID: ${id}`);
-      console.log(`   Status: ${response.status}`);
-      console.log(`   Message: ${response.msg}`);
-      console.log(`   Response Has Data: ${!!response.data}`);
-
-      if (response.data) {
-        console.log(`   ────────────────────────────────────────────────────────────────`);
-        console.log(`   Response Data Details:`);
-        console.log(`     • Category ID: ${response.data.id || 'N/A'}`);
-        console.log(`     • Category Name: ${response.data.category_name || 'N/A'}`);
-        console.log(`     • Has category_img: ${!!response.data.category_img}`);
-        console.log(`     • Has cat_img: ${!!response.data.cat_img}`);
-
-        if (response.data.category_img) {
-          const imgUrl = response.data.category_img;
-          console.log(`     • category_img URL (first 100 chars): ${imgUrl.substring(0, Math.min(100, imgUrl.length))}${imgUrl.length > 100 ? '...' : ''}`);
-          console.log(`     • category_img full length: ${imgUrl.length} characters`);
-          console.log(`     • category_img FULL URL: ${imgUrl}`);
-        }
-
-        if (response.data.cat_img) {
-          const catImgUrl = response.data.cat_img;
-          console.log(`     • cat_img URL (first 100 chars): ${catImgUrl.substring(0, Math.min(100, catImgUrl.length))}${catImgUrl.length > 100 ? '...' : ''}`);
-          console.log(`     • cat_img full length: ${catImgUrl.length} characters`);
-          console.log(`     • cat_img FULL URL: ${catImgUrl}`);
-        }
-      } else {
-        console.log(`   ⚠️  WARNING: Response data is null or undefined!`);
-      }
-
-      console.log(`${'='.repeat(80)}`);
-      console.log(`🚀 Sending JSON response to client now...`);
-      console.log(`${'='.repeat(80)}\n`);
-
-      // Force immediate output flush
-      if (typeof process !== 'undefined' && process.stdout) {
-        process.stdout.write(`\n[SUCCESS LOG COMPLETE - RESPONSE BEING SENT]\n\n`);
-      }
-
-      // Send the response
-      return res.json(response);
-    } catch (err) {
-      console.error(`\n${'='.repeat(80)}`);
-      console.error(`❌ [CATEGORY UPDATE ERROR] Unexpected error occurred!`);
-      console.error(`${'='.repeat(80)}`);
-      console.error(`   Category ID: ${id}`);
-      console.error(`   Error name: ${err.name || 'N/A'}`);
-      console.error(`   Error message: ${err.message || 'N/A'}`);
-      console.error(`   Error code: ${err.code || 'N/A'}`);
-      console.error(`   Error stack:`, err.stack);
-      console.error(`   Error details:`, {
-        name: err.name,
-        message: err.message,
-        code: err.code,
-        statusCode: err.statusCode,
-        requestId: err.requestId
+        msg: 'Category deleted successfully',
+        data: null
       });
-      console.error(`${'='.repeat(80)}\n`);
-
+    } catch (err) {
+      console.error('❌ Error deleting category:', err);
       return res.status(500).json({
         status: 'error',
-        msg: 'Error updating category: ' + err.message,
+        msg: 'Error deleting category: ' + err.message,
         data: null
       });
     }
@@ -713,4 +590,3 @@ module.exports = CategoryController;
 }
 
 module.exports = CategoryController;
-
