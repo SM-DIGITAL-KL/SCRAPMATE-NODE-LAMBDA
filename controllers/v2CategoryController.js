@@ -199,12 +199,14 @@ class V2CategoryController {
         console.error('Redis get error:', err);
       }
       
-      // Get subcategories
+      // Get subcategories (only approved ones for regular users)
+      // Admins can use includePending=true query param to see pending requests
+      const includePending = req.query.includePending === 'true' && req.user?.isAdmin;
       let subcategories;
       if (categoryId) {
-        subcategories = await Subcategory.findByMainCategoryId(categoryId);
+        subcategories = await Subcategory.findByMainCategoryId(categoryId, includePending);
       } else {
-        subcategories = await Subcategory.getAll();
+        subcategories = await Subcategory.getAll(includePending);
       }
       
       // Get main categories for enrichment
@@ -482,11 +484,13 @@ class V2CategoryController {
    */
   static async getIncrementalUpdates(req, res) {
     try {
-      const { userType, lastUpdatedOn } = req.query;
+      const { userType, lastUpdatedOn, userId, type = 'customer' } = req.query;
       
       console.log(`\n🔄 [getIncrementalUpdates] Request received:`);
       console.log(`   userType: ${userType || 'all'}`);
       console.log(`   lastUpdatedOn: ${lastUpdatedOn || 'not provided (will return all)'}`);
+      console.log(`   userId: ${userId || 'not provided (stats will not be included)'}`);
+      console.log(`   type: ${type || 'customer'}`);
       
       // If lastUpdatedOn is provided, log the comparison window
       if (lastUpdatedOn) {
@@ -713,6 +717,42 @@ class V2CategoryController {
       // Get current timestamp for lastUpdatedOn
       const currentTimestamp = new Date().toISOString();
       
+      // Fetch user stats if userId is provided (from Redis cache)
+      let userStats = null;
+      if (userId) {
+        try {
+          const userIdNum = parseInt(userId);
+          const userTypeForStats = type || 'customer'; // customer, shop, or delivery
+          
+          console.log(`📊 [getIncrementalUpdates] Fetching user stats for userId: ${userIdNum}, type: ${userTypeForStats}`);
+          
+          // Try to get stats from Redis cache (they're cached by the recycling and earnings controllers)
+          const recyclingCacheKey = RedisCache.userKey(userIdNum, `recycling_stats_${userTypeForStats}`);
+          const earningsCacheKey = RedisCache.userKey(userIdNum, `earnings_monthly_${userTypeForStats}_6`);
+          
+          try {
+            const recyclingData = await RedisCache.get(recyclingCacheKey);
+            const earningsData = await RedisCache.get(earningsCacheKey);
+            
+            if (recyclingData && earningsData) {
+              userStats = {
+                totalOrders: recyclingData.total_orders_completed || earningsData.totalOrders || 0,
+                totalEarned: earningsData.totalEarnings || 0,
+                totalRecycled: recyclingData.total_recycled_weight_kg || 0
+              };
+              console.log(`✅ [getIncrementalUpdates] User stats fetched from cache:`, userStats);
+            } else {
+              console.log(`ℹ️ [getIncrementalUpdates] Stats not available in cache, skipping stats in response`);
+            }
+          } catch (cacheError) {
+            console.warn(`⚠️ [getIncrementalUpdates] Error fetching stats from cache:`, cacheError.message);
+          }
+        } catch (statsError) {
+          console.warn(`⚠️ [getIncrementalUpdates] Error processing user stats:`, statsError.message);
+          // Continue without stats if there's an error
+        }
+      }
+      
       const response = {
         status: 'success',
         msg: 'Incremental updates retrieved successfully',
@@ -722,7 +762,8 @@ class V2CategoryController {
           deleted: {
             categories: deletedCategories,
             subcategories: deletedSubcategories
-          }
+          },
+          ...(userStats ? { stats: userStats } : {})
         },
         meta: {
           categories_count: filteredCategories.length,

@@ -34,6 +34,18 @@ provider:
     REDIS_TOKEN: ${env:REDIS_TOKEN, ''}
     # S3 Bucket name
     S3_BUCKET_NAME: ${env:S3_BUCKET_NAME, 'scrapmate-images'}
+    # SMS API Configuration (4SMS) - Values from env.txt
+    # Primary names (matches PHP code)
+    4SMS_API_URL_NEW: 'http://4sms.alp-ts.com/api/sms/v1.0/send-sms'
+    4SMS_API_ENITYID: '1701173389563945545'
+    4SMS_API_TOKEN: 'EVLZ8267TMY1O2Z'
+    4SMS_API_KEY: '/BR2+k;L(-aPKA@r%5SO*GzcCm8&Hg6o'
+    SMS_HEADER_CENTER_ID: 'SCRPMT'
+    # Alternative names for backward compatibility (same values)
+    SMS_API_URL_NEW: 'http://4sms.alp-ts.com/api/sms/v1.0/send-sms'
+    SMS_API_ENITYID: '1701173389563945545'
+    SMS_API_TOKEN: 'EVLZ8267TMY1O2Z'
+    SMS_API_KEY: '/BR2+k;L(-aPKA@r%5SO*GzcCm8&Hg6o'
     
     # Option: Use SSM Parameter Store (uncomment after setting up parameters)
     # API_KEY: ${ssm:/scrapmate/${self:provider.stage}/API_KEY~true}
@@ -105,6 +117,18 @@ package:
     - '!scripts/**'
     - '!dist/**'
     - '!.DS_Store'
+    - '!test-*.js'
+    - '!Postman_*.json'
+    - '!nginx.conf'
+    - '!nodemon.json'
+    # Include Firebase service account files
+    - 'firebase-service-account.json'
+    - 'scrapmate-partner-android-firebase-adminsdk-fbsvc-709bbce0d4.json'
+    - 'scrapmate-partner-android-firebase-adminsdk-fbsvc-94a2c243ee.json'
+  individually: false
+  excludeDevDependencies: true
+
+
     - '!test-*.js'
     - '!Postman_*.json'
     - '!nginx.conf'

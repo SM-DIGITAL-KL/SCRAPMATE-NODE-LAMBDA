@@ -48,6 +48,27 @@ class V2ProfileController {
             delete cachedProfile.delivery_boy;
             console.log('🔒 Removed vendor data from cached profile for customer_app');
           }
+          
+          // If cached profile doesn't have invoices and this is a vendor_app request, fetch them
+          // This handles cases where old cached profiles don't have invoices
+          const isVendorAppRequest = appType !== 'customer_app' && (cachedProfile.app_type !== 'customer_app' || !cachedProfile.app_type);
+          if (isVendorAppRequest && (!cachedProfile.invoices || !Array.isArray(cachedProfile.invoices))) {
+            console.log('⚠️ Cached profile missing invoices - fetching and updating cache');
+            try {
+              const Invoice = require('../models/Invoice');
+              const invoices = await Invoice.findByUserId(userIdNum);
+              invoices.sort((a, b) => (b.id || 0) - (a.id || 0));
+              cachedProfile.invoices = invoices;
+              
+              // Update cache with invoices included
+              await RedisCache.set(cacheKey, cachedProfile, 'medium');
+              console.log(`✅ Added ${invoices.length} invoices to cached profile and updated cache`);
+            } catch (invoiceError) {
+              console.error('❌ Error fetching invoices for cached profile:', invoiceError);
+              cachedProfile.invoices = [];
+            }
+          }
+          
           console.log('⚡ Profile cache hit');
           return res.json({
             status: 'success',
@@ -181,7 +202,212 @@ class V2ProfileController {
 
       return res.status(500).json({
         status: 'error',
-        msg: 'Failed to update profile',
+        msg: error.message || 'Failed to update profile',
+        data: null,
+      });
+    }
+  }
+
+  /**
+   * POST /api/v2/profile/:userId/upgrade-to-sr
+   * Upgrade user_type from 'S' to 'SR' and create R shop when switching to B2C mode
+   * Only works if user is approved by admin panel
+   */
+  static async upgradeToSR(req, res) {
+    try {
+      const { userId } = req.params;
+
+      if (!userId) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'User ID is required',
+          data: null,
+        });
+      }
+
+      const User = require('../models/User');
+      const Shop = require('../models/Shop');
+      const RedisCache = require('../utils/redisCache');
+
+      // Get user
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'User not found',
+          data: null,
+        });
+      }
+
+      // Get all shops for this user (needed for both SR check and upgrade logic)
+      const shops = await Shop.findAllByUserId(userId);
+      if (!shops || shops.length === 0) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'No shop found for this user',
+          data: null,
+        });
+      }
+
+      // Check if user_type is 'S' or 'R' (R might be a previous failed upgrade)
+      if (user.user_type !== 'S' && user.user_type !== 'R') {
+        // If already SR, just return success
+        if (user.user_type === 'SR') {
+          const rShop = shops.find(shop => shop.shop_type === 3);
+          const b2bShop = shops.find(shop => shop.shop_type === 1 || shop.shop_type === 4);
+          return res.json({
+            status: 'success',
+            msg: 'User is already SR.',
+            data: {
+              user_type: 'SR',
+              b2b_shop_id: b2bShop?.id,
+              r_shop_id: rShop?.id,
+            },
+          });
+        }
+        return res.status(400).json({
+          status: 'error',
+          msg: `User type must be 'S' or 'R' to upgrade. Current type: ${user.user_type}`,
+          data: null,
+        });
+      }
+
+      // Find the B2B shop (shop_type 1 or 4)
+      const b2bShop = shops.find(shop => shop.shop_type === 1 || shop.shop_type === 4);
+      if (!b2bShop) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'B2B shop not found for this user',
+          data: null,
+        });
+      }
+
+      // Check if shop is approved
+      if (b2bShop.approval_status !== 'approved') {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'User must be approved by admin panel before switching to B2C mode',
+          data: null,
+        });
+      }
+
+      // Check if R shop already exists
+      const rShop = shops.find(shop => shop.shop_type === 3);
+      if (rShop) {
+        // R shop already exists, just update user_type if needed
+        if (user.user_type !== 'SR') {
+          await User.updateProfile(userId, { user_type: 'SR' });
+          console.log(`✅ Upgraded user ${userId} to user_type 'SR' (R shop already exists)`);
+          
+          // Verify the update was successful
+          const updatedUser = await User.findById(userId);
+          if (updatedUser.user_type !== 'SR') {
+            console.error(`❌ User type update failed! Expected 'SR', got '${updatedUser.user_type}'`);
+            // Try updating again
+            await User.updateProfile(userId, { user_type: 'SR' });
+            const recheckUser = await User.findById(userId);
+            if (recheckUser.user_type !== 'SR') {
+              throw new Error(`Failed to update user_type to 'SR'. Current type: ${recheckUser.user_type}`);
+            }
+            console.log(`✅ User type corrected to 'SR' on retry`);
+          }
+        }
+
+        // Ensure both shops are approved
+        if (b2bShop.approval_status !== 'approved') {
+          await Shop.update(b2bShop.id, { approval_status: 'approved' });
+        }
+        if (rShop.approval_status !== 'approved') {
+          await Shop.update(rShop.id, { approval_status: 'approved' });
+        }
+
+        // Invalidate caches - be thorough
+        await RedisCache.delete(RedisCache.userKey(String(userId), 'profile'));
+        await RedisCache.delete(RedisCache.userKey(String(userId)));
+        await RedisCache.invalidateV2ApiCache('profile', userId);
+        await RedisCache.invalidateB2BUsersCache();
+        await RedisCache.invalidateTableCache('users');
+        console.log(`✅ Invalidated all caches for user ${userId}`);
+
+        return res.json({
+          status: 'success',
+          msg: 'User already has R shop. User type updated to SR.',
+          data: {
+            user_type: 'SR',
+            b2b_shop_id: b2bShop.id,
+            r_shop_id: rShop.id,
+          },
+        });
+      }
+
+      // Create R shop based on B2B shop data
+      const rShopData = {
+        user_id: userId,
+        email: b2bShop.email || '',
+        shopname: b2bShop.shopname || user.name || '',
+        contact: b2bShop.contact || '',
+        address: b2bShop.address || '',
+        location: b2bShop.location || '',
+        state: b2bShop.state || '',
+        place: b2bShop.place || '',
+        language: b2bShop.language || '',
+        profile_photo: b2bShop.profile_photo || '',
+        shop_type: 3, // B2C Retailer shop
+        pincode: b2bShop.pincode || '',
+        lat_log: b2bShop.lat_log || '',
+        place_id: b2bShop.place_id || '',
+        approval_status: 'approved', // Set as approved
+        del_status: 1,
+      };
+
+      // Create the R shop
+      const newRShop = await Shop.create(rShopData);
+      console.log(`✅ Created R shop ${newRShop.id} for user ${userId}`);
+
+      // Update user_type from 'S' to 'SR'
+      await User.updateProfile(userId, { user_type: 'SR' });
+      console.log(`✅ Upgraded user ${userId} to user_type 'SR'`);
+
+      // Verify the update was successful
+      const updatedUser = await User.findById(userId);
+      if (updatedUser.user_type !== 'SR') {
+        console.error(`❌ User type update failed! Expected 'SR', got '${updatedUser.user_type}'`);
+        // Try updating again
+        await User.updateProfile(userId, { user_type: 'SR' });
+        const recheckUser = await User.findById(userId);
+        if (recheckUser.user_type !== 'SR') {
+          throw new Error(`Failed to update user_type to 'SR'. Current type: ${recheckUser.user_type}`);
+        }
+        console.log(`✅ User type corrected to 'SR' on retry`);
+      }
+
+      // Ensure B2B shop is also approved
+      if (b2bShop.approval_status !== 'approved') {
+        await Shop.update(b2bShop.id, { approval_status: 'approved' });
+      }
+
+      // Invalidate caches - be thorough
+      await RedisCache.delete(RedisCache.userKey(String(userId), 'profile'));
+      await RedisCache.delete(RedisCache.userKey(String(userId)));
+      await RedisCache.invalidateV2ApiCache('profile', userId);
+      await RedisCache.invalidateB2BUsersCache();
+      await RedisCache.invalidateTableCache('users');
+      console.log(`✅ Invalidated all caches for user ${userId}`);
+
+      return res.json({
+        status: 'success',
+        msg: 'User upgraded to SR and R shop created successfully',
+        data: {
+          user_type: 'SR',
+          b2b_shop_id: b2bShop.id,
+          r_shop_id: newRShop.id,
+        },
+      });
+    } catch (error) {
+      console.error('❌ V2ProfileController.upgradeToSR error:', error);
+      return res.status(500).json({
+        status: 'error',
+        msg: error.message || 'Failed to upgrade user to SR',
         data: null,
       });
     }
@@ -1024,10 +1250,48 @@ class V2ProfileController {
       }
 
       // Get category details if category IDs exist
-      const categoryIds = user.operating_categories || [];
+      let categoryIds = user.operating_categories || [];
       let categories = [];
-
-      if (categoryIds.length > 0) {
+      
+      // If user has no categories selected and is B2C (N or R), return all B2C categories
+      const isB2CUser = user.user_type === 'N' || user.user_type === 'R';
+      if (categoryIds.length === 0 && isB2CUser) {
+        console.log(`📦 [getUserCategories] User ${userIdNum} has no categories selected. Returning all B2C categories.`);
+        try {
+          const CategoryImgKeywords = require('../models/CategoryImgKeywords');
+          const V2CategoryController = require('./v2CategoryController');
+          
+          // Get all categories with B2C availability
+          const allCategories = await CategoryImgKeywords.getAll();
+          const shops = await V2CategoryController._getAllShops();
+          
+          // Determine B2C availability (shop_type = 3 is Retailer B2C)
+          const b2cShopTypes = [3];
+          const b2cShops = shops.filter(shop => 
+            shop.del_status === 1 && b2cShopTypes.includes(shop.shop_type)
+          );
+          
+          // Get all B2C categories
+          const b2cCategories = allCategories
+            .filter(cat => !cat.deleted)
+            .map(cat => ({
+              id: cat.id,
+              name: cat.category_name || cat.cat_name || '',
+              image: cat.category_img || cat.cat_img || '',
+              b2c_available: b2cShops.length > 0 // If there are B2C shops, category is available
+            }))
+            .filter(cat => cat.b2c_available); // Only return B2C available categories
+          
+          categoryIds = b2cCategories.map(cat => cat.id);
+          categories = b2cCategories;
+          
+          console.log(`✅ [getUserCategories] Returning ${categories.length} B2C categories for user ${userIdNum}`);
+        } catch (err) {
+          console.error('Error fetching all B2C categories:', err);
+          console.error('Error stack:', err.stack);
+          // Continue with empty categories array if fetch fails
+        }
+      } else if (categoryIds.length > 0) {
         try {
           const CategoryImgKeywords = require('../models/CategoryImgKeywords');
           
@@ -1657,13 +1921,67 @@ class V2ProfileController {
       }
 
       // Get subcategory details if subcategory IDs exist
-      const userSubcategories = user.operating_subcategories || [];
+      let userSubcategories = user.operating_subcategories || [];
       console.log(`📊 [getUserSubcategories] User has ${userSubcategories.length} operating subcategories stored`);
       console.log(`📋 [getUserSubcategories] Raw operating_subcategories:`, JSON.stringify(userSubcategories, null, 2));
       
+      // If user has no subcategories selected and is B2C (N or R), return all B2C subcategories
+      const isB2CUser = user.user_type === 'N' || user.user_type === 'R';
+      let preFormattedSubcategories = null;
+      
+      if (userSubcategories.length === 0 && isB2CUser) {
+        console.log(`📦 [getUserSubcategories] User ${userIdNum} has no subcategories selected. Returning all B2C subcategories.`);
+        try {
+          const Subcategory = require('../models/Subcategory');
+          const V2CategoryController = require('./v2CategoryController');
+          
+          // Get all subcategories
+          const allSubcategories = await Subcategory.getAll();
+          const shops = await V2CategoryController._getAllShops();
+          
+          // Determine B2C availability (shop_type = 3 is Retailer B2C)
+          const b2cShopTypes = [3];
+          const b2cShops = shops.filter(shop => 
+            shop.del_status === 1 && b2cShopTypes.includes(shop.shop_type)
+          );
+          const hasB2C = b2cShops.length > 0;
+          
+          // Get all B2C subcategories
+          preFormattedSubcategories = allSubcategories
+            .filter(sub => !sub.deleted && hasB2C)
+            .map(sub => ({
+              subcategory_id: sub.id,
+              name: sub.subcategory_name || sub.name || '',
+              image: sub.subcategory_img || sub.image || '',
+              main_category_id: sub.main_category_id,
+              default_price: sub.default_price || '',
+              price_unit: sub.price_unit || 'kg',
+              custom_price: '', // No custom price initially
+              display_price: sub.default_price || '',
+              display_price_unit: sub.price_unit || 'kg'
+            }));
+          
+          userSubcategories = preFormattedSubcategories.map(sub => ({
+            subcategory_id: sub.subcategory_id,
+            custom_price: sub.custom_price,
+            price_unit: sub.price_unit
+          }));
+          
+          console.log(`✅ [getUserSubcategories] Returning ${preFormattedSubcategories.length} B2C subcategories for user ${userIdNum}`);
+        } catch (err) {
+          console.error('Error fetching all B2C subcategories:', err);
+          console.error('Error stack:', err.stack);
+          // Continue with empty subcategories array if fetch fails
+        }
+      }
+      
       let subcategories = [];
 
-      if (userSubcategories.length > 0) {
+      if (preFormattedSubcategories) {
+        // Use pre-formatted subcategories from B2C auto-select
+        subcategories = preFormattedSubcategories;
+        console.log(`✅ [getUserSubcategories] Using pre-formatted B2C subcategories: ${subcategories.length}`);
+      } else if (userSubcategories.length > 0) {
         const Subcategory = require('../models/Subcategory');
         
         // Fetch subcategory details

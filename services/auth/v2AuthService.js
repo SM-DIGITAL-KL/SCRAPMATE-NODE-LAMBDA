@@ -122,59 +122,49 @@ class V2AuthService {
   }
 
   /**
-   * Find or reuse existing customer_app user to prevent duplicates
+   * Find or reuse existing customer_app user with user_type='C' to prevent duplicates
+   * IMPORTANT: ONLY returns users with user_type='C' and app_type='customer_app'
+   * If no user with user_type='C' exists, returns null (so a new account can be created)
+   * Returns the MOST RECENTLY UPDATED customer_app user if multiple exist
    * @param {string} phoneNumber - Phone number
-   * @returns {Promise<Object|null>} Existing customer_app user or null
+   * @returns {Promise<Object|null>} Existing customer_app user with user_type='C' or null
    */
   static async findOrReuseCustomerAppUser(phoneNumber) {
     try {
       const allUsers = await User.findAllByMobile(phoneNumber);
       if (allUsers && allUsers.length > 0) {
-        // Find ANY existing customer_app user (regardless of user_type)
-        // Priority: user_type='C' > user_type='N' > any other
-        const customerAppUserC = allUsers.find(u => 
+        // Find ONLY customer_app users with user_type='C' (strict requirement)
+        const activeUsers = allUsers.filter(u => (u.del_status !== 2 || !u.del_status));
+        const customerAppUsersC = activeUsers.filter(u => 
           u.app_type === 'customer_app' && 
-          u.user_type === 'C' && 
-          (u.del_status !== 2 || !u.del_status)
+          u.user_type === 'C'
         );
         
-        if (customerAppUserC) {
-          console.log(`♻️  Found existing customer_app user with user_type='C' (ID: ${customerAppUserC.id}) - reusing to prevent duplicate`);
-          return customerAppUserC;
+        if (customerAppUsersC.length === 0) {
+          console.log(`ℹ️  No customer_app user with user_type='C' found for phone ${phoneNumber} - will create new account`);
+          return null;
         }
         
-        const customerAppUserN = allUsers.find(u => 
-          u.app_type === 'customer_app' && 
-          u.user_type === 'N' && 
-          (u.del_status !== 2 || !u.del_status)
-        );
-        
-        if (customerAppUserN) {
-          console.log(`♻️  Found existing customer_app user with user_type='N' (ID: ${customerAppUserN.id}) - will update to 'C' and reuse`);
-          // Update to 'C' type
-          const client = getDynamoDBClient();
-          await client.send(new UpdateCommand({
-            TableName: 'users',
-            Key: { id: customerAppUserN.id },
-            UpdateExpression: 'SET user_type = :userType, updated_at = :updated',
-            ExpressionAttributeValues: {
-              ':userType': 'C',
-              ':updated': new Date().toISOString()
-            }
-          }));
-          return { ...customerAppUserN, user_type: 'C' };
+        // If multiple customer_app users with user_type='C' exist, use the most recently updated one
+        if (customerAppUsersC.length > 1) {
+          console.log(`⚠️  Found ${customerAppUsersC.length} customer_app users (user_type='C') for phone ${phoneNumber} - will use most recently updated one`);
+          
+          // Sort by updated_at (most recent first)
+          customerAppUsersC.sort((a, b) => {
+            const dateA = new Date(a.updated_at || a.created_at || 0);
+            const dateB = new Date(b.updated_at || b.created_at || 0);
+            return dateB - dateA;
+          });
+          
+          const mostRecentUser = customerAppUsersC[0];
+          console.log(`✅ Using most recently updated customer_app user (ID: ${mostRecentUser.id}, updated: ${mostRecentUser.updated_at || mostRecentUser.created_at})`);
+          return mostRecentUser;
         }
         
-        // Check for any other customer_app user (shouldn't happen, but just in case)
-        const anyCustomerAppUser = allUsers.find(u => 
-          u.app_type === 'customer_app' && 
-          (u.del_status !== 2 || !u.del_status)
-        );
-        
-        if (anyCustomerAppUser) {
-          console.log(`♻️  Found existing customer_app user (ID: ${anyCustomerAppUser.id}, user_type: ${anyCustomerAppUser.user_type}) - reusing to prevent duplicate`);
-          return anyCustomerAppUser;
-        }
+        // Only one customer_app user with user_type='C' exists
+        const customerAppUser = customerAppUsersC[0];
+        console.log(`♻️  Found existing customer_app user with user_type='C' (ID: ${customerAppUser.id}) - reusing to prevent duplicate`);
+        return customerAppUser;
       }
       return null;
     } catch (error) {
@@ -320,6 +310,34 @@ class V2AuthService {
       // Continue - will treat as new user
     }
 
+    // Store OTP in Redis cache (TTL: 5 minutes = 300 seconds)
+    try {
+      const otpCacheKey = `otp:${cleanedPhone}:${targetAppType}`;
+      await RedisCache.set(otpCacheKey, otp, 300); // 5 minutes TTL
+      console.log(`💾 [generateOtp] Stored OTP in cache with key: ${otpCacheKey}, TTL: 300s`);
+    } catch (cacheError) {
+      console.error('⚠️ [generateOtp] Failed to store OTP in cache:', cacheError.message);
+      // Don't fail the request if cache fails - OTP will still be sent via SMS
+    }
+
+    // Send OTP via SMS
+    try {
+      console.log(`📱 [generateOtp] Attempting to send OTP via SMS to ${cleanedPhone}`);
+      const SmsService = require('../../utils/smsService');
+      const smsResult = await SmsService.sendOtp(cleanedPhone, otp);
+      console.log(`✅ [generateOtp] OTP sent via SMS to ${cleanedPhone}`);
+      console.log(`   SMS API Response:`, JSON.stringify(smsResult, null, 2));
+    } catch (smsError) {
+      // Log error but don't fail the request - OTP is still returned in response
+      console.error('❌ [generateOtp] Failed to send OTP via SMS:', smsError.message);
+      console.error('   Error details:', smsError);
+      if (smsError.response) {
+        console.error('   HTTP Status:', smsError.response.status);
+        console.error('   Response data:', JSON.stringify(smsError.response.data, null, 2));
+      }
+      console.error('   OTP is still available in API response for testing');
+    }
+
     if (user) {
       // User exists - check if admin/user type (not allowed for mobile app)
       if (user.user_type === 'A' || user.user_type === 'U') {
@@ -363,77 +381,144 @@ class V2AuthService {
       throw new Error('Invalid phone number');
     }
 
-    // Validate OTP format
-    if (otp.length !== 6) {
+    // Normalize OTP: trim whitespace and extract only digits (handle SMS auto-fill issues)
+    const normalizedOtp = String(otp).trim().replace(/\D/g, '');
+
+    // Validate OTP format (should be exactly 6 digits after normalization)
+    if (normalizedOtp.length !== 6) {
       throw new Error('Invalid OTP format');
     }
-
-    // For test numbers, accept specific OTP
-    const isTestNumber = cleanedPhone === '9605056015' || cleanedPhone === '7994095833';
-    // In production, verify OTP from your OTP service here
-    // For now, we accept any 6-digit OTP for development
 
     // Determine target app type: if appType is provided, use it; otherwise default to vendor_app
     const targetAppType = appType || 'vendor_app';
     console.log(`📱 verifyOtpAndLogin: targetAppType=${targetAppType}, joinType=${joinType}`);
 
+    // Verify OTP from cache
+    try {
+      const otpCacheKey = `otp:${cleanedPhone}:${targetAppType}`;
+      const storedOtp = await RedisCache.get(otpCacheKey);
+      
+      // Normalize stored OTP (convert to string and trim, just in case)
+      const normalizedStoredOtp = storedOtp ? String(storedOtp).trim() : null;
+      
+      console.log(`🔍 [verifyOtpAndLogin] OTP verification check:`);
+      console.log(`   Cache key: ${otpCacheKey}`);
+      console.log(`   Stored OTP: ${normalizedStoredOtp ? 'Found' : 'Not found'}`);
+      console.log(`   Provided OTP: ${normalizedOtp.replace(/\d/g, '•')}`); // Mask for security
+      
+      // For test numbers, accept specific OTP (487600) as fallback
+      const isTestNumber = cleanedPhone === '9605056015' || cleanedPhone === '7994095833';
+      const testOtp = '487600';
+      
+      if (!normalizedStoredOtp && !isTestNumber) {
+        console.error('❌ [verifyOtpAndLogin] OTP not found in cache and not a test number');
+        throw new Error('OTP expired or invalid. Please request a new OTP.');
+      }
+      
+      // Verify OTP matches (allow test OTP for test numbers)
+      // Compare normalized values to handle whitespace/encoding issues from SMS auto-fill
+      const isValidOtp = normalizedStoredOtp === normalizedOtp || (isTestNumber && normalizedOtp === testOtp);
+      
+      if (!isValidOtp) {
+        console.error('❌ [verifyOtpAndLogin] OTP mismatch');
+        console.error(`   Expected: ${normalizedStoredOtp || testOtp}`);
+        console.error(`   Received: ${normalizedOtp.replace(/\d/g, '•')}`);
+        console.error(`   Original provided OTP (raw): "${otp}" (length: ${otp.length})`);
+        throw new Error('Invalid OTP. Please check and try again.');
+      }
+      
+      console.log(`✅ [verifyOtpAndLogin] OTP verified successfully`);
+      
+      // Delete OTP from cache after successful verification (one-time use)
+      try {
+        await RedisCache.delete(otpCacheKey);
+        console.log(`🗑️  [verifyOtpAndLogin] Deleted OTP from cache (one-time use)`);
+      } catch (deleteError) {
+        console.warn('⚠️ [verifyOtpAndLogin] Failed to delete OTP from cache:', deleteError.message);
+        // Don't fail the request if cache deletion fails
+      }
+    } catch (otpError) {
+      // If error message already contains user-friendly message, re-throw it
+      if (otpError.message.includes('expired') || otpError.message.includes('Invalid OTP')) {
+        throw otpError;
+      }
+      // For other cache errors, log and throw generic error
+      console.error('❌ [verifyOtpAndLogin] OTP verification error:', otpError.message);
+      throw new Error('OTP verification failed. Please try again.');
+    }
+
     // Check for users based on target app type
     let user = null;
     
     if (targetAppType === 'customer_app') {
-      // For customer app, look for customer app users first
-      user = await User.findByMobileAndAppType(cleanedPhone, 'customer_app');
+      // IMPORTANT: Only fetch users with user_type='C' and app_type='customer_app'
+      // If no such user exists, create a new account
+      user = await this.findOrReuseCustomerAppUser(cleanedPhone);
       
-      // If found, prioritize user_type='C' over user_type='N'
-      if (user) {
-        const allUsers = await User.findAllByMobile(cleanedPhone);
-        if (allUsers && allUsers.length > 0) {
-          // Prefer customer_app user with user_type='C' (completed customer)
-          const customerAppUserC = allUsers.find(u => 
-            u.app_type === 'customer_app' && 
-            u.user_type === 'C' && 
-            (u.del_status !== 2 || !u.del_status)
-          );
-          if (customerAppUserC) {
-            console.log(`✅ Found customer_app user with user_type='C' (ID: ${customerAppUserC.id}) - using instead of user_type='N' user`);
-            user = customerAppUserC;
-          }
-        }
-      }
-      
-      // If not found, check all users by mobile
+      // If no customer app user with user_type='C' found, check if there's a vendor app user
+      // Customer app should create SEPARATE account - different user ID
       if (!user) {
         const allUsers = await User.findAllByMobile(cleanedPhone);
-        
         if (allUsers && allUsers.length > 0) {
-          // Find customer app user (user_type='C' with customer_app app_type, not deleted)
-          user = allUsers.find(u => 
-            u.user_type === 'C' && 
-            (u.app_type === 'customer_app' || (!u.app_type && u.user_type === 'C')) &&
+          const vendorAppUser = allUsers.find(u => 
+            (u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C')) &&
             (u.del_status !== 2 || !u.del_status)
           );
           
-          // If no customer app user found, check if there's a vendor app user
-          // Customer app should create SEPARATE account - different user ID
-          if (!user) {
-            const vendorAppUser = allUsers.find(u => 
-              (u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C')) &&
-              (u.del_status !== 2 || !u.del_status)
-            );
-            
-            if (vendorAppUser) {
-              console.log(`⚠️  Found vendor app user (ID: ${vendorAppUser.id}) but request is from customer app - will create separate customer app user`);
-              user = null; // Will create new customer app user below with different user ID
-            }
+          if (vendorAppUser) {
+            console.log(`⚠️  Found vendor app user (ID: ${vendorAppUser.id}) but request is from customer app - will create separate customer app user`);
+            user = null; // Will create new customer app user below with different user ID
           }
         }
       }
-    } else {
+      
+      // Verify that user has correct user_type='C' and app_type='customer_app' (should always be true if found)
+      if (user && (user.user_type !== 'C' || user.app_type !== 'customer_app')) {
+        console.error(`❌ ERROR: Customer app user (ID: ${user.id}) has incorrect type - user_type='${user.user_type}', app_type='${user.app_type}'`);
+        // Don't update - this shouldn't happen, but if it does, treat as no user found
+        user = null;
+      }
+      } else {
       // For vendor app, check for vendor app users first
       user = await User.findByMobileAndAppType(cleanedPhone, 'vendor_app');
       
-      // If not found, check all users by mobile
-      if (!user) {
+      // Ensure vendor_app users have correct app_type and valid user_type (R, S, SR, D, or N)
+      // Vendor app users should NEVER have user_type='C' - that's only for customer_app
+      if (user) {
+        const validVendorTypes = ['R', 'S', 'SR', 'D', 'N'];
+        const needsUpdate = user.app_type !== 'vendor_app' || 
+                           user.user_type === 'C' || 
+                           !validVendorTypes.includes(user.user_type);
+        
+        if (needsUpdate) {
+          console.log(`🔧 Updating vendor_app user (ID: ${user.id}) - setting app_type to 'vendor_app' and correcting user_type`);
+          const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+          const { getDynamoDBClient } = require('../../config/dynamodb');
+          const client = getDynamoDBClient();
+          
+          // If user_type is 'C' (customer), change to 'N' (new vendor user)
+          // Otherwise, ensure it's a valid vendor type
+          const updatedUserType = user.user_type === 'C' ? 'N' : 
+                                 (validVendorTypes.includes(user.user_type) ? user.user_type : 'N');
+          
+          await client.send(new UpdateCommand({
+            TableName: 'users',
+            Key: { id: user.id },
+            UpdateExpression: 'SET app_type = :appType, user_type = :userType, updated_at = :updated',
+            ExpressionAttributeValues: {
+              ':appType': 'vendor_app',
+              ':userType': updatedUserType,
+              ':updated': new Date().toISOString()
+            }
+          }));
+          
+          user = { ...user, app_type: 'vendor_app', user_type: updatedUserType };
+          console.log(`✅ Updated vendor_app user (ID: ${user.id}) - app_type='vendor_app', user_type='${updatedUserType}'`);
+        }
+      }
+        
+        // If not found, check all users by mobile
+        if (!user) {
         const allUsers = await User.findAllByMobile(cleanedPhone);
         
         if (allUsers && allUsers.length > 0) {
@@ -456,6 +541,31 @@ class V2AuthService {
             });
             user = completedVendorUsers[0];
             console.log(`✅ Found completed vendor app user (ID: ${user.id}, type: ${user.user_type}) - using for login`);
+            
+            // Ensure vendor app user has correct app_type and user_type
+            if (user && (user.app_type !== 'vendor_app' || user.user_type === 'C')) {
+              console.log(`🔧 Updating vendor_app user (ID: ${user.id}) - setting app_type to 'vendor_app' and correcting user_type`);
+              const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+              const { getDynamoDBClient } = require('../../config/dynamodb');
+              const client = getDynamoDBClient();
+              
+              // If user_type is 'C', change to 'N' (new vendor user)
+              const updatedUserType = user.user_type === 'C' ? 'N' : user.user_type;
+              
+              await client.send(new UpdateCommand({
+                TableName: 'users',
+                Key: { id: user.id },
+                UpdateExpression: 'SET app_type = :appType, user_type = :userType, updated_at = :updated',
+                ExpressionAttributeValues: {
+                  ':appType': 'vendor_app',
+                  ':userType': updatedUserType,
+                  ':updated': new Date().toISOString()
+                }
+              }));
+              
+              user = { ...user, app_type: 'vendor_app', user_type: updatedUserType };
+              console.log(`✅ Updated vendor_app user (ID: ${user.id}) - app_type='vendor_app', user_type='${updatedUserType}'`);
+            }
           } else {
             // If no completed users, find any vendor app user (including 'N')
             user = activeUsers.find(u => u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C'));
@@ -499,6 +609,31 @@ class V2AuthService {
             const betterUser = completedVendorUsers[0];
             console.log(`✅ Found better completed vendor app user (ID: ${betterUser.id}, type: ${betterUser.user_type}) - switching from ID: ${user.id}`);
             user = betterUser;
+            
+            // Ensure vendor app user has correct app_type and user_type
+            if (user && (user.app_type !== 'vendor_app' || user.user_type === 'C')) {
+              console.log(`🔧 Updating vendor_app user (ID: ${user.id}) - setting app_type to 'vendor_app' and correcting user_type`);
+              const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+              const { getDynamoDBClient } = require('../../config/dynamodb');
+              const client = getDynamoDBClient();
+              
+              // If user_type is 'C', change to 'N' (new vendor user)
+              const updatedUserType = user.user_type === 'C' ? 'N' : user.user_type;
+              
+              await client.send(new UpdateCommand({
+                TableName: 'users',
+                Key: { id: user.id },
+                UpdateExpression: 'SET app_type = :appType, user_type = :userType, updated_at = :updated',
+                ExpressionAttributeValues: {
+                  ':appType': 'vendor_app',
+                  ':userType': updatedUserType,
+                  ':updated': new Date().toISOString()
+                }
+              }));
+              
+              user = { ...user, app_type: 'vendor_app', user_type: updatedUserType };
+              console.log(`✅ Updated vendor_app user (ID: ${user.id}) - app_type='vendor_app', user_type='${updatedUserType}'`);
+            }
           }
         }
       }
@@ -545,27 +680,45 @@ class V2AuthService {
     // IMPORTANT: customer_app and vendor_app are SEPARATE accounts with different user IDs
     // Even with the same phone number, they should have different user accounts
     // Only prevent duplicates WITHIN the same app type
-    if (user && targetAppType === 'customer_app' && user.app_type !== 'customer_app' && user.app_type !== null) {
-      // User exists but is from vendor app - create separate customer app user
-      console.log(`⚠️  Found vendor app user (ID: ${user.id}, app_type: ${user.app_type}) but request is from customer app - creating separate customer app user`);
-      
-      // Check if customer app user already exists - use helper to prevent duplicates
-      const existingCustomerAppUser = await this.findOrReuseCustomerAppUser(cleanedPhone);
-      
-      if (existingCustomerAppUser) {
-        user = existingCustomerAppUser;
-        console.log(`✅ Using existing customer app user (ID: ${user.id}) to prevent duplicate`);
-      } else {
-        // No existing customer_app user found - create new one with different user ID
-        const tempName = `User_${cleanedPhone}`;
-        const tempEmail = '';
-        user = await User.create(tempName, tempEmail, cleanedPhone, 'C', cleanedPhone, 'customer_app', 'v2');
-        console.log(`📝 Created new customer app user (ID: ${user.id}) - separate from vendor app user`);
+    if (user && targetAppType === 'customer_app') {
+      // CRITICAL: For customer_app, user MUST have app_type='customer_app' and user_type='C'
+      // If user is from vendor app or has wrong type, create/find separate customer app user
+      if (user.app_type !== 'customer_app' || user.user_type !== 'C') {
+        console.log(`⚠️  Found user (ID: ${user.id}, app_type: ${user.app_type}, user_type: ${user.user_type}) but request is from customer app - creating/finding separate customer app user`);
+        
+        // Check if customer app user already exists - use helper to prevent duplicates
+        const existingCustomerAppUser = await this.findOrReuseCustomerAppUser(cleanedPhone);
+        
+        if (existingCustomerAppUser) {
+          user = existingCustomerAppUser;
+          console.log(`✅ Using existing customer app user (ID: ${user.id}) to prevent duplicate`);
+        } else {
+          // No existing customer_app user found - create new one with different user ID
+          const tempName = `User_${cleanedPhone}`;
+          const tempEmail = '';
+          user = await User.create(tempName, tempEmail, cleanedPhone, 'C', cleanedPhone, 'customer_app', 'v2');
+          console.log(`📝 Created new customer app user (ID: ${user.id}) - separate from vendor app user`);
+        }
       }
-    } else if (user && targetAppType === 'vendor_app' && user.app_type === 'customer_app' && !joinType) {
-      // User exists but is from customer app and no joinType provided - this shouldn't happen for vendor app
-      // But if it does, we'll handle it in the registration logic below
-      console.log(`⚠️  Found customer app user (ID: ${user.id}) but request is from vendor app without joinType`);
+    } else if (user && targetAppType === 'vendor_app') {
+      // CRITICAL: For vendor_app, user MUST have app_type='vendor_app' and user_type should NOT be 'C'
+      // If user is from customer app or has wrong type, create/find separate vendor app user
+      if (user.app_type === 'customer_app' || user.user_type === 'C') {
+        console.log(`⚠️  Found customer app user (ID: ${user.id}, app_type: ${user.app_type}, user_type: ${user.user_type}) but request is from vendor app - creating/finding separate vendor app user`);
+        
+        // Check if vendor app user already exists - use helper to prevent duplicates
+        const existingVendorAppUser = await this.findOrReuseVendorAppUser(cleanedPhone);
+        
+        if (existingVendorAppUser) {
+          user = existingVendorAppUser;
+          console.log(`✅ Using existing vendor app user (ID: ${user.id}) to prevent duplicate`);
+        } else {
+          // No existing vendor_app user found - will be created in registration logic below
+          // Set user to null so registration logic handles it
+          user = null;
+          console.log(`📝 Will create new vendor app user - separate from customer app user`);
+        }
+      }
     }
 
     if (!user) {
@@ -655,7 +808,7 @@ class V2AuthService {
         }
       } else if (!joinType) {
         // For vendor app, joinType is required
-        throw new Error('Join type is required for new users');
+        throw new Error('You are not registered in any of the Join Type');
       } else {
         // Check if user exists with this phone number in any app
       const allUsersCheck = await User.findAllByMobile(cleanedPhone);
@@ -842,8 +995,9 @@ class V2AuthService {
       }
       
       // Customer app users (type 'C') can register as ANY type in vendor app (B2B, B2C, or Delivery)
-      // Check if user is from customer app (type 'C' with customer_app app_type or no app_type)
-      if (user.user_type === 'C' && (user.app_type === 'customer_app' || !user.app_type)) {
+      // BUT ONLY if the request is from vendor_app
+      // If request is from customer_app, ignore joinType and keep the customer app user
+      if (targetAppType === 'vendor_app' && user.user_type === 'C' && (user.app_type === 'customer_app' || !user.app_type)) {
         // Customer app user registering in vendor app - allow any joinType (B2B, B2C, or Delivery)
         if (joinType) {
           // IMPORTANT: All new users (including delivery) should start as 'N' until signup is complete
@@ -864,8 +1018,12 @@ class V2AuthService {
           console.log(`📝 Created new vendor app user (ID: ${user.id}) with type '${vendorUserType}' - will be updated after signup completion`);
           }
         } else {
-          throw new Error('Join type is required for customer app users registering in vendor app');
+          throw new Error('You are not registered in any of the Join Type');
         }
+      } else if (targetAppType === 'customer_app' && user.user_type === 'C' && user.app_type === 'customer_app') {
+        // Customer app user logging into customer app - ignore joinType, keep customer app user
+        console.log(`✅ Customer app user (ID: ${user.id}) logging into customer app - ignoring joinType parameter`);
+        // User is already correct - no need to change anything
       }
       // V2 users: B2B/B2C users cannot login or register as delivery
       else if (!isV1User && (user.user_type === 'S' || user.user_type === 'R' || user.user_type === 'SR')) {
@@ -1159,18 +1317,21 @@ class V2AuthService {
     console.log(`📋 Final b2bStatus for user ${user.id}: ${b2bStatus}`);
 
     // Return user data without password
-    const { password: _, ...userWithoutPassword } = user;
+    let { password: _, ...userWithoutPassword } = user;
 
-    // For customer_app requests, override app_type and user_type in response
-    // This ensures customer_app only sees customer data, not vendor data
+    // For customer_app requests, ensure response has correct app_type and user_type
+    // Note: User should already have user_type='C' and app_type='customer_app' at this point
+    // (since findOrReuseCustomerAppUser only returns users with user_type='C')
     if (targetAppType === 'customer_app') {
-      // Override app_type to customer_app and user_type to 'C' for customer_app requests
-      userWithoutPassword.app_type = 'customer_app';
-      // Only set user_type to 'C' if it's not already 'C' (preserve 'C' if exists)
-      if (userWithoutPassword.user_type !== 'C') {
-        userWithoutPassword.user_type = 'C';
+      // Verify user has correct type (should always be true)
+      if (user.app_type !== 'customer_app' || user.user_type !== 'C') {
+        console.error(`❌ ERROR: Customer app user (ID: ${user.id}) has incorrect type - user_type='${user.user_type}', app_type='${user.app_type}'`);
+        throw new Error('Invalid user type for customer app');
       }
-      console.log(`🔒 Customer app request - overriding app_type to 'customer_app' and user_type to 'C' (original: app_type=${user.app_type}, user_type=${user.user_type})`);
+      
+      // Ensure response has correct values
+      userWithoutPassword = { ...userWithoutPassword, app_type: 'customer_app', user_type: 'C' };
+      console.log(`🔒 Customer app request - user has correct app_type='customer_app' and user_type='C'`);
     }
 
     const responseData = {

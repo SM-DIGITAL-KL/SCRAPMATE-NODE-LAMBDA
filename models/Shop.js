@@ -8,7 +8,7 @@ class Shop {
     try {
       const client = getDynamoDBClient();
       const shopId = typeof id === 'string' && !isNaN(id) ? parseInt(id) : id;
-      
+
       const command = new GetCommand({
         TableName: TABLE_NAME,
         Key: { id: shopId }
@@ -24,37 +24,199 @@ class Shop {
   static async findByUserId(userId) {
     try {
       const client = getDynamoDBClient();
-      const uid = typeof userId === 'string' && !isNaN(userId) ? parseInt(userId) : userId;
-      
-      // Scan with pagination to find the matching shop
+      // DynamoDB is strict about data types - check if user_id is stored as string or number
+      // Try both string and number formats to handle inconsistent data types
+      const uidNum = typeof userId === 'string' && !isNaN(userId) ? parseInt(userId) : userId;
+      const uidStr = String(userId);
+
+      // Scan with pagination to find the matching shop - try number first
       let lastKey = null;
-      
+
       do {
         const params = {
           TableName: TABLE_NAME,
           FilterExpression: 'user_id = :userId',
           ExpressionAttributeValues: {
-            ':userId': uid
+            ':userId': uidNum
           }
         };
-        
+
         if (lastKey) {
           params.ExclusiveStartKey = lastKey;
         }
-        
+
         const command = new ScanCommand(params);
         const response = await client.send(command);
-        
+
         if (response.Items && response.Items.length > 0) {
           return response.Items[0];
         }
-        
+
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
-      
+
+      // If not found with number, try string
+      lastKey = null;
+      do {
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'user_id = :userId',
+          ExpressionAttributeValues: {
+            ':userId': uidStr
+          }
+        };
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+
+        if (response.Items && response.Items.length > 0) {
+          return response.Items[0];
+        }
+
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
       return null;
     } catch (err) {
       console.error('Shop.findByUserId error:', err);
+      throw err;
+    }
+  }
+
+  /**
+   * Find all shops for a user (useful for SR users who may have both B2C and B2B shops)
+   * @param {string|number} userId - User ID
+   * @returns {Promise<Array>} Array of all shops for the user
+   */
+  static async findAllByUserId(userId) {
+    try {
+      const client = getDynamoDBClient();
+      // DynamoDB is strict about data types - check if user_id is stored as string or number
+      // Try both string and number formats to handle inconsistent data types
+      const uidNum = typeof userId === 'string' && !isNaN(userId) ? parseInt(userId) : userId;
+      const uidStr = String(userId);
+
+      const allShops = [];
+      let lastKey = null;
+      const foundShopIds = new Set(); // Track found shop IDs to avoid duplicates
+
+      // First, try querying with number type
+      do {
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'user_id = :userId',
+          ExpressionAttributeValues: {
+            ':userId': uidNum
+          }
+        };
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+
+        if (response.Items && response.Items.length > 0) {
+          response.Items.forEach(shop => {
+            if (!foundShopIds.has(shop.id)) {
+              allShops.push(shop);
+              foundShopIds.add(shop.id);
+            }
+          });
+        }
+
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      // Also try querying with string type (in case user_id is stored as string)
+      lastKey = null;
+      do {
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'user_id = :userId',
+          ExpressionAttributeValues: {
+            ':userId': uidStr
+          }
+        };
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+
+        if (response.Items && response.Items.length > 0) {
+          response.Items.forEach(shop => {
+            if (!foundShopIds.has(shop.id)) {
+              allShops.push(shop);
+              foundShopIds.add(shop.id);
+            }
+          });
+        }
+
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      return allShops;
+    } catch (err) {
+      console.error('Shop.findAllByUserId error:', err);
+      throw err;
+    }
+  }
+
+  /**
+   * Find shops by contact phone number
+   * @param {string|number} contact - Contact phone number
+   * @param {number} userId - Optional: Exclude shops belonging to this user_id
+   * @returns {Promise<Array>} Array of shops with matching contact
+   */
+  static async findByContact(contact, excludeUserId = null) {
+    try {
+      const client = getDynamoDBClient();
+      const contactNum = typeof contact === 'string' && !isNaN(contact) ? parseInt(contact) : contact;
+
+      // Scan with pagination to find shops with matching contact
+      let lastKey = null;
+      const allShops = [];
+
+      do {
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'contact = :contact',
+          ExpressionAttributeValues: {
+            ':contact': contactNum
+          }
+        };
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+
+        if (response.Items) {
+          allShops.push(...response.Items);
+        }
+
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      // Filter out shops belonging to excludeUserId if provided
+      if (excludeUserId !== null) {
+        const excludeUid = typeof excludeUserId === 'string' && !isNaN(excludeUserId) ? parseInt(excludeUserId) : excludeUserId;
+        return allShops.filter(shop => shop.user_id !== excludeUid);
+      }
+
+      return allShops;
+    } catch (err) {
+      console.error('Shop.findByContact error:', err);
       throw err;
     }
   }
@@ -63,7 +225,7 @@ class Shop {
     try {
       const client = getDynamoDBClient();
       const id = data.id || (Date.now() + Math.floor(Math.random() * 1000));
-      
+
       // Base shop object with required fields
       const shop = {
         id: id,
@@ -109,11 +271,11 @@ class Shop {
     try {
       const client = getDynamoDBClient();
       const shopId = typeof id === 'string' && !isNaN(id) ? parseInt(id) : id;
-      
+
       const updateExpressions = [];
       const expressionAttributeValues = {};
       const expressionAttributeNames = {};
-      
+
       Object.keys(data).forEach((key, index) => {
         if (data[key] !== undefined) {
           const attrName = `#attr${index}`;
@@ -123,15 +285,15 @@ class Shop {
           expressionAttributeValues[attrValue] = data[key];
         }
       });
-      
+
       if (updateExpressions.length === 0) {
         return { affectedRows: 0 };
       }
-      
+
       updateExpressions.push('#updated = :updated');
       expressionAttributeNames['#updated'] = 'updated_at';
       expressionAttributeValues[':updated'] = new Date().toISOString();
-      
+
       const command = new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: shopId },
@@ -154,7 +316,7 @@ class Shop {
       const client = getDynamoDBClient();
       const allShops = [];
       let lastKey = null;
-      
+
       // Scan all shops (or filter by shopIds if provided)
       do {
         const params = {
@@ -164,49 +326,49 @@ class Shop {
             ':status': 1
           }
         };
-        
+
         if (lastKey) {
           params.ExclusiveStartKey = lastKey;
         }
-        
+
         const command = new ScanCommand(params);
         const response = await client.send(command);
-        
+
         if (response.Items) {
           allShops.push(...response.Items);
         }
-        
+
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
-      
+
       // Filter by shopIds if provided
-      let filteredShops = shopIds.length > 0 
+      let filteredShops = shopIds.length > 0
         ? allShops.filter(shop => shopIds.includes(shop.id))
         : allShops;
-      
+
       // Calculate distance and filter by radius
       const shopsWithDistance = filteredShops
         .map(shop => {
           if (!shop.lat_log) return null;
           const [lat, lng] = shop.lat_log.split(',').map(Number);
           if (!lat || !lng) return null;
-          
+
           // Haversine formula for distance calculation
           const R = 6371; // Earth's radius in km
           const dLat = (lat - refLat) * Math.PI / 180;
           const dLng = (lng - refLng) * Math.PI / 180;
-          const a = 
+          const a =
             Math.sin(dLat / 2) * Math.sin(dLat / 2) +
             Math.cos(refLat * Math.PI / 180) * Math.cos(lat * Math.PI / 180) *
             Math.sin(dLng / 2) * Math.sin(dLng / 2);
           const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
           const distance = R * c;
-          
+
           return { ...shop, distance };
         })
         .filter(shop => shop !== null && shop.distance <= matchRadius)
         .sort((a, b) => a.distance - b.distance);
-      
+
       return shopsWithDistance;
     } catch (err) {
       throw err;
@@ -219,7 +381,7 @@ class Shop {
       const client = getDynamoDBClient();
       const allShops = [];
       const batchSize = 100;
-      
+
       for (let i = 0; i < ids.length; i += batchSize) {
         const batch = ids.slice(i, i + batchSize);
         const keys = batch.map(id => ({
@@ -250,29 +412,66 @@ class Shop {
     try {
       const client = getDynamoDBClient();
       const allShops = [];
+      const foundShopIds = new Set(); // Track found shop IDs to avoid duplicates
+
+      // DynamoDB FilterExpression supports IN operator, but we need to handle it properly
+      // Process in smaller batches to avoid expression size limits
       const batchSize = 10;
-      
+
       for (let i = 0; i < userIds.length; i += batchSize) {
         const batch = userIds.slice(i, i + batchSize);
         const userIdsList = batch.map(uid => typeof uid === 'string' && !isNaN(uid) ? parseInt(uid) : uid);
-        
+
+        // Build FilterExpression with IN operator
+        const attributeValues = {};
+        const placeholders = userIdsList.map((uid, idx) => {
+          const placeholder = `:uid${i + idx}`;
+          attributeValues[placeholder] = uid;
+          return placeholder;
+        });
+
         const command = new ScanCommand({
           TableName: TABLE_NAME,
-          FilterExpression: `user_id IN (${userIdsList.map((_, idx) => `:uid${idx}`).join(', ')})`,
-          ExpressionAttributeValues: userIdsList.reduce((acc, uid, idx) => {
-            acc[`:uid${idx}`] = uid;
-            return acc;
-          }, {})
+          FilterExpression: `user_id IN (${placeholders.join(', ')})`,
+          ExpressionAttributeValues: attributeValues
         });
 
         const response = await client.send(command);
         if (response.Items) {
-          allShops.push(...response.Items);
+          response.Items.forEach(shop => {
+            if (!foundShopIds.has(shop.id)) {
+              allShops.push(shop);
+              foundShopIds.add(shop.id);
+            }
+          });
+        }
+
+        // Handle pagination if needed
+        let lastKey = response.LastEvaluatedKey;
+        while (lastKey) {
+          const paginatedCommand = new ScanCommand({
+            TableName: TABLE_NAME,
+            FilterExpression: `user_id IN (${placeholders.join(', ')})`,
+            ExpressionAttributeValues: attributeValues,
+            ExclusiveStartKey: lastKey
+          });
+
+          const paginatedResponse = await client.send(paginatedCommand);
+          if (paginatedResponse.Items) {
+            paginatedResponse.Items.forEach(shop => {
+              if (!foundShopIds.has(shop.id)) {
+                allShops.push(shop);
+                foundShopIds.add(shop.id);
+              }
+            });
+          }
+          lastKey = paginatedResponse.LastEvaluatedKey;
         }
       }
 
       return allShops;
     } catch (err) {
+      console.error('Shop.findByUserIds error:', err);
       throw err;
     }
   }
@@ -282,7 +481,7 @@ class Shop {
       const client = getDynamoDBClient();
       const batchSize = 25;
       const allResults = [];
-      
+
       for (let i = 0; i < shops.length; i += batchSize) {
         const batch = shops.slice(i, i + batchSize);
         const putRequests = batch.map(shop => ({
@@ -318,7 +517,7 @@ class Shop {
       const client = getDynamoDBClient();
       let lastKey = null;
       let count = 0;
-      
+
       do {
         const params = {
           TableName: TABLE_NAME,
@@ -328,20 +527,20 @@ class Shop {
           },
           Select: 'COUNT'
         };
-        
+
         if (lastKey) {
           params.ExclusiveStartKey = lastKey;
         }
-        
+
         const command = new ScanCommand(params);
         const response = await client.send(command);
-        
+
         // With Select: "COUNT", response.Count contains the count
         count += response.Count || 0;
-        
+
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
-      
+
       return count;
     } catch (err) {
       throw err;
@@ -354,27 +553,27 @@ class Shop {
       const client = getDynamoDBClient();
       const allShops = [];
       let lastKey = null;
-      
+
       do {
         const params = {
           TableName: TABLE_NAME
         };
-        
+
         if (limit && allShops.length >= limit) break;
         if (lastKey) {
           params.ExclusiveStartKey = lastKey;
         }
-        
+
         const command = new ScanCommand(params);
         const response = await client.send(command);
-        
+
         if (response.Items) {
           allShops.push(...response.Items);
         }
-        
+
         lastKey = response.LastEvaluatedKey;
       } while (lastKey && (!limit || allShops.length < limit));
-      
+
       return limit ? allShops.slice(0, limit) : allShops;
     } catch (err) {
       throw err;
@@ -389,20 +588,20 @@ class Shop {
       const client = getDynamoDBClient();
       let lastKey = null;
       let count = 0;
-      
+
       do {
         // Scan all shops and filter in memory (DynamoDB FilterExpression doesn't support OR well)
         const params = {
           TableName: TABLE_NAME
         };
-        
+
         if (lastKey) {
           params.ExclusiveStartKey = lastKey;
         }
-        
+
         const command = new ScanCommand(params);
         const response = await client.send(command);
-        
+
         if (response.Items) {
           // Filter for B2B shops (shop_type 1 or 4) with B2B signup fields but not approved
           const pendingShops = response.Items.filter(shop => {
@@ -413,10 +612,10 @@ class Shop {
           });
           count += pendingShops.length;
         }
-        
+
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
-      
+
       return count;
     } catch (err) {
       console.error('Shop.countPendingB2BApprovals error:', err);
@@ -430,7 +629,7 @@ class Shop {
       const client = getDynamoDBClient();
       let lastKey = null;
       let count = 0;
-      
+
       do {
         const params = {
           TableName: TABLE_NAME,
@@ -440,20 +639,20 @@ class Shop {
           },
           Select: 'COUNT'
         };
-        
+
         if (lastKey) {
           params.ExclusiveStartKey = lastKey;
         }
-        
+
         const command = new ScanCommand(params);
         const response = await client.send(command);
-        
+
         // With Select: "COUNT", response.Count contains the count
         count += response.Count || 0;
-        
+
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
-      
+
       return count;
     } catch (err) {
       console.error('Shop.countDoorStepBuyers error:', err);
@@ -468,7 +667,7 @@ class Shop {
       const client = getDynamoDBClient();
       let lastKey = null;
       let count = 0;
-      
+
       do {
         const params = {
           TableName: TABLE_NAME,
@@ -477,14 +676,14 @@ class Shop {
             ':shopType': 2
           }
         };
-        
+
         if (lastKey) {
           params.ExclusiveStartKey = lastKey;
         }
-        
+
         const command = new ScanCommand(params);
         const response = await client.send(command);
-        
+
         if (response.Items) {
           // For each door step buyer shop, check if the user is v2
           for (const shop of response.Items) {
@@ -501,10 +700,10 @@ class Shop {
             }
           }
         }
-        
+
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
-      
+
       return count;
     } catch (err) {
       console.error('Shop.countV2DoorStepBuyers error:', err);

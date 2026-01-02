@@ -1,7 +1,10 @@
 const { getDynamoDBClient } = require('../config/dynamodb');
 const { GetCommand, PutCommand, UpdateCommand, ScanCommand, DeleteCommand } = require('@aws-sdk/lib-dynamodb');
+const { getTableName } = require('../utils/dynamodbTableNames');
 
-const TABLE_NAME = process.env.SUBSCRIPTION_PACKAGES_TABLE || 'subscription_packages';
+// Use environment-aware table name (dev_subscription_packages in dev, subscription_packages in prod)
+// Can still be overridden with SUBSCRIPTION_PACKAGES_TABLE env var
+const TABLE_NAME = process.env.SUBSCRIPTION_PACKAGES_TABLE || getTableName('subscription_packages');
 
 class SubscriptionPackage {
   /**
@@ -59,6 +62,8 @@ class SubscriptionPackage {
       upiId: packageData.upiId || '',
       merchantName: packageData.merchantName || '',
       isActive: packageData.isActive !== undefined ? packageData.isActive : true,
+      pricePercentage: packageData.pricePercentage || null, // For percentage-based pricing (e.g., 0.5 for 0.5%)
+      isPercentageBased: packageData.isPercentageBased || false, // Flag to indicate if pricing is percentage-based
       createdAt: packageData.createdAt || now,
       updatedAt: now,
     };
@@ -89,7 +94,7 @@ class SubscriptionPackage {
     const expressionAttributeNames = {};
     const expressionAttributeValues = {};
 
-    const allowedFields = ['name', 'price', 'duration', 'description', 'features', 'popular', 'userType', 'upiId', 'merchantName', 'isActive'];
+    const allowedFields = ['name', 'price', 'duration', 'description', 'features', 'popular', 'userType', 'upiId', 'merchantName', 'isActive', 'pricePercentage', 'isPercentageBased'];
     
     allowedFields.forEach(field => {
       if (updateData[field] !== undefined) {

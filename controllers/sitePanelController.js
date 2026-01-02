@@ -149,11 +149,36 @@ class SitePanelController {
         console.error('Redis get error:', err);
       }
       
-      // TODO: admin_profile table - Create AdminProfile model if needed
-      // For now, use environment variable or default
-      const appVersion = process.env.APP_VERSION || '1.0.0';
+      // Try to fetch from DynamoDB admin_profile table
+      const { getDynamoDBClient } = require('../config/dynamodb');
+      const { GetCommand } = require('@aws-sdk/lib-dynamodb');
+      let appVersion = process.env.APP_VERSION || '1.0.0';
       
-      console.log('✅ getAppVersion: Retrieved app version:', appVersion);
+      try {
+        const client = getDynamoDBClient();
+        const command = new GetCommand({
+          TableName: 'admin_profile',
+          Key: { id: 1 }
+        });
+        const response = await client.send(command);
+        
+        if (response.Item) {
+          // Use vendor_app_version if available (for partner app), otherwise fall back to appVersion or app_version
+          appVersion = response.Item.vendor_app_version || 
+                      response.Item.appVersion || 
+                      response.Item.app_version || 
+                      appVersion;
+          console.log('✅ getAppVersion: Retrieved app version from DynamoDB:', appVersion);
+        } else {
+          console.log('⚠️ admin_profile not found in DynamoDB, using env/default version:', appVersion);
+        }
+      } catch (dbError) {
+        console.error('❌ Error fetching app version from DynamoDB:', dbError);
+        console.log('⚠️ Falling back to env/default version:', appVersion);
+        // Continue with env/default version
+      }
+      
+      console.log('✅ getAppVersion: Final app version:', appVersion);
       
       const response = {
         status: 'success',
@@ -208,11 +233,11 @@ class SitePanelController {
       const response = await client.send(getCommand);
       
       if (response.Item) {
-        // Update existing item
+        // Update existing item - store as vendor_app_version for partner app
         const updateCommand = new UpdateCommand({
           TableName: 'admin_profile',
           Key: { id: 1 },
-          UpdateExpression: 'SET appVersion = :version, app_version = :version, #updated_at = :updated_at',
+          UpdateExpression: 'SET vendor_app_version = :version, appVersion = :version, app_version = :version, #updated_at = :updated_at',
           ExpressionAttributeNames: {
             '#updated_at': 'updated_at'
           },
@@ -223,7 +248,7 @@ class SitePanelController {
         });
         
         await client.send(updateCommand);
-        console.log('✅ updateAppVersion: Updated app version to:', version);
+        console.log('✅ updateAppVersion: Updated vendor app version to:', version);
       } else {
         // Create new admin_profile item if it doesn't exist
         const newItem = {
@@ -233,6 +258,7 @@ class SitePanelController {
           email: 'nil@nil.in',
           address: 'nil',
           location: 'nil',
+          vendor_app_version: version,
           appVersion: version,
           app_version: version,
           created_at: new Date().toISOString(),
@@ -245,7 +271,7 @@ class SitePanelController {
         });
         
         await client.send(putCommand);
-        console.log('✅ updateAppVersion: Created new admin_profile with version:', version);
+        console.log('✅ updateAppVersion: Created new admin_profile with vendor app version:', version);
       }
       
       // Invalidate related caches

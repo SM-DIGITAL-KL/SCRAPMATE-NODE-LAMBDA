@@ -25,7 +25,12 @@ export AWS_REGION=${AWS_REGION:-$REGION}
 export API_KEY=${API_KEY:-'zyubkfzeumeoviaqzcsrvfwdzbiwnlnn'}
 export SESSION_SECRET=${SESSION_SECRET:-'scrapmate-session-secret-change-in-production'}
 export JWT_SECRET=${JWT_SECRET:-'scrapmate-jwt-secret-change-in-production'}
-export S3_BUCKET_NAME=${S3_BUCKET_NAME:-'scrapmate-images'}
+# Use production bucket for production stage, dev bucket for dev
+if [ "$STAGE" = "production" ]; then
+    export S3_BUCKET_NAME=${S3_BUCKET_NAME:-'scrapmate-images-production'}
+else
+    export S3_BUCKET_NAME=${S3_BUCKET_NAME:-'scrapmate-images'}
+fi
 
 # Load Firebase service account - prioritize vendor app (partner) service account
 if [ -f "scrapmate-partner-android-firebase-adminsdk-fbsvc-709bbce0d4.json" ]; then
@@ -152,9 +157,18 @@ if [ "$ZIP_SIZE_BYTES" -gt "$MAX_DIRECT_UPLOAD" ]; then
     echo "⚠️  Package is larger than 50MB, uploading to S3 first..."
     USE_S3=true
     
-    # Upload to S3
+    # Upload to S3 - try production bucket first, fallback to dev bucket
     S3_KEY="lambda-deployments/${ZIP_NAME}"
     S3_BUCKET=${S3_BUCKET_NAME:-"scrapmate-images"}
+    
+    # Check if production bucket exists, if not use dev bucket for upload
+    if [ "$STAGE" = "production" ] && [ "$S3_BUCKET" = "scrapmate-images-production" ]; then
+        BUCKET_EXISTS=$(aws s3api head-bucket --bucket "$S3_BUCKET" --region "$REGION" 2>/dev/null)
+        if [ $? -ne 0 ]; then
+            echo "   ⚠️  Production bucket doesn't exist, using dev bucket for upload..."
+            S3_BUCKET="scrapmate-images"
+        fi
+    fi
     
     echo "📤 Uploading to S3: s3://${S3_BUCKET}/${S3_KEY}"
     aws s3 cp "$ZIP_FILE" "s3://${S3_BUCKET}/${S3_KEY}" --region "$REGION" > /tmp/s3-upload.json 2>&1

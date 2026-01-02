@@ -105,10 +105,30 @@ class OrderController {
 
       const orders = await Order.findByCustomerId(customer_id);
 
+      // Get shop details for orders that have shop_id
+      const Shop = require('../models/Shop');
+      const shopIds = [...new Set(orders.map(o => o.shop_id).filter(Boolean))];
+      const shops = await Promise.all(shopIds.map(id => Shop.findById(id).catch(() => null)));
+      const shopMap = {};
+      shops.forEach(shop => {
+        if (shop && shop.id) {
+          shopMap[shop.id] = shop;
+        }
+      });
+
       // Format image URLs - use getImageUrl helper to handle S3 URLs properly
       const { getImageUrl } = require('../utils/imageHelper');
       const formattedOrders = await Promise.all(orders.map(async (order) => {
         const formatted = { ...order };
+        
+        // Add shop information if shop_id exists
+        if (order.shop_id && shopMap[order.shop_id]) {
+          const shop = shopMap[order.shop_id];
+          formatted.shop_name = shop.shopname || '';
+          formatted.shop_address = shop.address || shop.shopaddress || '';
+          formatted.shop_latitude = shop.latitude || null;
+          formatted.shop_longitude = shop.longitude || null;
+        }
         
         // Convert id fields to strings for frontend compatibility
         if (formatted.id !== undefined) {

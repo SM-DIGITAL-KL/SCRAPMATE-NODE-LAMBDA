@@ -22,6 +22,47 @@ class Invoice {
     }
   }
 
+  // Find by transaction IDs
+  static async findByTransactionIds(transactionIds) {
+    try {
+      const client = getDynamoDBClient();
+      const allInvoices = [];
+      let lastKey = null;
+      
+      // Scan the table and filter by transaction IDs
+      // DynamoDB doesn't support IN with OR, so we need to scan and filter
+      do {
+        const params = {
+          TableName: TABLE_NAME
+        };
+        
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        
+        if (response.Items) {
+          // Filter items that match any transaction ID
+          const matching = response.Items.filter(item => {
+            const mojId = item.payment_moj_id;
+            const reqId = item.payment_req_id;
+            return transactionIds.includes(mojId) || transactionIds.includes(reqId);
+          });
+          allInvoices.push(...matching);
+        }
+        
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+      
+      return allInvoices;
+    } catch (err) {
+      console.error('Error finding invoices by transaction IDs:', err);
+      return [];
+    }
+  }
+
   // Batch find by IDs
   static async findByIds(ids) {
     try {
@@ -231,20 +272,52 @@ class Invoice {
   static async findByUserId(userId) {
     try {
       const client = getDynamoDBClient();
-      const uid = typeof userId === 'string' && !isNaN(userId) ? parseInt(userId) : userId;
+      // Handle both string and number user_id types in the database
+      // DynamoDB stores user_id as either string or number, so we need to check both
+      const uidNum = typeof userId === 'string' && !isNaN(userId) ? parseInt(userId) : userId;
+      const uidStr = String(userId);
       
-      const command = new ScanCommand({
-        TableName: TABLE_NAME,
-        FilterExpression: 'user_id = :userId',
-        ExpressionAttributeValues: {
-          ':userId': uid
+      // Try to find invoices with number user_id first
+      let allInvoices = [];
+      let lastKey = null;
+      
+      do {
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'user_id = :userIdNum OR user_id = :userIdStr',
+          ExpressionAttributeValues: {
+            ':userIdNum': uidNum,
+            ':userIdStr': uidStr
+          }
+        };
+        
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        
+        if (response.Items) {
+          allInvoices = allInvoices.concat(response.Items);
+        }
+        
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+      
+      // Remove duplicates (in case both queries match the same invoice)
+      const uniqueInvoices = [];
+      const seenIds = new Set();
+      allInvoices.forEach(inv => {
+        const invId = inv.id;
+        if (!seenIds.has(invId)) {
+          seenIds.add(invId);
+          uniqueInvoices.push(inv);
         }
       });
-
-      const response = await client.send(command);
-      const invoices = response.Items || [];
-      invoices.sort((a, b) => (b.id || 0) - (a.id || 0));
-      return invoices;
+      
+      uniqueInvoices.sort((a, b) => (b.id || 0) - (a.id || 0));
+      return uniqueInvoices;
     } catch (err) {
       throw err;
     }

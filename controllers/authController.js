@@ -351,6 +351,22 @@ class AuthController {
           place_id: place_id || ''
         };
 
+        // Check for duplicate shops with the same contact number (excluding current user)
+        if (shopData.contact) {
+          const existingShops = await Shop.findByContact(shopData.contact, user.id);
+          if (existingShops.length > 0) {
+            const errorMsg = `A shop with contact number ${shopData.contact} already exists. Please use your existing shop account or contact support.`;
+            console.error(`❌ [usersRegister] Duplicate shop detected:`, {
+              contact: shopData.contact,
+              existingShops: existingShops.map(s => ({ id: s.id, user_id: s.user_id, shopname: s.shopname }))
+            });
+            return res.status(400).json({
+              success: false,
+              message: errorMsg
+            });
+          }
+        }
+
         const shop = await Shop.create(shopData);
         const shopDetails = await Shop.findById(shop.id);
 

@@ -306,3 +306,6 @@ curl -X POST http://localhost:3000/api/v2/notifications/send \
 
 The API can be easily called from the PHP admin panel. See the PHP example above for implementation details.
 
+
+
+

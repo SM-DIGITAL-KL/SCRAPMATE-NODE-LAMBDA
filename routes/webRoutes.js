@@ -37,6 +37,9 @@ router.post('/admin/b2b-users/:userId/approval-status', AdminPanelController.upd
 router.get('/admin/b2c-users', AdminPanelController.b2cUsers);
 router.get('/admin/b2c-users/:userId', AdminPanelController.getB2CUserDetails);
 router.post('/admin/b2c-users/:userId/approval-status', AdminPanelController.updateB2CApprovalStatus);
+router.get('/admin/sr-users', AdminPanelController.srUsers);
+router.get('/admin/sr-users/:userId', AdminPanelController.getSRUserDetails);
+router.post('/admin/sr-users/:userId/approval-status', AdminPanelController.updateSRApprovalStatus);
 router.get('/admin/delivery-users/:userId', AdminPanelController.getDeliveryUserDetails);
 router.post('/admin/delivery-users/:userId/approval-status', AdminPanelController.updateDeliveryApprovalStatus);
 router.get('/users', AdminPanelController.users);
@@ -56,6 +59,7 @@ router.post('/sendCustNotification', AdminPanelController.sendCustNotification);
 router.post('/sendVendorNotification', AdminPanelController.sendVendorNotification);
 router.get('/callLogSearch', AdminPanelController.callLogSearch);
 router.get('/getcallLogSearch', AdminPanelController.getcallLogSearch);
+router.post('/admin/cache/clear', AdminPanelController.clearCacheByUserType);
 
 // ==================== VENDOR CONTROLLER ROUTES ====================
 router.get('/vendors', VendorPanelController.vendors);
@@ -242,7 +246,28 @@ router.all('/show_recent_orders', CustomerPanelController.showRecentOrders);
 router.all('/show_recent_orders/:id', CustomerPanelController.showRecentOrders);
 
 // ==================== ACCOUNTS CONTROLLER ROUTES ====================
+// Add logging middleware for subPackages routes
+router.use('/subPackages', (req, res, next) => {
+  console.log('🔍 subPackages route matched:', {
+    method: req.method,
+    path: req.path,
+    originalUrl: req.originalUrl,
+    params: req.params,
+    query: req.query
+  });
+  next();
+});
+
 router.get('/subPackages', AccountsPanelController.subPackages);
+// Test route to verify routing is working
+router.get('/subPackages/test', (req, res) => {
+  console.log('✅ Test route /subPackages/test hit');
+  res.json({ status: 'success', msg: 'Test route working', path: req.path });
+});
+router.get('/subPackages/:id', AccountsPanelController.getSubPackageById);
+router.post('/subPackages/:id', AccountsPanelController.updateSubPackage);
+router.put('/subPackages/:id', AccountsPanelController.updateSubPackage);
+router.patch('/subPackages/:id', AccountsPanelController.updateSubPackage);
 router.all('/createSubPackage', AccountsPanelController.createSubPackage);
 router.all('/editSubPackage/:id', async (req, res) => {
   if (req.method === 'GET') {

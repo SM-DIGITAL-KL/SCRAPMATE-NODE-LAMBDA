@@ -13,10 +13,19 @@ class LocationController {
    */
   static async updateLocation(req, res) {
     try {
+      console.log('📍 [LocationController] updateLocation called');
+      console.log('📍 Request body:', JSON.stringify(req.body, null, 2));
+      
       const { user_id, user_type, latitude, longitude, order_id } = req.body;
 
       // Validation
       if (!user_id || !user_type || latitude === undefined || longitude === undefined) {
+        console.error('❌ [LocationController] Validation failed:', {
+          user_id: !!user_id,
+          user_type: !!user_type,
+          latitude: latitude !== undefined,
+          longitude: longitude !== undefined
+        });
         return res.status(400).json({
           status: 'error',
           msg: 'Missing required fields: user_id, user_type, latitude, longitude',
@@ -110,6 +119,48 @@ class LocationController {
 
       console.log(`📍 Location updated for user ${user_id} (${user_type}) at ${latitude}, ${longitude}`);
 
+      // If order_id is provided, save location history to DynamoDB every 30 minutes
+      if (order_id) {
+        try {
+          const OrderLocationHistory = require('../../models/OrderLocationHistory');
+          const orderIdNum = parseInt(order_id);
+          
+          console.log(`💾 [LocationController] Checking location history for order ${orderIdNum}`);
+          
+          // Get last saved location for this order
+          const lastLocation = await OrderLocationHistory.getLastLocation(orderIdNum);
+          const now = Date.now();
+          const thirtyMinutes = 30 * 60 * 1000; // 30 minutes in milliseconds
+          
+          console.log(`💾 [LocationController] Last location:`, lastLocation ? {
+            timestamp: lastLocation.timestamp,
+            timeDiff: now - (lastLocation.timestamp || 0),
+            shouldSave: !lastLocation || (now - (lastLocation.timestamp || 0) > thirtyMinutes)
+          } : 'No previous location');
+          
+          // Save if no previous location or 30 minutes have passed
+          if (!lastLocation || (now - (lastLocation.timestamp || 0) > thirtyMinutes)) {
+            console.log(`💾 [LocationController] Saving location history for order ${orderIdNum}`);
+            await OrderLocationHistory.save({
+              order_id: orderIdNum,
+              user_id: userIdNum,
+              user_type: user_type,
+              latitude: parseFloat(latitude),
+              longitude: parseFloat(longitude),
+              timestamp: now,
+              created_at: new Date().toISOString()
+            });
+            console.log(`💾 [LocationController] Location history saved to DynamoDB for order ${orderIdNum}`);
+          } else {
+            console.log(`💾 [LocationController] Skipping save - only ${Math.round((now - (lastLocation.timestamp || 0)) / 1000 / 60)} minutes since last save`);
+          }
+        } catch (historyError) {
+          console.error('❌ [LocationController] Error saving location history:', historyError);
+          console.error('❌ [LocationController] Error stack:', historyError.stack);
+          // Don't fail the request if history save fails
+        }
+      }
+
       return res.json({
         status: 'success',
         msg: 'Location updated successfully',
@@ -123,7 +174,9 @@ class LocationController {
         }
       });
     } catch (error) {
-      console.error('Error updating location:', error);
+      console.error('❌ [LocationController] Error updating location:', error);
+      console.error('❌ [LocationController] Error stack:', error.stack);
+      console.error('❌ [LocationController] Request body was:', JSON.stringify(req.body, null, 2));
       return res.status(500).json({
         status: 'error',
         msg: 'Failed to update location',
@@ -232,8 +285,9 @@ class LocationController {
       const orderLocation = await redis.get(orderLocationKey);
 
       if (!orderLocation) {
-        return res.status(404).json({
-          status: 'error',
+        // Return 200 with null data instead of 404 - this is expected when vendor hasn't started tracking yet
+        return res.json({
+          status: 'success',
           msg: 'Location not found for this order. Vendor may not have started tracking yet.',
           data: null
         });
@@ -298,7 +352,8 @@ class LocationController {
 
       // If order_id provided, also delete order location
       if (order_id) {
-        const orderLocationKey = `location:order:${orderId}`;
+        const orderIdNum = parseInt(order_id);
+        const orderLocationKey = `location:order:${orderIdNum}`;
         await redis.del(orderLocationKey);
       }
 

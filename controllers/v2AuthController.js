@@ -46,9 +46,20 @@ class V2AuthController {
    */
   static async verifyOtp(req, res) {
     try {
+      // Debug logging
+      console.log('📋 [verifyOtp] Request body:', JSON.stringify(req.body, null, 2));
+      console.log('📋 [verifyOtp] Request body type:', typeof req.body);
+      console.log('📋 [verifyOtp] Request body keys:', req.body ? Object.keys(req.body) : 'NO BODY');
+      console.log('📋 [verifyOtp] Content-Type:', req.headers['content-type'] || req.headers['Content-Type']);
+      
       const { phoneNumber, otp, joinType, appType, fcm_token } = req.body;
 
       if (!phoneNumber || !otp) {
+        console.error('❌ [verifyOtp] Missing required fields:', {
+          phoneNumber: !!phoneNumber,
+          otp: !!otp,
+          body: req.body
+        });
         return res.status(400).json({
           status: 'error',
           message: 'Phone number and OTP are required',

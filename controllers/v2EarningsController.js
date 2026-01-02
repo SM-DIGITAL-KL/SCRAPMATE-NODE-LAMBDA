@@ -56,9 +56,62 @@ class V2EarningsController {
         const allOrders = await Order.findByCustomerId(userIdNum);
         orders = allOrders.filter(order => order.status === 4); // Only completed orders
       } else if (type === 'shop') {
-        // S user type - shop orders (B2B)
-        const allOrders = await Order.findByShopId(userIdNum, 4); // Completed orders
-        orders = allOrders;
+        // For shop type (B2C vendors), first find the shop_id from user_id
+        const Shop = require('../models/Shop');
+        const shop = await Shop.findByUserId(userIdNum);
+        if (!shop || !shop.id) {
+          // No shop found for this user, return empty breakdown
+          console.warn(`⚠️ [getMonthlyBreakdown] No shop found for user_id ${userIdNum}. Returning zero earnings.`);
+          const currentDate = new Date();
+          const monthlyBreakdown = [];
+          const monthsMap = {};
+          const monthsNum = parseInt(months);
+          
+          // Initialize all months with zero values
+          for (let i = monthsNum - 1; i >= 0; i--) {
+            const date = new Date(currentDate.getFullYear(), currentDate.getMonth() - i, 1);
+            const year = date.getFullYear();
+            const month = date.getMonth() + 1;
+            const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+            const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            
+            monthsMap[monthKey] = {
+              month: month,
+              monthName: monthNames[month - 1],
+              year: year,
+              earnings: 0,
+              orderCount: 0
+            };
+          }
+          
+          const sortedMonths = Object.keys(monthsMap).sort();
+          sortedMonths.forEach(monthKey => {
+            monthlyBreakdown.push(monthsMap[monthKey]);
+          });
+          
+          return res.json({
+            status: 'success',
+            msg: 'Monthly breakdown retrieved successfully',
+            data: {
+              monthlyBreakdown,
+              totalEarnings: 0,
+              totalOrders: 0,
+              currency: 'INR',
+              period: `Last ${monthsNum} months`
+            },
+            hitBy: 'DynamoDB'
+          });
+        }
+        const shopId = parseInt(shop.id);
+        const allOrders = await Order.findByShopId(shopId);
+        orders = allOrders.filter(order => order.status === 5); // Status 5 = Completed for B2C vendors
+        
+        console.log(`📊 [getMonthlyBreakdown] User ID: ${userIdNum}, Shop ID: ${shopId}`);
+        console.log(`📊 [getMonthlyBreakdown] Total orders: ${allOrders.length}, Completed orders (status 5): ${orders.length}`);
+        
+        if (orders.length === 0) {
+          console.warn(`⚠️ [getMonthlyBreakdown] No completed orders found for shop_id ${shopId}. Returning zero earnings.`);
+        }
       } else if (type === 'delivery') {
         // D user type - delivery boy orders
         orders = await Order.findCompletedByDeliveryBoyId(userIdNum);
@@ -93,6 +146,9 @@ class V2EarningsController {
       }
 
       // Process orders and aggregate by month
+      let ordersWithEarnings = 0;
+      let ordersWithoutEarnings = 0;
+      
       orders.forEach(order => {
         if (order.created_at) {
           const orderDate = new Date(order.created_at);
@@ -105,8 +161,27 @@ class V2EarningsController {
             const earnings = parseFloat(order.estim_price || order.total_amount || 0);
             monthsMap[monthKey].earnings += earnings;
             monthsMap[monthKey].orderCount += 1;
+            
+            if (earnings > 0) {
+              ordersWithEarnings += 1;
+            } else {
+              ordersWithoutEarnings += 1;
+              console.warn(`⚠️ [getMonthlyBreakdown] Order ${order.order_number || order.id} has no earnings:`, {
+                orderId: order.id,
+                orderNumber: order.order_number,
+                estim_price: order.estim_price,
+                total_amount: order.total_amount
+              });
+            }
           }
         }
+      });
+      
+      console.log(`📊 [getMonthlyBreakdown] Processing summary:`, {
+        totalOrders: orders.length,
+        ordersWithEarnings,
+        ordersWithoutEarnings,
+        totalEarnings: monthlyBreakdown.reduce((sum, month) => sum + month.earnings, 0).toFixed(2)
       });
 
       // Convert to array format (last N months)
@@ -142,11 +217,14 @@ class V2EarningsController {
         hitBy: 'DynamoDB'
       });
     } catch (error) {
-      console.error('Error fetching monthly breakdown:', error);
+      console.error('❌ [getMonthlyBreakdown] Error:', error);
+      console.error('❌ [getMonthlyBreakdown] Error stack:', error.stack);
+      console.error('❌ [getMonthlyBreakdown] User ID:', userId, 'Type:', type);
       return res.status(500).json({
         status: 'error',
         msg: 'Failed to fetch monthly breakdown',
         data: null,
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   }

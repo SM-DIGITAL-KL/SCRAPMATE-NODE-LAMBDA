@@ -98,6 +98,12 @@ router.delete('/v2/profile/:userId', V2ProfileController.deleteAccount);
  */
 router.get('/v2/subscription-packages', V2SubscriptionPackageController.getSubscriptionPackages);
 
+/**
+ * POST /api/v2/subscription-packages/save
+ * Save user subscription package after payment
+ */
+router.post('/v2/subscription-packages/save', V2SubscriptionPackageController.saveUserSubscription);
+
 // ==================== V2 PROFILE CATEGORY ROUTES ====================
 /**
  * PUT /api/v2/profile/:userId/categories

@@ -358,8 +358,41 @@ class RedisCache {
   }
 
   /**
+   * Invalidate B2C users cache (first page only - for minor updates like approval status)
+   * Deletes only the first page cache keys to avoid clearing all paginated data
+   * @returns {Promise<number>} - Number of keys deleted
+   */
+  static async invalidateB2CUsersCacheFirstPage() {
+    try {
+      let deleted = 0;
+      
+      // Only clear first page with common limits (most common case)
+      const commonLimits = [10, 20, 50, 100];
+      const page = 1; // Only first page
+      
+      for (const limit of commonLimits) {
+        const cacheKey = this.adminKey('b2c_users', null, { page, limit });
+        const result = await this.delete(cacheKey);
+        if (result) deleted++;
+      }
+      
+      // Also try to delete base cache key
+      const baseCacheKey = this.adminKey('b2c_users', null, {});
+      const baseResult = await this.delete(baseCacheKey);
+      if (baseResult) deleted++;
+      
+      console.log(`🗑️  Invalidated B2C users cache (first page only): ${deleted} keys`);
+      return deleted;
+    } catch (err) {
+      console.error('Redis invalidate B2C users cache (first page) error:', err);
+      return 0;
+    }
+  }
+
+  /**
    * Invalidate B2C users cache
    * Deletes all cache keys matching the B2C users pattern
+   * Use this only when you need to clear all pages (e.g., when adding/removing users)
    * @returns {Promise<number>} - Number of keys deleted
    */
   static async invalidateB2CUsersCache() {
@@ -506,12 +539,15 @@ class RedisCache {
           break;
 
         case 'available_pickup_requests':
-          // Invalidate all available pickup request caches (they're location-based)
-          // Since we can't easily match all location combinations, we'll use a pattern
-          // For now, we'll invalidate common patterns
-          keysToDelete.push(
-            this.listKey('available_pickup_requests', { user_id: options.user_id || 'all', user_type: options.user_type || 'all' })
-          );
+          // For available_pickup_requests, we need to invalidate ALL cache keys
+          // Since we can't easily match all keys with Upstash REST API, we'll set a very short TTL instead
+          // When user_id is 'all' or user_type is 'all', log that all caches should be considered stale
+          // The cache already has a short TTL (120 seconds), but we can't reliably invalidate all keys
+          // So we rely on the short TTL and frontend cache invalidation via FCM notifications
+          console.log('⚠️  Cache invalidation for available_pickup_requests: Relying on short TTL (120s) and FCM notifications');
+          // Note: We can't reliably delete all matching cache keys with Upstash REST API
+          // The cache TTL of 120 seconds ensures stale data expires quickly
+          // Frontend should also invalidate cache when FCM notifications are received
           break;
 
         case 'active_pickup':

@@ -11,6 +11,8 @@ const Invoice = require('../models/Invoice');
 const RedisCache = require('../utils/redisCache');
 const { getDynamoDBClient } = require('../config/dynamodb');
 const { GetCommand } = require('@aws-sdk/lib-dynamodb');
+const { getTableName, getEnvironment } = require('../utils/dynamodbTableNames');
+const crypto = require('crypto');
 
 class UtilityController {
   // Get table data - map table names to models
@@ -450,35 +452,59 @@ class UtilityController {
   // Get all tables
   static async getAllTables(req, res) {
     try {
+      const environment = getEnvironment();
+      
       // Check Redis cache first (only if previously successful)
-      const cacheKey = RedisCache.listKey('all_tables', {});
+      const cacheKey = RedisCache.listKey('all_tables', { environment });
       const cached = await RedisCache.get(cacheKey);
       if (cached) {
         return res.json({
           status: 'success',
           msg: 'Successfull',
-          data: cached
+          data: cached,
+          environment: environment
         });
       }
 
-      // DynamoDB doesn't have SHOW TABLES - return list of known tables
-      const results = [
-        { Tables_in_database: 'users' },
-        { Tables_in_database: 'shops' },
-        { Tables_in_database: 'customer' },
-        { Tables_in_database: 'delivery_boy' },
-        { Tables_in_database: 'orders' },
-        { Tables_in_database: 'products' },
-        { Tables_in_database: 'product_category' },
-        { Tables_in_database: 'call_logs' },
-        { Tables_in_database: 'packages' },
-        { Tables_in_database: 'invoices' }
+      // DynamoDB doesn't have SHOW TABLES - return list of known tables with environment-aware names
+      const baseTables = [
+        'users',
+        'shops',
+        'customer',
+        'delivery_boy',
+        'orders',
+        'products',
+        'product_category',
+        'call_logs',
+        'packages',
+        'invoice',
+        'admin_profile',
+        'bulk_scrap_requests',
+        'bulk_sell_requests',
+        'pending_bulk_buy_orders',
+        'subscription_packages',
+        'order_location_history',
+        'subcategory',
+        'category_img_keywords',
+        'addresses',
+        'user_admins',
+        'shop_images',
+        'per_pages',
+        'order_rating',
+        'notifications'
       ];
+
+      // Get environment-aware table names
+      const results = baseTables.map(tableName => ({
+        Tables_in_database: getTableName(tableName),
+        base_name: tableName,
+        environment: environment
+      }));
 
       // Cache the result only on success (365 days TTL - tables don't change often)
       try {
         await RedisCache.set(cacheKey, results, '365days');
-        console.log(`💾 Redis cache set for all tables: ${cacheKey}`);
+        console.log(`💾 Redis cache set for all tables (${environment}): ${cacheKey}`);
       } catch (redisErr) {
         console.error('Redis cache error:', redisErr);
         // Continue even if Redis fails
@@ -487,7 +513,8 @@ class UtilityController {
       res.json({
         status: 'success',
         msg: 'Successfull',
-        data: results
+        data: results,
+        environment: environment
       });
     } catch (err) {
       console.error('Get all tables error:', err);
@@ -695,7 +722,7 @@ class UtilityController {
   // Save user packages
   static async saveUserPackages(req, res) {
     try {
-      const { user_id, package_id } = req.body;
+      const { user_id, package_id, payment_moj_id, payment_req_id } = req.body;
 
       if (!user_id || !package_id) {
         return res.status(201).json({
@@ -703,6 +730,23 @@ class UtilityController {
           msg: 'empty param',
           data: ''
         });
+      }
+
+      // Verify transaction ID to prevent duplicate payments
+      if (payment_moj_id) {
+        const allInvoices = await Invoice.getAll();
+        const duplicateInvoice = allInvoices.find(inv => 
+          inv.payment_moj_id && String(inv.payment_moj_id) === String(payment_moj_id)
+        );
+        
+        if (duplicateInvoice) {
+          console.log(`⚠️  Duplicate transaction ID detected: ${payment_moj_id}`);
+          return res.status(201).json({
+            status: 'error',
+            msg: 'This transaction has already been processed. Please contact support if you believe this is an error.',
+            data: ''
+          });
+        }
       }
 
       const packageData = await Package.findByType(package_id);
@@ -714,12 +758,34 @@ class UtilityController {
         });
       }
 
-      const fromDate = new Date().toISOString().split('T')[0];
-      const toDate = new Date();
+      // Check if user has any active invoices to extend subscription
+      const userInvoices = await Invoice.findByUserId(user_id);
+      
+      const latestActiveInvoice = userInvoices
+        .filter(inv => {
+          if (!inv.to_date) return false;
+          const toDate = new Date(inv.to_date);
+          return toDate >= new Date();
+        })
+        .sort((a, b) => new Date(b.to_date) - new Date(a.to_date))[0];
+
+      // Always create a new invoice to maintain payment history
+      // This ensures all payment attempts are visible, including rejected ones
+      // Calculate subscription dates
+      let fromDate = new Date().toISOString().split('T')[0];
+      if (latestActiveInvoice && latestActiveInvoice.to_date) {
+        // Extend from the end of existing subscription
+        fromDate = latestActiveInvoice.to_date;
+      }
+
+      const toDate = new Date(fromDate);
       toDate.setDate(toDate.getDate() + packageData.duration);
       const toDateStr = toDate.toISOString().split('T')[0];
+      const subscriptionEndsAt = toDate.toISOString(); // ISO format for subscription_ends_at
 
-      await Invoice.create({
+      // Create new invoice with payment details
+      // This creates a new record for each payment attempt, preserving history
+      const newInvoice = await Invoice.create({
         user_id: user_id,
         from_date: fromDate,
         to_date: toDateStr,
@@ -727,8 +793,54 @@ class UtilityController {
         displayname: packageData.displayname,
         type: packageData.type || 'Paid',
         price: packageData.price,
-        duration: packageData.duration
+        duration: packageData.duration,
+        payment_moj_id: payment_moj_id || null,
+        payment_req_id: payment_req_id || null,
+        pay_details: req.body.pay_details || null,
+        approval_status: 'pending' // New payment starts as pending
       });
+
+      const invoiceId = newInvoice.id;
+      console.log(`✅ Created new invoice ${invoiceId} for user ${user_id} - all payment attempts are preserved in history`);
+
+      // Update B2C shop subscription information
+      try {
+        // Find all shops for the user
+        const allShops = await Shop.findAllByUserId(user_id);
+        
+        // Find B2C shop (shop_type = 3)
+        const b2cShop = allShops.find(shop => shop.shop_type === 3);
+        
+        if (b2cShop) {
+          // Update subscription fields
+          await Shop.update(b2cShop.id, {
+            is_subscribed: true,
+            subscription_ends_at: subscriptionEndsAt,
+            is_subscription_ends: false,
+            subscribed_duration: packageData.duration
+          });
+          
+          console.log(`✅ Updated B2C shop ${b2cShop.id} subscription for user ${user_id}:`, {
+            is_subscribed: true,
+            subscription_ends_at: subscriptionEndsAt,
+            is_subscription_ends: false
+          });
+          
+          // Invalidate profile cache to ensure fresh data
+          try {
+            await RedisCache.delete(RedisCache.userKey(String(user_id), 'profile'));
+            await RedisCache.delete(RedisCache.userKey(String(user_id)));
+            console.log(`🗑️  Invalidated profile cache for user ${user_id}`);
+          } catch (cacheErr) {
+            console.error('Cache invalidation error:', cacheErr);
+          }
+        } else {
+          console.log(`⚠️  No B2C shop found for user ${user_id} - subscription info not updated in shop`);
+        }
+      } catch (shopUpdateErr) {
+        console.error('Error updating shop subscription:', shopUpdateErr);
+        // Don't fail the request if shop update fails - invoice is already created
+      }
 
       res.json({
         status: 'success',
@@ -758,12 +870,25 @@ class UtilityController {
         });
       }
 
-      const invoices = await Invoice.findByUserId(user_id);
+      // Get all invoices for the user
+      const allInvoices = await Invoice.findByUserId(user_id);
+      
+      // Filter to show only Paid invoices and sort by created_at descending (newest first)
+      const paidInvoices = allInvoices
+        .filter(inv => inv.type === 'Paid' || inv.type === 'paid')
+        .sort((a, b) => {
+          const dateA = new Date(a.created_at || 0);
+          const dateB = new Date(b.created_at || 0);
+          return dateB - dateA; // Newest first
+        });
+
+      console.log(`📋 Payment history for user ${user_id}: Found ${paidInvoices.length} paid invoices out of ${allInvoices.length} total invoices`);
 
       res.json({
         status: 'success',
         msg: 'Payment history',
-        data: invoices
+        data: paidInvoices,
+        total: paidInvoices.length
       });
     } catch (err) {
       console.error('Payment history error:', err);
@@ -1078,6 +1203,87 @@ class UtilityController {
     }
   }
 
+  // Generate PayU payment hash
+  // Hash format: sha512(key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||salt)
+  // IMPORTANT: The formula must be EXACT - udf6-udf10 are always empty (shown as ||||||)
+  static async generatePayUHash(req, res) {
+    try {
+      const {
+        key,
+        txnid,
+        amount,
+        productinfo,
+        firstname,
+        email,
+        udf1 = '',
+        udf2 = '',
+        udf3 = '',
+        udf4 = '',
+        udf5 = '',
+        salt
+      } = req.body;
+
+      // Validate required fields
+      if (!key || !txnid || !amount || !productinfo || !firstname || !email || !salt) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Missing required parameters: key, txnid, amount, productinfo, firstname, email, salt',
+          data: ''
+        });
+      }
+
+      // Build hash string: key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||salt
+      // IMPORTANT: udf6-udf10 must be empty strings (shown as ||||||)
+      const hashString = `${key}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|${udf1}|${udf2}|${udf3}|${udf4}|${udf5}||||||${salt}`;
+
+      // Generate SHA512 hash
+      const hash = crypto.createHash('sha512').update(hashString).digest('hex');
+
+      console.log('💳 PayU Hash Generated:', {
+        txnid,
+        amount,
+        hashLength: hash.length,
+        hashString: hashString.replace(salt, 'SALT_HIDDEN'), // Log without exposing salt
+        hashFirstChars: hash.substring(0, 20) + '...',
+        hashLastChars: '...' + hash.substring(hash.length - 20)
+      });
+      
+      // Detailed logging for debugging
+      console.log('💳 PayU Hash Calculation Details:', {
+        key,
+        txnid,
+        amount,
+        productinfo,
+        firstname,
+        email,
+        udf1: udf1 || '(empty)',
+        udf2: udf2 || '(empty)',
+        udf3: udf3 || '(empty)',
+        udf4: udf4 || '(empty)',
+        udf5: udf5 || '(empty)',
+        udf6_10: '|||||| (5 empty fields)',
+        saltLength: salt ? salt.length : 0,
+        hashStringLength: hashString.length,
+        hashStringPreview: hashString.substring(0, 100) + '...' + hashString.substring(hashString.length - 20)
+      });
+
+      res.json({
+        status: 'success',
+        msg: 'Hash generated successfully',
+        data: {
+          hash: hash
+        }
+      });
+    } catch (err) {
+      console.error('Generate PayU hash error:', err);
+      res.status(500).json({
+        status: 'error',
+        msg: 'Failed to generate hash',
+        data: ''
+      });
+    }
+  }
+
   // Clear Redis cache
   static async clearRedisCache(req, res) {
     try {
@@ -1294,6 +1500,357 @@ class UtilityController {
         msg: 'Failed to fetch metrics',
         data: { error: err.message }
       });
+    }
+  }
+
+  // Get PayU payment form HTML
+  static async getPayUForm(req, res) {
+    try {
+      const {
+        key,
+        txnid,
+        amount,
+        productinfo,
+        firstname,
+        email,
+        phone,
+        surl,
+        furl,
+        hash,
+        udf1,
+        udf2,
+        udf3,
+        udf4,
+        udf5,
+      } = req.query;
+
+      // PayU credentials (should be in environment variables)
+      // IMPORTANT: For production, set PAYU_MERCHANT_KEY and PAYU_SALT in environment variables
+      const MERCHANT_KEY = process.env.PAYU_MERCHANT_KEY || 'eO7BjK'; // Default to test key if not set
+      const SALT = process.env.PAYU_SALT || 'BrOTecyan06WRQwHkkFw2XAXRBpR0jKi'; // Default to test salt if not set
+      
+      // Production environment
+      const PAYU_BASE_URL = 'https://secure.payu.in'; // Production environment
+      
+      // PayU Production Configuration:
+      // UPI ID: 7736068251@pthdfc
+      // Merchant Name: Scrapmate Partner
+      // Note: UPI ID and merchant details are configured in PayU merchant dashboard
+
+      // Validate required parameters
+      if (!txnid || !amount || !firstname || !email || !phone || !productinfo || !surl || !furl) {
+        return res.status(400).send(`
+          <html>
+            <head><title>PayU Form Error</title></head>
+            <body>
+              <h2>Error: Missing required parameters</h2>
+              <p>Please provide all required payment parameters.</p>
+            </body>
+          </html>
+        `);
+      }
+
+      // ALWAYS recalculate hash to ensure it's correct according to PayU's exact formula
+      // PayU hash formula: sha512(key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||SALT)
+      // Note: udf6-udf10 are always empty (shown as ||||||)
+      // IMPORTANT: We recalculate the hash here to ensure it matches PayU's exact requirements
+      const hashString = `${MERCHANT_KEY}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|${udf1 || ''}|${udf2 || ''}|${udf3 || ''}|${udf4 || ''}|${udf5 || ''}||||||${SALT}`;
+      
+      const paymentHash = crypto.createHash('sha512').update(hashString).digest('hex');
+      
+      // If a hash was provided, verify it matches (for debugging)
+      if (hash && hash !== paymentHash) {
+        console.error('⚠️  WARNING: Provided hash does not match recalculated hash!');
+        console.error('   Provided hash:', hash.substring(0, 50) + '...');
+        console.error('   Recalculated hash:', paymentHash.substring(0, 50) + '...');
+        console.error('   Using recalculated hash to ensure PayU accepts the transaction');
+      }
+      
+      console.log('💳 PayU Hash Calculated in getPayUForm:', {
+        txnid,
+        amount,
+        hashLength: paymentHash.length,
+        hashString: hashString.replace(SALT, 'SALT_HIDDEN'), // Log without exposing salt
+        hashFirstChars: paymentHash.substring(0, 20) + '...',
+        hashLastChars: '...' + paymentHash.substring(paymentHash.length - 20),
+        providedHash: hash ? 'Yes (verified)' : 'No (generated)'
+      });
+      
+      // Log detailed hash calculation for debugging
+      console.log('💳 PayU Hash Calculation Details:', {
+        key: MERCHANT_KEY,
+        txnid,
+        amount,
+        productinfo,
+        firstname,
+        email,
+        udf1: udf1 || '(empty)',
+        udf2: udf2 || '(empty)',
+        udf3: udf3 || '(empty)',
+        udf4: udf4 || '(empty)',
+        udf5: udf5 || '(empty)',
+        udf6_10: '|||||| (5 empty fields)',
+        hashStringLength: hashString.length,
+        hashStringPreview: hashString.substring(0, 80) + '...[SALT]'
+      });
+
+      const action = `${PAYU_BASE_URL}/_payment`;
+
+      // Generate HTML form
+      const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+  <title>PayU Payment</title>
+  <script>
+    var hash = '${paymentHash}';
+    function submitPayuForm() {
+      if (hash == '') {
+        return;
+      }
+      var payuForm = document.forms.payuForm;
+      if (payuForm) {
+        payuForm.submit();
+      }
+    }
+    window.onload = function() {
+      setTimeout(submitPayuForm, 500);
+    };
+  </script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    .form-container {
+      max-width: 600px;
+      margin: 0 auto;
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    input, textarea {
+      width: 100%;
+      padding: 8px;
+      margin: 5px 0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    textarea {
+      min-height: 60px;
+    }
+  </style>
+</head>
+<body>
+  <div class="form-container">
+    <h2>Processing Payment...</h2>
+    <p>Please wait while we redirect you to PayU...</p>
+    <form action="${action}" method="post" name="payuForm">
+      <input type="hidden" name="key" value="${MERCHANT_KEY}" />
+      <input type="hidden" name="hash" value="${paymentHash}" />
+      <input type="hidden" name="txnid" value="${txnid}" />
+      <input type="hidden" name="amount" id="amount" value="${amount}" />
+      <input type="hidden" name="productinfo" id="productinfo" value="${productinfo}" />
+      <input type="hidden" name="firstname" id="firstname" value="${firstname}" />
+      <input type="hidden" name="email" id="email" value="${email}" />
+      <input type="hidden" name="phone" id="phone" value="${phone}" />
+      <input type="hidden" name="surl" value="${surl}" />
+      <input type="hidden" name="furl" value="${furl}" />
+      <input type="hidden" name="service_provider" value="payu_paisa" />
+      ${udf1 ? `<input type="hidden" name="udf1" value="${udf1}" />` : ''}
+      ${udf2 ? `<input type="hidden" name="udf2" value="${udf2}" />` : ''}
+      ${udf3 ? `<input type="hidden" name="udf3" value="${udf3}" />` : ''}
+      ${udf4 ? `<input type="hidden" name="udf4" value="${udf4}" />` : ''}
+      ${udf5 ? `<input type="hidden" name="udf5" value="${udf5}" />` : ''}
+    </form>
+  </div>
+</body>
+</html>
+      `;
+
+      res.setHeader('Content-Type', 'text/html');
+      res.send(html);
+    } catch (err) {
+      console.error('Get PayU form error:', err);
+      res.status(500).send(`
+        <html>
+          <head><title>PayU Form Error</title></head>
+          <body>
+            <h2>Error: Failed to generate payment form</h2>
+            <p>${err.message}</p>
+          </body>
+        </html>
+      `);
+    }
+  }
+
+  // Handle PayU success response
+  static async payUSuccess(req, res) {
+    try {
+      const responseData = {
+        status: req.body.status || req.query.status || 'success',
+        txnid: req.body.txnid || req.query.txnid,
+        amount: req.body.amount || req.query.amount,
+        firstname: req.body.firstname || req.query.firstname,
+        addedon: req.body.addedon || req.query.addedon,
+        productinfo: req.body.productinfo || req.query.productinfo,
+        lastname: req.body.lastname || req.query.lastname,
+        email: req.body.email || req.query.email,
+        phone: req.body.phone || req.query.phone,
+      };
+
+      console.log('✅ PayU Success Response:', responseData);
+
+      // Return HTML page that sends message to React Native WebView
+      const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Payment Success</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background-color: #f5f5f5;
+    }
+    .success-container {
+      text-align: center;
+      background: white;
+      padding: 40px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .success-icon {
+      font-size: 64px;
+      color: #4CAF50;
+      margin-bottom: 20px;
+    }
+    h2 {
+      color: #4CAF50;
+      margin-bottom: 10px;
+    }
+    p {
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="success-container">
+    <div class="success-icon">✓</div>
+    <h2>Payment Successful!</h2>
+    <p>Transaction ID: ${responseData.txnid || 'N/A'}</p>
+    <p>Amount: ₹${responseData.amount || 'N/A'}</p>
+    <p>Please wait while we process your payment...</p>
+  </div>
+  <script>
+    var responseData = ${JSON.stringify(responseData)};
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(JSON.stringify(responseData));
+    } else {
+      console.log('Payment response:', responseData);
+    }
+  </script>
+</body>
+</html>
+      `;
+
+      res.setHeader('Content-Type', 'text/html');
+      res.send(html);
+    } catch (err) {
+      console.error('PayU success handler error:', err);
+      res.status(500).send('Error processing payment response');
+    }
+  }
+
+  // Handle PayU failure response
+  static async payUFailure(req, res) {
+    try {
+      const responseData = {
+        status: 'failure',
+        txnid: req.body.txnid || req.query.txnid,
+        amount: req.body.amount || req.query.amount,
+        message: req.body.error || req.query.error || 'Payment failed',
+        error: req.body.error || req.query.error || 'Unknown error',
+      };
+
+      console.log('❌ PayU Failure Response:', responseData);
+
+      // Return HTML page that sends message to React Native WebView
+      const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Payment Failed</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background-color: #f5f5f5;
+    }
+    .failure-container {
+      text-align: center;
+      background: white;
+      padding: 40px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .failure-icon {
+      font-size: 64px;
+      color: #f44336;
+      margin-bottom: 20px;
+    }
+    h2 {
+      color: #f44336;
+      margin-bottom: 10px;
+    }
+    p {
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="failure-container">
+    <div class="failure-icon">✗</div>
+    <h2>Payment Failed</h2>
+    <p>${responseData.message}</p>
+    <p>Transaction ID: ${responseData.txnid || 'N/A'}</p>
+    <p>Please try again or contact support.</p>
+  </div>
+  <script>
+    var responseData = ${JSON.stringify(responseData)};
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(JSON.stringify(responseData));
+    } else {
+      console.log('Payment response:', responseData);
+    }
+  </script>
+</body>
+</html>
+      `;
+
+      res.setHeader('Content-Type', 'text/html');
+      res.send(html);
+    } catch (err) {
+      console.error('PayU failure handler error:', err);
+      res.status(500).send('Error processing payment response');
     }
   }
 }

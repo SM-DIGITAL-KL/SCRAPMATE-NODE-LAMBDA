@@ -196,6 +196,13 @@ class Order {
         image5: data.image5 || '',
         image6: data.image6 || '',
         call_log: data.call_log || 0,
+        preferred_pickup_time: data.preferred_pickup_time || null,
+        notified_vendor_ids: data.notified_vendor_ids || null, // Store notified vendor user IDs (JSON string or array)
+        notified_shop_ids: data.notified_shop_ids || null, // Store notified shop IDs (JSON string or array)
+        bulk_request_id: data.bulk_request_id || null, // Link to bulk request
+        bulk_request_vendor_id: data.bulk_request_vendor_id || null, // Link to vendor in bulk request
+        bulk_request_bidding_price: data.bulk_request_bidding_price || null,
+        bulk_request_committed_quantity: data.bulk_request_committed_quantity || null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
@@ -763,6 +770,64 @@ class Order {
   }
 
   // Get all orders (optionally filtered by status)
+  /**
+   * Find orders by bulk_request_id
+   * Returns all orders created from a specific bulk scrap request
+   */
+  static async findByBulkRequestId(bulkRequestId) {
+    try {
+      const client = getDynamoDBClient();
+      const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+      const allOrders = [];
+      let lastKey = null;
+
+      do {
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'bulk_request_id = :bulkRequestId',
+          ExpressionAttributeValues: {
+            ':bulkRequestId': typeof bulkRequestId === 'string' ? parseInt(bulkRequestId) : (typeof bulkRequestId === 'number' ? bulkRequestId : parseInt(String(bulkRequestId)))
+          }
+        };
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        let response;
+        try {
+          response = await client.send(command);
+        } catch (scanError) {
+          if (scanError.name === 'ResourceNotFoundException' || scanError.__type === 'com.amazonaws.dynamodb.v20120810#ResourceNotFoundException') {
+            console.warn(`⚠️  Table "${TABLE_NAME}" does not exist yet. Returning empty array.`);
+            return [];
+          }
+          throw scanError;
+        }
+
+        if (response.Items) {
+          allOrders.push(...response.Items);
+        }
+
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      // Sort by created_at (newest first)
+      allOrders.sort((a, b) => {
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return dateB - dateA;
+      });
+
+      console.log(`✅ Found ${allOrders.length} orders for bulk request ${bulkRequestId}`);
+      return allOrders;
+    } catch (error) {
+      console.error('❌ Error finding orders by bulk_request_id:', error);
+      throw error;
+    }
+  }
+
   static async getAll(status = null) {
     try {
       const client = getDynamoDBClient();

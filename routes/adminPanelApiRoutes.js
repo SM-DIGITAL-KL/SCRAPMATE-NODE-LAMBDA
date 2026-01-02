@@ -54,9 +54,27 @@ router.post('/admin/b2b-users/:userId/approval-status', AdminController.updateB2
 router.get('/admin/b2c-users', AdminController.b2cUsers);
 router.get('/admin/b2c-users/:userId', AdminController.getB2CUserDetails);
 router.post('/admin/b2c-users/:userId/approval-status', AdminController.updateB2CApprovalStatus);
+router.get('/admin/sr-users', AdminController.srUsers);
+router.get('/admin/sr-users/:userId', AdminController.getSRUserDetails);
+router.post('/admin/sr-users/:userId/approval-status', AdminController.updateSRApprovalStatus);
 router.get('/admin/delivery-users', AdminController.deliveryUsers);
 router.get('/admin/delivery-users/:userId', AdminController.getDeliveryUserDetails);
 router.post('/admin/delivery-users/:userId/approval-status', AdminController.updateDeliveryApprovalStatus);
+
+// ==================== SUBCATEGORY APPROVAL ROUTES ====================
+/**
+ * GET /admin/subcategory-requests/pending
+ * Get all pending subcategory requests from B2C users
+ */
+router.get('/admin/subcategory-requests/pending', AdminController.getPendingSubcategoryRequests);
+
+/**
+ * POST /admin/subcategory-requests/:id/approve
+ * Approve or reject a subcategory request
+ * Body: { action: 'approve' | 'reject', approval_notes?: string }
+ */
+router.post('/admin/subcategory-requests/:id/approve', AdminController.approveRejectSubcategoryRequest);
+
 router.get('/admin/users', AdminController.users);
 router.get('/admin/users/:id', AdminController.getUserById);
 router.delete('/admin/users/:id', AdminController.deleteUser);
@@ -75,6 +93,15 @@ router.get('/admin/custNotification', AdminController.custNotification);
 router.get('/admin/vendorNotification', AdminController.vendorNotification);
 router.post('/admin/sendCustNotification', AdminController.sendCustNotification);
 router.post('/admin/sendVendorNotification', AdminController.sendVendorNotification);
+
+// ==================== CACHE MANAGEMENT ROUTES ====================
+router.post('/admin/cache/clear', (req, res, next) => {
+  console.log('🔍 Cache clear route handler called!');
+  console.log('   Path:', req.path);
+  console.log('   Method:', req.method);
+  console.log('   Body:', req.body);
+  return AdminController.clearCacheByUserType(req, res, next);
+});
 
 // ==================== VENDOR ROUTES ====================
 router.get('/vendor/list', VendorController.vendors);
@@ -185,13 +212,23 @@ router.put('/site/app-version', SiteController.updateAppVersion);
 
 // ==================== ACCOUNTS ROUTES ====================
 router.get('/accounts/sub-packages', AccountsController.subPackages);
-router.get('/accounts/sub-package/:id', AccountsController.getSubPackageById);
+
+// IMPORTANT: Specific routes must come BEFORE parameterized routes (:id)
+// Paid subscriptions routes must come before /accounts/sub-package/:id
+router.get('/accounts/paid-subscriptions', AccountsController.getPaidSubscriptions);
+router.post('/accounts/subscription-approval', AccountsController.updateSubscriptionApproval);
+router.get('/accounts/pending-bulk-buy-orders', AccountsController.getPendingBulkBuyOrders);
+router.post('/accounts/pending-bulk-buy-order-approval', AccountsController.updatePendingBulkBuyOrderApproval);
+
 router.get('/accounts/subscribers', AccountsController.subscribersList);
 router.get('/accounts/view-subscribers', AccountsController.viewSubscribersList);
 router.post('/accounts/sub-package', AccountsController.createSubPackage);
+router.put('/accounts/sub-package-status', AccountsController.updateSubPackageStatus);
+
+// Parameterized routes (:id) must come LAST
+router.get('/accounts/sub-package/:id', AccountsController.getSubPackageById);
 router.put('/accounts/sub-package/:id', AccountsController.updateSubPackage);
 router.delete('/accounts/sub-package/:id', AccountsController.deleteSubPackage);
-router.put('/accounts/sub-package-status', AccountsController.updateSubPackageStatus);
 
 // ==================== SUBSCRIPTION PACKAGES ROUTES ====================
 router.get('/subscription-packages', SubscriptionPackageController.getSubscriptionPackages);

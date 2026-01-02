@@ -1,5 +1,31 @@
 // Middleware to verify API key
 const apiKeyCheck = (req, res, next) => {
+  // Check if this is a PayU endpoint - skip API key check for WebView requests
+  const path = req.path || '';
+  const originalUrl = req.originalUrl || req.url || '';
+  const pathLower = path.toLowerCase();
+  const originalUrlLower = originalUrl.toLowerCase();
+  
+  const isPayUEndpoint = 
+    pathLower.includes('payu') || 
+    originalUrlLower.includes('payu') ||
+    path === '/payu-form' ||
+    path === '/payu-success' ||
+    path === '/payu-failure' ||
+    path === '/v2/payu-form' ||
+    path === '/v2/payu-success' ||
+    path === '/v2/payu-failure' ||
+    path.startsWith('/payu-') ||
+    originalUrl.includes('/payu-') ||
+    originalUrl.includes('/api/v2/payu-');
+  
+  if (isPayUEndpoint) {
+    console.log('✅✅✅✅✅ PayU endpoint detected in API key middleware - SKIPPING API key check ✅✅✅✅✅');
+    console.log('   Path:', path);
+    console.log('   OriginalUrl:', originalUrl);
+    return next(); // Skip API key check for PayU routes
+  }
+  
   console.log('🔑 API Key Middleware - Checking request:', req.method, req.path);
   console.log('Request headers:', {
     'api-key': req.headers['api-key'] ? 'Present' : 'Missing',

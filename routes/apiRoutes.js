@@ -561,6 +561,7 @@ router.get('/stateAllow', UtilityController.stateAllow);
 router.get('/packagesSub', UtilityController.packagesSub);
 router.post('/saveUserPackages', UtilityController.saveUserPackages);
 router.post('/paymentHistory', UtilityController.paymentHistory);
+router.post('/generatePayUHash', UtilityController.generatePayUHash);
 router.get('/thirdPartyCredentials', UtilityController.thirdPartyCredentials);
 router.get('/versionCheck/:version', UtilityController.versionCheck);
 router.get('/smstesting', UtilityController.smstesting);

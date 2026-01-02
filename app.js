@@ -26,8 +26,8 @@ app.use((req, res, next) => {
     console.log('   Raw body:', typeof req.body === 'string' ? req.body.substring(0, 200) : JSON.stringify(req.body));
     console.log('   Lambda event body:', req.lambdaEvent?.body ? typeof req.lambdaEvent.body : 'NO LAMBDA EVENT');
   }
-  // Only log API routes to reduce noise
-  else if (req.path.startsWith('/api')) {
+  // Log API routes and subPackages routes
+  else if (req.path.startsWith('/api') || req.path.startsWith('/subPackages')) {
     console.log('\n');
     console.log('🌐🌐🌐 INCOMING REQUEST TO NODE.JS SERVER 🌐🌐🌐');
     console.log('   Method:', req.method);
@@ -41,7 +41,7 @@ app.use((req, res, next) => {
       'accept': req.headers['accept']
     });
     console.log('   Timestamp:', new Date().toISOString());
-    console.log('   Will route to:', req.path.startsWith('/api/admin') ? 'Admin Panel Routes' : 'API Routes');
+    console.log('   Will route to:', req.path.startsWith('/api/admin') ? 'Admin Panel Routes' : req.path.startsWith('/subPackages') ? 'Web Routes (subPackages)' : 'API Routes');
   }
   next();
 });
@@ -291,10 +291,18 @@ app.use((err, req, res, next) => {
 
 // 404 handler
 app.use((req, res) => {
+  console.log('❌ 404 - Route not found:', {
+    method: req.method,
+    path: req.path,
+    originalUrl: req.originalUrl,
+    url: req.url
+  });
   return res.status(404).json({
     status: 'error',
     msg: 'API endpoint not found',
-    data: ''
+    data: '',
+    path: req.path,
+    method: req.method
   });
 });
 

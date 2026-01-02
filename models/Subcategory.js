@@ -23,7 +23,7 @@ class Subcategory {
   }
 
   // Find by main category ID
-  static async findByMainCategoryId(mainCategoryId) {
+  static async findByMainCategoryId(mainCategoryId, includePending = false) {
     try {
       const client = getDynamoDBClient();
       const catId = typeof mainCategoryId === 'string' && !isNaN(mainCategoryId) ? parseInt(mainCategoryId) : mainCategoryId;
@@ -37,6 +37,89 @@ class Subcategory {
           FilterExpression: 'main_category_id = :mainCategoryId',
           ExpressionAttributeValues: {
             ':mainCategoryId': catId
+          }
+        };
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+
+        if (response.Items) {
+          // Filter out soft-deleted items
+          let activeItems = response.Items.filter(item => !item.deleted);
+          // If includePending is false, only return approved subcategories
+          if (!includePending) {
+            activeItems = activeItems.filter(item => 
+              !item.approval_status || item.approval_status === 'approved'
+            );
+          }
+          allItems.push(...activeItems);
+        }
+        
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      return allItems;
+    } catch (err) {
+      throw err;
+    }
+  }
+  
+  // Find pending subcategory requests
+  static async findPendingRequests() {
+    try {
+      const client = getDynamoDBClient();
+      let lastKey = null;
+      const allItems = [];
+
+      do {
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'approval_status = :status',
+          ExpressionAttributeValues: {
+            ':status': 'pending'
+          }
+        };
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+
+        if (response.Items) {
+          // Filter out soft-deleted items
+          const activeItems = response.Items.filter(item => !item.deleted);
+          allItems.push(...activeItems);
+        }
+        
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      return allItems;
+    } catch (err) {
+      throw err;
+    }
+  }
+
+  // Find subcategory requests by user ID (all statuses: pending, approved, rejected)
+  static async findByRequestedByUserId(userId) {
+    try {
+      const client = getDynamoDBClient();
+      const userIdNum = typeof userId === 'string' && !isNaN(userId) ? parseInt(userId) : userId;
+      let lastKey = null;
+      const allItems = [];
+
+      do {
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'requested_by_user_id = :userId',
+          ExpressionAttributeValues: {
+            ':userId': userIdNum
           }
         };
 
@@ -63,7 +146,7 @@ class Subcategory {
   }
 
   // Get all subcategories
-  static async getAll() {
+  static async getAll(includePending = false) {
     try {
       const client = getDynamoDBClient();
       let lastKey = null;
@@ -83,7 +166,13 @@ class Subcategory {
 
         if (response.Items) {
           // Filter out soft-deleted items
-          const activeItems = response.Items.filter(item => !item.deleted);
+          let activeItems = response.Items.filter(item => !item.deleted);
+          // If includePending is false, only return approved subcategories
+          if (!includePending) {
+            activeItems = activeItems.filter(item => 
+              !item.approval_status || item.approval_status === 'approved'
+            );
+          }
           allItems.push(...activeItems);
         }
         
@@ -275,6 +364,10 @@ class Subcategory {
         subcategory_name: data.subcategory_name || '',
         default_price: data.default_price || '',
         price_unit: data.price_unit || 'kg', // 'kg' or 'pcs'
+        approval_status: data.approval_status || 'approved', // 'pending', 'approved', 'rejected'
+        requested_by_user_id: data.requested_by_user_id || null, // User ID who requested this subcategory
+        approved_by_user_id: data.approved_by_user_id || null, // Admin user ID who approved/rejected
+        approval_notes: data.approval_notes || null, // Notes from admin
         created_at: data.created_at || new Date().toISOString(),
         updated_at: data.updated_at || new Date().toISOString()
       };

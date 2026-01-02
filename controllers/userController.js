@@ -684,15 +684,26 @@ class UserController {
 
       console.log('📥 FCM Token Store Request:', {
         user_id,
-        fcm_token_preview: fcm_token ? fcm_token.substring(0, 30) + '...' : 'missing',
+        fcm_token_preview: fcm_token ? fcm_token.substring(0, 30) + '...' : 'null/empty',
         fcm_token_length: fcm_token ? fcm_token.length : 0
       });
 
-      if (!user_id || !fcm_token) {
-        console.error('❌ FCM Token Store: Missing required parameters', { user_id: !!user_id, fcm_token: !!fcm_token });
+      // Check if user_id is provided
+      if (!user_id) {
+        console.error('❌ FCM Token Store: Missing user_id parameter');
         return res.status(201).json({
           status: 'error',
           msg: 'empty param',
+          data: ''
+        });
+      }
+
+      // If fcm_token is null, undefined, or empty, skip saving and return success
+      if (!fcm_token || fcm_token === null || fcm_token === '' || fcm_token.trim() === '') {
+        console.log('⚠️ FCM Token Store: FCM token is null/empty, skipping save operation', { user_id });
+        return res.status(200).json({
+          status: 'success',
+          msg: 'FCM token is null, skipped save operation',
           data: ''
         });
       }

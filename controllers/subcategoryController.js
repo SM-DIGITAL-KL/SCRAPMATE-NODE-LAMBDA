@@ -412,6 +412,312 @@ class SubcategoryController {
       });
     }
   }
+
+  // Request new subcategory (for B2B and B2C users)
+  static async requestSubcategory(req, res) {
+    try {
+      const { main_category_id, subcategory_name, default_price, price_unit } = req.body;
+      const userId = req.user?.id || req.body.user_id;
+
+      if (!main_category_id || !subcategory_name) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Main category ID and subcategory name are required',
+          data: null
+        });
+      }
+
+      if (!userId) {
+        return res.status(401).json({
+          status: 'error',
+          msg: 'User authentication required',
+          data: null
+        });
+      }
+
+      // Check if subcategory with same name already exists for this category
+      const existingSubcategories = await Subcategory.findByMainCategoryId(main_category_id, true);
+      const duplicate = existingSubcategories.find(
+        sub => sub.subcategory_name.toLowerCase().trim() === subcategory_name.toLowerCase().trim()
+      );
+
+      if (duplicate) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'A subcategory with this name already exists for this category',
+          data: null
+        });
+      }
+
+      const subcategoryData = {
+        main_category_id: parseInt(main_category_id),
+        subcategory_name: subcategory_name.trim(),
+        default_price: default_price || '0',
+        price_unit: price_unit || 'kg',
+        approval_status: 'pending',
+        requested_by_user_id: parseInt(userId)
+      };
+
+      // Handle file upload if provided
+      if (req.file) {
+        try {
+          console.log(`📤 Uploading subcategory image for new subcategory request`);
+          const { uploadFileToS3 } = require('../utils/fileUpload');
+          const s3Result = await uploadFileToS3(req.file, 'subcategory-images');
+          subcategoryData.subcategory_img = s3Result.s3Url;
+          console.log(`✅ Subcategory image uploaded to S3: ${s3Result.s3Url}`);
+        } catch (uploadError) {
+          console.error('❌ Error uploading subcategory image to S3:', uploadError);
+          return res.status(500).json({
+            status: 'error',
+            msg: 'Failed to upload subcategory image: ' + uploadError.message,
+            data: null
+          });
+        }
+      }
+
+      const subcategory = await Subcategory.create(subcategoryData);
+
+      // Invalidate v2 API caches
+      try {
+        await RedisCache.invalidateV2ApiCache('subcategories', null, { categoryId: main_category_id });
+        console.log(`🗑️  Invalidated v2 subcategories cache after requesting subcategory`);
+      } catch (err) {
+        console.error('Cache invalidation error:', err);
+      }
+
+      return res.json({
+        status: 'success',
+        msg: 'Subcategory request submitted successfully. It will be reviewed by admin.',
+        data: subcategory
+      });
+    } catch (err) {
+      console.error('❌ Error requesting subcategory:', err);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Error requesting subcategory: ' + err.message,
+        data: null
+      });
+    }
+  }
+
+  // Get pending subcategory requests (for admin)
+  static async getPendingRequests(req, res) {
+    try {
+      const pendingRequests = await Subcategory.findPendingRequests();
+      const mainCategories = await CategoryImgKeywords.getAll();
+
+      // Create a map of main category ID to name
+      const mainCategoryMap = {};
+      mainCategories.forEach(cat => {
+        mainCategoryMap[cat.id] = {
+          id: cat.id,
+          name: cat.category_name || cat.cat_name || '',
+          image: cat.category_img || cat.cat_img || ''
+        };
+      });
+
+      // Enrich with main category info and user info
+      const enriched = await Promise.all(pendingRequests.map(async (sub) => {
+        let requesterInfo = null;
+        if (sub.requested_by_user_id) {
+          try {
+            const User = require('../models/User');
+            const requester = await User.findById(sub.requested_by_user_id);
+            if (requester) {
+              requesterInfo = {
+                id: requester.id,
+                name: requester.name,
+                contact: requester.contact,
+                email: requester.email
+              };
+            }
+          } catch (err) {
+            console.error('Error fetching requester info:', err);
+          }
+        }
+
+        return {
+          id: sub.id,
+          subcategory_name: sub.subcategory_name,
+          subcategory_img: sub.subcategory_img,
+          default_price: sub.default_price,
+          price_unit: sub.price_unit,
+          main_category_id: sub.main_category_id,
+          main_category: mainCategoryMap[sub.main_category_id] || null,
+          approval_status: sub.approval_status,
+          requested_by_user_id: sub.requested_by_user_id,
+          requester: requesterInfo,
+          created_at: sub.created_at,
+          updated_at: sub.updated_at
+        };
+      }));
+
+      return res.json({
+        status: 'success',
+        msg: 'Pending subcategory requests',
+        data: enriched
+      });
+    } catch (err) {
+      console.error('❌ Error fetching pending subcategory requests:', err);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Error fetching pending requests: ' + err.message,
+        data: null
+      });
+    }
+  }
+
+  // Approve or reject subcategory request (for admin)
+  static async approveRejectSubcategory(req, res) {
+    try {
+      const { id } = req.params;
+      const { action, approval_notes } = req.body; // action: 'approve' or 'reject'
+      const adminUserId = req.user?.id || req.body.admin_user_id;
+
+      if (!id) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Subcategory ID is required',
+          data: null
+        });
+      }
+
+      if (!action || !['approve', 'reject'].includes(action)) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Action must be either "approve" or "reject"',
+          data: null
+        });
+      }
+
+      const subcategory = await Subcategory.findById(parseInt(id));
+      if (!subcategory) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Subcategory not found',
+          data: null
+        });
+      }
+
+      if (subcategory.approval_status !== 'pending') {
+        return res.status(400).json({
+          status: 'error',
+          msg: `Subcategory is already ${subcategory.approval_status}`,
+          data: null
+        });
+      }
+
+      const updateData = {
+        approval_status: action === 'approve' ? 'approved' : 'rejected',
+        approved_by_user_id: adminUserId ? parseInt(adminUserId) : null,
+        approval_notes: approval_notes || null
+      };
+
+      const result = await Subcategory.update(parseInt(id), updateData);
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Subcategory not found',
+          data: null
+        });
+      }
+
+      const updatedSubcategory = await Subcategory.findById(parseInt(id));
+
+      // Invalidate v2 API caches
+      try {
+        const categoryId = updatedSubcategory?.main_category_id;
+        await RedisCache.invalidateV2ApiCache('subcategories', null, { categoryId: categoryId || 'all' });
+        await RedisCache.invalidateV2ApiCache('categories', null, {});
+        console.log(`🗑️  Invalidated v2 subcategories cache after ${action}ing subcategory`);
+      } catch (err) {
+        console.error('Cache invalidation error:', err);
+      }
+
+      return res.json({
+        status: 'success',
+        msg: `Subcategory ${action === 'approve' ? 'approved' : 'rejected'} successfully`,
+        data: updatedSubcategory
+      });
+    } catch (err) {
+      console.error('❌ Error approving/rejecting subcategory:', err);
+      return res.status(500).json({
+        status: 'error',
+        msg: `Error ${req.body.action === 'approve' ? 'approving' : 'rejecting'} subcategory: ` + err.message,
+        data: null
+      });
+    }
+  }
+
+  // Get subcategory requests by user ID (for B2C users to see their requests)
+  static async getUserSubcategoryRequests(req, res) {
+    try {
+      const { userId } = req.params;
+      const userIdNum = parseInt(userId);
+
+      if (!userId || isNaN(userIdNum)) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Valid user ID is required',
+          data: null
+        });
+      }
+
+      // Get all subcategory requests by this user
+      const userRequests = await Subcategory.findByRequestedByUserId(userIdNum);
+      const mainCategories = await CategoryImgKeywords.getAll();
+
+      // Create a map of main category ID to name
+      const mainCategoryMap = {};
+      mainCategories.forEach(cat => {
+        mainCategoryMap[cat.id] = {
+          id: cat.id,
+          name: cat.category_name || cat.cat_name || '',
+          image: cat.category_img || cat.cat_img || ''
+        };
+      });
+
+      // Enrich with main category info
+      const enriched = userRequests.map(sub => ({
+        id: sub.id,
+        subcategory_name: sub.subcategory_name,
+        subcategory_img: sub.subcategory_img || '',
+        default_price: sub.default_price || '0',
+        price_unit: sub.price_unit || 'kg',
+        main_category_id: sub.main_category_id,
+        main_category: mainCategoryMap[sub.main_category_id] || null,
+        approval_status: sub.approval_status || 'pending',
+        requested_by_user_id: sub.requested_by_user_id,
+        approved_by_user_id: sub.approved_by_user_id || null,
+        approval_notes: sub.approval_notes || null,
+        created_at: sub.created_at,
+        updated_at: sub.updated_at
+      }));
+
+      // Sort by created_at descending (most recent first)
+      enriched.sort((a, b) => {
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return dateB - dateA;
+      });
+
+      return res.json({
+        status: 'success',
+        msg: 'User subcategory requests retrieved successfully',
+        data: enriched,
+        count: enriched.length
+      });
+    } catch (err) {
+      console.error('❌ Error fetching user subcategory requests:', err);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Error fetching user subcategory requests: ' + err.message,
+        data: null
+      });
+    }
+  }
 }
 
 module.exports = SubcategoryController;

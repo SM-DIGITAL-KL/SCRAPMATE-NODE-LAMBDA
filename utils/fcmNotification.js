@@ -451,32 +451,45 @@ async function sendVendorNotification(fcmToken, title, body, data = {}) {
       throw new Error('FCM token is required');
     }
 
+    // Build data payload with all values as strings (FCM requirement)
+    const dataPayload = {
+      ...data,
+      ...Object.keys(data).reduce((acc, key) => {
+        acc[key] = String(data[key]);
+        return acc;
+      }, {})
+    };
+
     const message = {
+      // notification field ensures notification shows in system tray when app is in background/closed
       notification: {
         title: title,
         body: body
       },
-      data: {
-        ...data,
-        // Convert all data values to strings (FCM requirement)
-        ...Object.keys(data).reduce((acc, key) => {
-          acc[key] = String(data[key]);
-          return acc;
-        }, {})
-      },
+      // data field allows app to handle notification data when opened
+      data: dataPayload,
       token: fcmToken,
       android: {
+        // 'high' priority ensures notification shows even when device is in Doze mode
         priority: 'high',
         notification: {
           sound: 'default',
-          channelId: 'scrapmate_partner_notifications' // Vendor app channel ID
+          channelId: 'scrapmate_partner_notifications', // Vendor app channel ID
+          // Click action - when user taps notification, app opens with this data
+          clickAction: 'FLUTTER_NOTIFICATION_CLICK'
         }
       },
       apns: {
         payload: {
           aps: {
             sound: 'default',
-            badge: 1
+            badge: 1,
+            // Enable background fetch so notification is received even when app is closed
+            contentAvailable: true,
+            alert: {
+              title: title,
+              body: body
+            }
           }
         }
       }

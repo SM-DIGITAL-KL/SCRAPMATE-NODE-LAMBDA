@@ -111,6 +111,15 @@ class V2B2BSignupController {
         gstCertificateUrl,
         addressProofUrl,
         kycOwnerUrl,
+        latitude,
+        longitude,
+        pincode,
+        placeId,
+        state,
+        place,
+        location,
+        houseName,
+        nearbyLocation,
       } = req.body;
 
       if (!userId) {
@@ -133,6 +142,15 @@ class V2B2BSignupController {
         gstCertificateUrl,
         addressProofUrl,
         kycOwnerUrl,
+        latitude,
+        longitude,
+        pincode,
+        placeId,
+        state,
+        place,
+        location,
+        houseName,
+        nearbyLocation,
       };
 
       const shop = await V2B2BSignupService.submitB2BSignup(userId, signupData);

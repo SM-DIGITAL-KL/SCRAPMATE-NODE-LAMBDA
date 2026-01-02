@@ -101,11 +101,18 @@ exports.upsertSubscriptionPackage = async (req, res) => {
     }
 
     // Validate price
-    if (typeof packageData.price !== 'number' || packageData.price <= 0) {
+    // Allow price 0 for percentage-based plans
+    if (typeof packageData.price !== 'number' || packageData.price < 0) {
       return res.status(400).json({
         status: 'error',
-        message: 'Price must be a positive number',
+        message: 'Price must be a non-negative number',
       });
+    }
+    
+    // If price is 0, it should be a percentage-based plan
+    if (packageData.price === 0 && !packageData.isPercentageBased) {
+      console.warn('⚠️  Price is 0 but isPercentageBased is not set. Setting isPercentageBased to true.');
+      packageData.isPercentageBased = true;
     }
 
     // Validate duration

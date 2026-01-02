@@ -144,7 +144,7 @@ class CustomerPanelController {
       const results = await Order.getAll(statusId);
       console.log(`✅ viewOrders: Found ${results.length} orders`);
       
-      // Enrich orders with app_version from customer data
+      // Enrich orders with app_version from customer data and shop details from shop_id
       const enrichedResults = await Promise.all(results.map(async (order) => {
         try {
           // Try to get app_version from customer_id
@@ -171,6 +171,61 @@ class CustomerPanelController {
           // Default to v1 if not found
           if (!order.app_version) {
             order.app_version = 'v1';
+          }
+          
+          // Enrich shopdetails from shop_id if shopdetails is missing or is a plain string
+          if (order.shop_id) {
+            try {
+              // Check if shopdetails is missing or is a plain string (not JSON)
+              let needsShopDetails = false;
+              if (!order.shopdetails) {
+                needsShopDetails = true;
+              } else if (typeof order.shopdetails === 'string') {
+                // Check if it's a plain string (not JSON)
+                try {
+                  JSON.parse(order.shopdetails);
+                  // If it parses, it's JSON, so we might still want to check if it has shopname
+                  const parsed = JSON.parse(order.shopdetails);
+                  if (!parsed.shopname && !parsed.shop_name && !parsed.name) {
+                    needsShopDetails = true;
+                  }
+                } catch (e) {
+                  // If it doesn't parse, it's a plain string, so we need to populate it
+                  needsShopDetails = true;
+                }
+              } else if (typeof order.shopdetails === 'object') {
+                // Check if object has shopname
+                if (!order.shopdetails.shopname && !order.shopdetails.shop_name && !order.shopdetails.name) {
+                  needsShopDetails = true;
+                }
+              }
+              
+              if (needsShopDetails) {
+                const Shop = require('../models/Shop');
+                const shop = await Shop.findById(order.shop_id);
+                if (shop) {
+                  // Populate shopdetails as a JSON object
+                  order.shopdetails = {
+                    id: shop.id,
+                    shop_id: shop.id,
+                    shopname: shop.shopname || shop.shop_name || '',
+                    shop_name: shop.shopname || shop.shop_name || '',
+                    name: shop.shopname || shop.shop_name || '',
+                    ownername: shop.ownername || shop.owner_name || '',
+                    contact: shop.contact || '',
+                    email: shop.email || '',
+                    address: shop.address || '',
+                    location: shop.location || '',
+                    place: shop.place || '',
+                    state: shop.state || '',
+                    pincode: shop.pincode || ''
+                  };
+                }
+              }
+            } catch (shopErr) {
+              console.error('Error enriching shop details:', shopErr);
+              // Continue without shop details if there's an error
+            }
           }
         } catch (err) {
           // If error fetching customer, default to v1
