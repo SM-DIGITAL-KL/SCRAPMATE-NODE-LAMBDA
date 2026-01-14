@@ -45,6 +45,7 @@ router.get('/admin/dashboard/kpis', AdminController.dashboardKPIs);
 router.get('/admin/dashboard/charts', AdminController.dashboardCharts);
 router.get('/admin/dashboard/recent-orders', AdminController.dashboardRecentOrders);
 router.get('/admin/dashboard/call-logs', AdminController.dashboardCallLogs);
+router.get('/admin/dashboard/v2-user-types', AdminController.v2UserTypesDashboard);
 // Legacy dashboard endpoint (kept for backward compatibility)
 router.get('/admin/dashboard', AdminController.dashboard);
 router.get('/admin/b2b-users', AdminController.b2bUsers);
@@ -54,6 +55,7 @@ router.post('/admin/b2b-users/:userId/approval-status', AdminController.updateB2
 router.get('/admin/b2c-users', AdminController.b2cUsers);
 router.get('/admin/b2c-users/:userId', AdminController.getB2CUserDetails);
 router.post('/admin/b2c-users/:userId/approval-status', AdminController.updateB2CApprovalStatus);
+router.post('/admin/b2c-users/:userId/contacted-status', AdminController.updateB2CContactedStatus);
 router.get('/admin/sr-users', AdminController.srUsers);
 router.get('/admin/sr-users/:userId', AdminController.getSRUserDetails);
 router.post('/admin/sr-users/:userId/approval-status', AdminController.updateSRApprovalStatus);
@@ -140,6 +142,14 @@ router.get('/customer/recent-orders', CustomerController.showRecentOrders);
 router.get('/customer/recent-orders/:id', CustomerController.showRecentOrders);
 router.get('/customer/order/:id', CustomerController.viewOrderDetails);
 router.delete('/customer/:id', CustomerController.deleteCustomer);
+
+// Add nearby 'N' type users to order's notified_vendor_ids
+router.post('/admin/order/:orderId/add-nearby-n-users', AdminController.addNearbyNUsersToOrder);
+// Add nearby 'D' type users to order's notified_vendor_ids
+router.post('/admin/order/:orderId/add-nearby-d-users', AdminController.addNearbyDUsersToOrder);
+// Add bulk notified vendors from bulk_message_notifications and send SMS
+router.post('/admin/order/:orderId/add-bulk-notified-vendors', AdminController.addBulkNotifiedVendors);
+
 // Parameterized routes (:id) must come LAST
 router.get('/customer/:id', CustomerController.getCustomerById);
 

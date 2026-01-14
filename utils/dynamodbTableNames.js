@@ -77,7 +77,8 @@ function getAllTableNames() {
     'shop_images',
     'per_pages',
     'order_rating',
-    'notifications'
+    'notifications',
+    'food_waste_enquiries'
   ];
   
   const tableMap = {};
@@ -111,4 +112,5 @@ module.exports = {
   isDevelopment,
   isProduction
 };
+
 

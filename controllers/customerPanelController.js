@@ -276,13 +276,231 @@ class CustomerPanelController {
       const { id } = req.params;
       console.log('🟢 CustomerPanelController.viewOrderDetails called', { id });
       
+      // Helper function to enrich customer details
+      const enrichOrderCustomerDetails = async (order) => {
+        try {
+          // Check if customerdetails needs enrichment
+          const needsEnrichment = !order.customerdetails || 
+                                  (typeof order.customerdetails === 'string') ||
+                                  (typeof order.customerdetails === 'object' && 
+                                   (!order.customerdetails.name && !order.customerdetails.customer_name &&
+                                    !order.customerdetails.contact && !order.customerdetails.phone));
+          
+          if (needsEnrichment && order.customer_id) {
+            const Customer = require('../models/Customer');
+            const User = require('../models/User');
+            let customer = null;
+            let user = null;
+            
+            // Try to find customer by customer_id first
+            try {
+              customer = await Customer.findById(order.customer_id);
+              console.log(`🔍 Customer lookup by customer_id ${order.customer_id}:`, customer ? 'Found' : 'Not found');
+            } catch (err) {
+              console.error('Error fetching customer by id:', err);
+            }
+            
+            // If customer not found, customer_id might be a user_id (for v2 orders)
+            // Try to find user by customer_id
+            if (!customer) {
+              try {
+                user = await User.findById(order.customer_id);
+                console.log(`🔍 User lookup by customer_id (as user_id) ${order.customer_id}:`, user ? 'Found' : 'Not found');
+                // If user found, try to find customer record by user_id
+                if (user && user.user_type === 'C') {
+                  try {
+                    customer = await Customer.findByUserId(user.id);
+                    console.log(`🔍 Customer lookup by user_id ${user.id}:`, customer ? 'Found' : 'Not found');
+                  } catch (err) {
+                    console.error('Error fetching customer by user_id:', err);
+                  }
+                }
+              } catch (err) {
+                console.error('Error fetching user by customer_id:', err);
+              }
+            }
+            
+            // If not found and we have user_id, try finding by user_id
+            if (!customer && order.user_id) {
+              try {
+                customer = await Customer.findByUserId(order.user_id);
+                console.log(`🔍 Customer lookup by order.user_id ${order.user_id}:`, customer ? 'Found' : 'Not found');
+              } catch (err) {
+                console.error('Error fetching customer by order.user_id:', err);
+              }
+            }
+            
+            // Helper function to check if name is a placeholder
+            const isPlaceholderName = (name) => {
+              return !name || name.startsWith('User_') || name === '';
+            };
+            
+            // Choose the best name: prefer real name over placeholder
+            let bestName = '';
+            let nameSource = '';
+            if (customer?.name && !isPlaceholderName(customer.name)) {
+              bestName = customer.name;
+              nameSource = 'Customer table';
+            } else if (user?.name && !isPlaceholderName(user.name)) {
+              bestName = user.name;
+              nameSource = 'User table';
+            } else if (customer?.name) {
+              bestName = customer.name;
+              nameSource = 'Customer table (placeholder)';
+            } else if (user?.name) {
+              bestName = user.name;
+              nameSource = 'User table (placeholder)';
+            }
+            
+            // Use customer data if found, otherwise use user data
+            const sourceData = customer || user;
+            
+            if (sourceData) {
+              // Initialize customerdetails as object
+              if (!order.customerdetails || typeof order.customerdetails === 'string') {
+                const addressString = typeof order.customerdetails === 'string' ? order.customerdetails : '';
+                order.customerdetails = {
+                  address: addressString || (customer?.address || '')
+                };
+              } else if (typeof order.customerdetails === 'object') {
+                // Ensure it's a plain object
+                order.customerdetails = { ...order.customerdetails };
+              }
+              
+              // Populate name and contact if missing - use best name (real name preferred)
+              if (!order.customerdetails.name && !order.customerdetails.customer_name) {
+                order.customerdetails.name = bestName || '';
+                order.customerdetails.customer_name = bestName || '';
+              }
+              if (!order.customerdetails.contact && !order.customerdetails.phone && !order.customerdetails.mobile) {
+                order.customerdetails.contact = customer?.contact || customer?.phone || user?.mob_num || user?.mobile || user?.phone || '';
+                order.customerdetails.phone = order.customerdetails.contact;
+              }
+              if (!order.customerdetails.address && customer?.address) {
+                order.customerdetails.address = customer.address;
+              }
+              
+              console.log('✅ Customer details enriched for order', {
+                order_id: order.id,
+                customer_id: order.customer_id,
+                name_source: nameSource || (customer ? 'Customer table' : 'User table'),
+                name: order.customerdetails.name,
+                contact: order.customerdetails.contact
+              });
+            } else {
+              console.warn('⚠️ Customer/User not found for order', {
+                order_id: order.id,
+                customer_id: order.customer_id,
+                user_id: order.user_id
+              });
+            }
+          }
+          
+          return order;
+        } catch (error) {
+          console.error('Error enriching customer details:', error);
+          return order; // Return original order if enrichment fails
+        }
+      };
+      
+      // Helper function to enrich notified vendor details
+      const enrichNotifiedVendors = async (order) => {
+        try {
+          if (order.notified_vendor_ids) {
+            const User = require('../models/User');
+            let notifiedVendorIds = order.notified_vendor_ids;
+            
+            // Parse if it's a string
+            if (typeof notifiedVendorIds === 'string') {
+              notifiedVendorIds = JSON.parse(notifiedVendorIds);
+            }
+            
+            // Ensure it's an array
+            if (!Array.isArray(notifiedVendorIds)) {
+              notifiedVendorIds = [notifiedVendorIds];
+            }
+            
+            // Convert to numbers and filter out invalid IDs
+            const validIds = notifiedVendorIds
+              .map(id => typeof id === 'string' && !isNaN(id) ? parseInt(id) : id)
+              .filter(id => !isNaN(id) && id > 0);
+            
+            if (validIds.length > 0) {
+              console.log(`📋 Fetching details for ${validIds.length} notified vendors`);
+              console.log(`   Valid IDs: ${validIds.slice(0, 20).join(', ')}${validIds.length > 20 ? '...' : ''}`);
+              const notifiedVendors = await User.findByIds(validIds);
+              
+              console.log(`   Found ${notifiedVendors.length} users from database`);
+              
+              // Add vendor details to order
+              order.notified_vendors = notifiedVendors.map(user => ({
+                id: user.id,
+                name: user.name || 'N/A',
+                mobile: user.mob_num || user.mobile || user.phone || 'N/A',
+                email: user.email || 'N/A',
+                user_type: user.user_type || 'N/A',
+                app_version: user.app_version || 'N/A'
+              }));
+              
+              console.log(`✅ Enriched order with ${order.notified_vendors.length} notified vendor details`);
+              console.log(`   User types: ${order.notified_vendors.map(v => v.user_type).join(', ')}`);
+            } else {
+              console.warn(`⚠️  No valid IDs found in notified_vendor_ids`);
+              order.notified_vendors = [];
+            }
+          } else {
+            order.notified_vendors = [];
+          }
+          
+          // Enrich bulk_notified_vendors (phone numbers from bulk_message_notifications)
+          if (order.bulk_notified_vendors) {
+            try {
+              let bulkNotifiedVendors = order.bulk_notified_vendors;
+              
+              // Parse if it's a string
+              if (typeof bulkNotifiedVendors === 'string') {
+                bulkNotifiedVendors = JSON.parse(bulkNotifiedVendors);
+              }
+              
+              // Ensure it's an array
+              if (!Array.isArray(bulkNotifiedVendors)) {
+                bulkNotifiedVendors = [bulkNotifiedVendors];
+              }
+              
+              if (bulkNotifiedVendors.length > 0) {
+                console.log(`📋 Found ${bulkNotifiedVendors.length} bulk notified vendors (phone numbers)`);
+                // Keep bulk_notified_vendors as array of phone numbers or objects
+                // The admin panel will display them from window.bulkNotifiedVendors or from this field
+                order.bulk_notified_vendors = bulkNotifiedVendors;
+              }
+            } catch (err) {
+              console.error('Error parsing bulk_notified_vendors:', err);
+              order.bulk_notified_vendors = [];
+            }
+          } else {
+            order.bulk_notified_vendors = [];
+          }
+        } catch (err) {
+          console.error('Error enriching notified vendor details:', err);
+          // Don't fail the request if vendor enrichment fails
+          order.notified_vendors = [];
+          order.bulk_notified_vendors = [];
+        }
+        return order;
+      };
+      
       // Check Redis cache first
       const cacheKey = RedisCache.orderKey(id);
       try {
         const cached = await RedisCache.get(cacheKey);
         if (cached) {
           console.log('⚡ Order details cache hit:', cacheKey);
-          return res.json({ status: 'success', msg: 'Order retrieved', data: cached });
+          console.log(`   Cached notified_vendor_ids: ${cached.notified_vendor_ids ? (typeof cached.notified_vendor_ids === 'string' ? cached.notified_vendor_ids.substring(0, 100) : JSON.stringify(cached.notified_vendor_ids).substring(0, 100)) : 'N/A'}`);
+          // Still enrich customer details and notified vendors even if cached
+          const enrichedOrder = await enrichOrderCustomerDetails(cached);
+          await enrichNotifiedVendors(enrichedOrder);
+          console.log(`   Enriched notified_vendors count: ${enrichedOrder.notified_vendors ? enrichedOrder.notified_vendors.length : 0}`);
+          return res.json({ status: 'success', msg: 'Order retrieved', data: enrichedOrder });
         }
       } catch (err) {
         console.error('Redis get error:', err);
@@ -291,18 +509,26 @@ class CustomerPanelController {
       // Use Order model
       const orderData = await Order.getById(id);
       console.log(`✅ viewOrderDetails: Found order:`, orderData ? 'Yes' : 'No');
-      
-      // Cache order data for 10 minutes
       if (orderData) {
+        console.log(`   Database notified_vendor_ids: ${orderData.notified_vendor_ids ? (typeof orderData.notified_vendor_ids === 'string' ? orderData.notified_vendor_ids.substring(0, 100) : JSON.stringify(orderData.notified_vendor_ids).substring(0, 100)) : 'N/A'}`);
+      }
+      
+      // Enrich customer details if needed
+      let enrichedOrder = orderData;
+      if (orderData) {
+        enrichedOrder = await enrichOrderCustomerDetails(orderData);
+        await enrichNotifiedVendors(enrichedOrder);
+        
+        // Cache enriched order data
         try {
-          await RedisCache.set(cacheKey, orderData, '30days');
+          await RedisCache.set(cacheKey, enrichedOrder, '30days');
           console.log('💾 Order data cached:', cacheKey);
         } catch (err) {
           console.error('Redis cache set error:', err);
         }
       }
       
-      res.json({ status: 'success', msg: 'Order retrieved', data: orderData });
+      res.json({ status: 'success', msg: 'Order retrieved', data: enrichedOrder });
     } catch (error) {
       console.error('❌ viewOrderDetails error:', error);
       res.status(500).json({ status: 'error', msg: 'Error fetching order', data: null });

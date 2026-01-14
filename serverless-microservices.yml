@@ -233,6 +233,19 @@ functions:
       - httpApi:
           path: /api/v2/orders/active-pickup/{userId}
           method: GET
+      # ==================== V2 BULK MESSAGE NOTIFICATION ROUTES ====================
+      - httpApi:
+          path: /api/v2/bulk-message/notify
+          method: POST
+      - httpApi:
+          path: /api/v2/bulk-message/check/{phoneNumber}
+          method: GET
+      - httpApi:
+          path: /api/v2/bulk-message/check-batch
+          method: POST
+      - httpApi:
+          path: /api/v2/bulk-message/notifications
+          method: GET
 
   # ==================== LOCATION SERVICE ====================
   location-service:

@@ -16,7 +16,40 @@ echo ""
 # Load AWS credentials from aws.txt if it exists
 if [ -f "aws.txt" ]; then
     echo "📁 Loading AWS credentials from aws.txt..."
-    export $(grep -E '^export ' aws.txt | sed 's/export //' | xargs)
+    # Process each export line and load variables
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip empty lines and comments
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        # Only process export lines
+        if [[ "$line" =~ ^export[[:space:]]+ ]]; then
+            # Remove 'export ' prefix
+            var_part="${line#export }"
+            # Extract variable name and value using parameter expansion
+            if [[ "$var_part" =~ ^([^=]+)=(.*)$ ]]; then
+                var_name="${BASH_REMATCH[1]}"
+                var_value="${BASH_REMATCH[2]}"
+            # Remove leading/trailing quotes and spaces
+            var_value=$(echo "$var_value" | sed "s/^[[:space:]]*['\"]//;s/['\"][[:space:]]*$//")
+            # Export the variable - use eval to ensure proper export
+            eval "export $var_name=\"$var_value\""
+                # Debug: show Instamojo credentials being loaded
+                if [[ "$var_name" == "INSTAMOJO_"* ]]; then
+                    echo "   ✅ Loaded $var_name (length: ${#var_value})"
+                fi
+            fi
+        fi
+    done < aws.txt
+    
+    # Verify Instamojo credentials are loaded
+    if [ -n "${INSTAMOJO_API_KEY:-}" ] && [ -n "${INSTAMOJO_AUTH_TOKEN:-}" ]; then
+        echo "✅ Instamojo credentials loaded from aws.txt"
+        echo "   API Key: ${INSTAMOJO_API_KEY:0:8}... (length: ${#INSTAMOJO_API_KEY})"
+        echo "   Auth Token: ${INSTAMOJO_AUTH_TOKEN:0:8}... (length: ${#INSTAMOJO_AUTH_TOKEN})"
+    else
+        echo "⚠️  Warning: Instamojo credentials not found in aws.txt"
+        echo "   INSTAMOJO_API_KEY: ${INSTAMOJO_API_KEY:-EMPTY}"
+        echo "   INSTAMOJO_AUTH_TOKEN: ${INSTAMOJO_AUTH_TOKEN:-EMPTY}"
+    fi
 fi
 
 export AWS_REGION=${AWS_REGION:-$REGION}
@@ -27,6 +60,16 @@ export SESSION_SECRET=${SESSION_SECRET:-'scrapmate-session-secret-change-in-prod
 export JWT_SECRET=${JWT_SECRET:-'scrapmate-jwt-secret-change-in-production'}
 # Use production bucket for production stage
 export S3_BUCKET_NAME=${S3_BUCKET_NAME:-'scrapmate-images-production'}
+
+# Instamojo Payment Gateway credentials
+# Set these as environment variables or in aws.txt before deployment
+# Example: export INSTAMOJO_API_KEY='your-api-key'
+export INSTAMOJO_API_KEY=${INSTAMOJO_API_KEY:-''}
+export INSTAMOJO_AUTH_TOKEN=${INSTAMOJO_AUTH_TOKEN:-''}
+export INSTAMOJO_SALT=${INSTAMOJO_SALT:-''}
+# Alternative names for backward compatibility
+export INSTAMOJO_CLIENT_ID=${INSTAMOJO_CLIENT_ID:-$INSTAMOJO_API_KEY}
+export INSTAMOJO_CLIENT_SECRET=${INSTAMOJO_CLIENT_SECRET:-$INSTAMOJO_AUTH_TOKEN}
 
 # Load Firebase service account - prioritize vendor app (partner) service account
 if [ -f "scrapmate-partner-android-firebase-adminsdk-fbsvc-709bbce0d4.json" ]; then
@@ -215,12 +258,75 @@ if [ $? -eq 0 ]; then
     
     echo "✅ Code updated"
     
+    # Wait for code update to complete before updating configuration
+    echo "⏳ Waiting for code update to complete..."
+    MAX_WAIT=60
+    WAIT_COUNT=0
+    while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
+        FUNCTION_STATE=$(aws lambda get-function-configuration \
+            --function-name "$FUNCTION_NAME" \
+            --region "$REGION" \
+            --query 'LastUpdateStatus' \
+            --output text 2>/dev/null)
+        
+        if [ "$FUNCTION_STATE" == "Successful" ] || [ "$FUNCTION_STATE" == "InProgress" ]; then
+            if [ "$FUNCTION_STATE" == "Successful" ]; then
+                echo "   ✅ Code update completed"
+                break
+            else
+                echo "   ⏳ Still updating... (${WAIT_COUNT}s)"
+                sleep 2
+                WAIT_COUNT=$((WAIT_COUNT + 2))
+            fi
+        else
+            # If we can't determine state, wait a bit and proceed
+            echo "   ⏳ Waiting for update to stabilize... (${WAIT_COUNT}s)"
+            sleep 2
+            WAIT_COUNT=$((WAIT_COUNT + 2))
+        fi
+    done
+    
+    if [ $WAIT_COUNT -ge $MAX_WAIT ]; then
+        echo "   ⚠️  Timeout waiting for code update, proceeding anyway..."
+    fi
+    
+    # Additional small delay to ensure update is fully propagated
+    sleep 3
+    
     # Update function configuration
     echo "⚙️  Updating function configuration..."
     
     # Build environment variables JSON
     ENV_JSON="/tmp/lambda-env-${STAGE}-$(date +%s).json"
+    
+    # Verify variables are still available before building JSON
+    echo "   🔍 Checking variables before building JSON:"
+    echo "      INSTAMOJO_API_KEY: ${INSTAMOJO_API_KEY:0:8}... (length: ${#INSTAMOJO_API_KEY})"
+    echo "      INSTAMOJO_AUTH_TOKEN: ${INSTAMOJO_AUTH_TOKEN:0:8}... (length: ${#INSTAMOJO_AUTH_TOKEN})"
+    
     ./scripts/build-env-json.sh "$ENV_JSON"
+    
+    # Verify Instamojo credentials are in the JSON
+    if [ -f "$ENV_JSON" ]; then
+        INSTAMOJO_KEY_IN_JSON=$(jq -r '.Variables.INSTAMOJO_API_KEY // ""' "$ENV_JSON")
+        INSTAMOJO_TOKEN_IN_JSON=$(jq -r '.Variables.INSTAMOJO_AUTH_TOKEN // ""' "$ENV_JSON")
+        if [ -n "$INSTAMOJO_KEY_IN_JSON" ] && [ -n "$INSTAMOJO_TOKEN_IN_JSON" ]; then
+            echo "   ✅ Instamojo credentials included in environment JSON"
+            echo "      API Key: ${INSTAMOJO_KEY_IN_JSON:0:8}... (length: ${#INSTAMOJO_KEY_IN_JSON})"
+            echo "      Auth Token: ${INSTAMOJO_TOKEN_IN_JSON:0:8}... (length: ${#INSTAMOJO_TOKEN_IN_JSON})"
+        else
+            echo "   ⚠️  Warning: Instamojo credentials missing from environment JSON"
+            echo "      API Key in JSON: ${INSTAMOJO_KEY_IN_JSON:-EMPTY} (length: ${#INSTAMOJO_KEY_IN_JSON})"
+            echo "      Auth Token in JSON: ${INSTAMOJO_TOKEN_IN_JSON:-EMPTY} (length: ${#INSTAMOJO_TOKEN_IN_JSON})"
+            echo "   🔍 Debug: Current environment variables:"
+            echo "      INSTAMOJO_API_KEY: ${INSTAMOJO_API_KEY:-EMPTY} (length: ${#INSTAMOJO_API_KEY})"
+            echo "      INSTAMOJO_AUTH_TOKEN: ${INSTAMOJO_AUTH_TOKEN:-EMPTY} (length: ${#INSTAMOJO_AUTH_TOKEN})"
+            echo "   📄 Showing relevant part of JSON file:"
+            jq '.Variables | {INSTAMOJO_API_KEY, INSTAMOJO_AUTH_TOKEN, INSTAMOJO_SALT}' "$ENV_JSON" || echo "   ❌ Failed to parse JSON"
+        fi
+    else
+        echo "   ❌ Environment JSON file not found: $ENV_JSON"
+    fi
     
     if [ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]; then
         echo "   ✅ Including FIREBASE_SERVICE_ACCOUNT in environment variables"
@@ -228,24 +334,78 @@ if [ $? -eq 0 ]; then
         echo "   ⚠️  FIREBASE_SERVICE_ACCOUNT not set - FCM notifications may not work"
     fi
     
-    aws lambda update-function-configuration \
-        --function-name "$FUNCTION_NAME" \
-        --runtime nodejs20.x \
-        --handler lambda.handler \
-        --timeout 30 \
-        --memory-size 1024 \
-        --environment "file://$ENV_JSON" \
-        --region "$REGION" \
-        --output json > /tmp/lambda-config.json 2>&1
+    # Show what we're about to send (for debugging)
+    echo "   📋 Environment variables being sent to Lambda:"
+    jq '.Variables | {INSTAMOJO_API_KEY, INSTAMOJO_AUTH_TOKEN, INSTAMOJO_SALT}' "$ENV_JSON" 2>/dev/null || echo "   ⚠️  Could not parse JSON file"
     
-    rm -f "$ENV_JSON"
+    # Retry logic for configuration update (in case of ResourceConflictException)
+    MAX_RETRIES=5
+    RETRY_COUNT=0
+    UPDATE_RESULT=1
     
-    if [ $? -ne 0 ]; then
-        echo "⚠️  Warning: Failed to update configuration (may need IAM permissions)"
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ $UPDATE_RESULT -ne 0 ]; do
+        if [ $RETRY_COUNT -gt 0 ]; then
+            echo "   🔄 Retrying configuration update (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)..."
+            sleep 5
+        fi
+        
+        aws lambda update-function-configuration \
+            --function-name "$FUNCTION_NAME" \
+            --runtime nodejs20.x \
+            --handler lambda.handler \
+            --timeout 30 \
+            --memory-size 1024 \
+            --environment "file://$ENV_JSON" \
+            --region "$REGION" \
+            --output json > /tmp/lambda-config.json 2>&1
+        
+        UPDATE_RESULT=$?
+        
+        if [ $UPDATE_RESULT -ne 0 ]; then
+            ERROR_MSG=$(cat /tmp/lambda-config.json | grep -o '"errorMessage":"[^"]*' | cut -d'"' -f4 || cat /tmp/lambda-config.json | grep -o 'error occurred[^<]*' || echo "Unknown error")
+            if echo "$ERROR_MSG" | grep -q "ResourceConflictException"; then
+                echo "   ⏳ Code update still in progress, waiting..."
+                sleep 5
+            else
+                echo "   ⚠️  Configuration update failed: $ERROR_MSG"
+                break
+            fi
+        fi
+        
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+    done
+    
+    if [ $UPDATE_RESULT -ne 0 ]; then
+        echo "⚠️  Warning: Failed to update configuration after $MAX_RETRIES attempts"
         cat /tmp/lambda-config.json
     else
         echo "✅ Configuration updated"
+        
+        # Verify the update was successful and check what was actually set
+        echo "   🔍 Verifying environment variables in Lambda..."
+        sleep 2  # Wait a moment for the update to propagate
+        ACTUAL_ENV=$(aws lambda get-function-configuration \
+            --function-name "$FUNCTION_NAME" \
+            --region "$REGION" \
+            --query 'Environment.Variables' \
+            --output json 2>/dev/null)
+        
+        if [ -n "$ACTUAL_ENV" ]; then
+            INSTAMOJO_KEY_ACTUAL=$(echo "$ACTUAL_ENV" | jq -r '.INSTAMOJO_API_KEY // ""')
+            INSTAMOJO_TOKEN_ACTUAL=$(echo "$ACTUAL_ENV" | jq -r '.INSTAMOJO_AUTH_TOKEN // ""')
+            if [ -n "$INSTAMOJO_KEY_ACTUAL" ] && [ "$INSTAMOJO_KEY_ACTUAL" != "null" ]; then
+                echo "   ✅ Instamojo credentials verified in Lambda (API Key: ${INSTAMOJO_KEY_ACTUAL:0:8}...)"
+            else
+                echo "   ⚠️  Warning: Instamojo credentials not found in Lambda after update"
+                echo "      API Key: ${INSTAMOJO_KEY_ACTUAL:-null}"
+                echo "      Auth Token: ${INSTAMOJO_TOKEN_ACTUAL:-null}"
+                echo "   💡 The JSON file is saved at: $ENV_JSON (for debugging)"
+            fi
+        fi
     fi
+    
+    # Keep the JSON file for debugging (don't delete immediately)
+    # rm -f "$ENV_JSON"
     
 else
     echo "📝 Function does not exist, creating..."
@@ -285,6 +445,19 @@ else
     # Build environment variables JSON
     ENV_JSON="/tmp/lambda-env-create-${STAGE}-$(date +%s).json"
     ./scripts/build-env-json.sh "$ENV_JSON"
+    
+    # Verify Instamojo credentials are in the JSON
+    if [ -f "$ENV_JSON" ]; then
+        INSTAMOJO_KEY_IN_JSON=$(jq -r '.Variables.INSTAMOJO_API_KEY // ""' "$ENV_JSON")
+        INSTAMOJO_TOKEN_IN_JSON=$(jq -r '.Variables.INSTAMOJO_AUTH_TOKEN // ""' "$ENV_JSON")
+        if [ -n "$INSTAMOJO_KEY_IN_JSON" ] && [ -n "$INSTAMOJO_TOKEN_IN_JSON" ]; then
+            echo "   ✅ Instamojo credentials included in environment JSON"
+        else
+            echo "   ⚠️  Warning: Instamojo credentials missing from environment JSON"
+            echo "      API Key in JSON: ${INSTAMOJO_KEY_IN_JSON:-EMPTY}"
+            echo "      Auth Token in JSON: ${INSTAMOJO_TOKEN_IN_JSON:-EMPTY}"
+        fi
+    fi
     
     if [ -n "${FIREBASE_SERVICE_ACCOUNT:-}" ]; then
         echo "   ✅ Including FIREBASE_SERVICE_ACCOUNT in environment variables"

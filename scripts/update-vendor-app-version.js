@@ -1,108 +1,170 @@
 /**
- * Script to update vendor app (partner app) version in DynamoDB admin_profile table
- * Usage: node scripts/update-vendor-app-version.js [version]
- * Example: node scripts/update-vendor-app-version.js 1.0.8
+ * Script to update vendor app version in the database
+ * 
+ * Usage: 
+ *   node scripts/update-vendor-app-version.js [vendor_id]
+ *   node scripts/update-vendor-app-version.js all
+ * 
+ * Examples:
+ *   node scripts/update-vendor-app-version.js 1767945729183  (update specific vendor)
+ *   node scripts/update-vendor-app-version.js all            (update all vendor_app users)
  */
 
 require('dotenv').config();
+const User = require('../models/User');
 const { getDynamoDBClient } = require('../config/dynamodb');
-const { GetCommand, PutCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+const { UpdateCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
 
-const VERSION = process.argv[2] || '1.0.8';
-const TABLE_NAME = 'admin_profile';
+const vendorId = process.argv[2];
+const newVersion = '1.19.0';
+
+if (!vendorId) {
+  console.error('❌ Please provide a vendor ID or "all"');
+  console.error('   Usage: node scripts/update-vendor-app-version.js [vendor_id|all]');
+  process.exit(1);
+}
 
 async function updateVendorAppVersion() {
   try {
-    console.log('🟢 Starting vendor app version update...');
-    console.log(`   Target version: ${VERSION}`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('🔄 Updating Vendor App Version');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`Target: ${vendorId === 'all' ? 'All vendor_app users' : `Vendor ID: ${vendorId}`}`);
+    console.log(`New Version: ${newVersion}`);
+    console.log('');
     
     const client = getDynamoDBClient();
+    let updatedCount = 0;
+    let skippedCount = 0;
+    let errorCount = 0;
     
-    // Check if admin_profile exists
-    const getCommand = new GetCommand({
-      TableName: TABLE_NAME,
-      Key: { id: 1 }
-    });
-    
-    const response = await client.send(getCommand);
-    
-    if (response.Item) {
-      // Update existing item
-      console.log('📝 Admin profile exists, updating version...');
-      const updateCommand = new UpdateCommand({
-        TableName: TABLE_NAME,
-        Key: { id: 1 },
-        UpdateExpression: 'SET vendor_app_version = :version, appVersion = :version, app_version = :version, #updated_at = :updated_at',
-        ExpressionAttributeNames: {
-          '#updated_at': 'updated_at'
-        },
-        ExpressionAttributeValues: {
-          ':version': VERSION,
-          ':updated_at': new Date().toISOString()
+    if (vendorId === 'all') {
+      // Update all vendor_app users
+      console.log('📦 Fetching all vendor_app users...');
+      
+      let allUsers = [];
+      let lastKey = null;
+      
+      do {
+        const params = {
+          TableName: 'users',
+          FilterExpression: 'app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+          ExpressionAttributeValues: {
+            ':appType': 'vendor_app',
+            ':deleted': 2
+          }
+        };
+        if (lastKey) params.ExclusiveStartKey = lastKey;
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        if (response.Items) allUsers.push(...response.Items);
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+      
+      console.log(`✅ Found ${allUsers.length} vendor_app users`);
+      console.log('');
+      
+      // Update each user
+      for (const user of allUsers) {
+        try {
+          const currentVersion = user.app_version || 'N/A';
+          
+          // Skip if already at the target version
+          if (currentVersion === newVersion) {
+            console.log(`⏭️  Skipping ${user.id} (${user.name || 'N/A'}) - already at version ${newVersion}`);
+            skippedCount++;
+            continue;
+          }
+          
+          console.log(`🔄 Updating ${user.id} (${user.name || 'N/A'}): ${currentVersion} → ${newVersion}`);
+          
+          const updateCommand = new UpdateCommand({
+            TableName: 'users',
+            Key: { id: user.id },
+            UpdateExpression: 'SET app_version = :version, updated_at = :updatedAt',
+            ExpressionAttributeValues: {
+              ':version': newVersion,
+              ':updatedAt': new Date().toISOString()
+            }
+          });
+          
+          await client.send(updateCommand);
+          updatedCount++;
+          console.log(`   ✅ Updated successfully`);
+        } catch (err) {
+          console.error(`   ❌ Error updating ${user.id}:`, err.message);
+          errorCount++;
         }
-      });
-      
-      await client.send(updateCommand);
-      console.log(`✅ Successfully updated vendor app version to: ${VERSION}`);
+      }
     } else {
-      // Create new admin_profile item if it doesn't exist
-      console.log('📝 Admin profile does not exist, creating new one...');
-      const newItem = {
-        id: 1,
-        name: 'SCRAPMATE',
-        contact: 0,
-        email: 'nil@nil.in',
-        address: 'nil',
-        location: 'nil',
-        vendor_app_version: VERSION,
-        appVersion: VERSION,
-        app_version: VERSION,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
+      // Update specific vendor
+      const vendor = await User.findById(vendorId);
       
-      const putCommand = new PutCommand({
-        TableName: TABLE_NAME,
-        Item: newItem
-      });
+      if (!vendor) {
+        console.error(`❌ Vendor with ID ${vendorId} not found`);
+        process.exit(1);
+      }
       
-      await client.send(putCommand);
-      console.log(`✅ Successfully created admin profile with vendor app version: ${VERSION}`);
-    }
-    
-    // Verify the update
-    const verifyCommand = new GetCommand({
-      TableName: TABLE_NAME,
-      Key: { id: 1 }
-    });
-    
-    const verifyResponse = await client.send(verifyCommand);
-    if (verifyResponse.Item) {
-      const storedVersion = verifyResponse.Item.vendor_app_version || verifyResponse.Item.appVersion || verifyResponse.Item.app_version;
-      console.log(`🔍 Verification: Stored vendor app version is now: ${storedVersion}`);
+      if (vendor.app_type !== 'vendor_app') {
+        console.warn(`⚠️  Warning: User ${vendorId} is not a vendor_app user (app_type: ${vendor.app_type || 'N/A'})`);
+        console.log('   Proceeding with update anyway...');
+      }
       
-      if (storedVersion === VERSION) {
-        console.log('✅ Version update verified successfully!');
-      } else {
-        console.warn(`⚠️ Warning: Stored version (${storedVersion}) does not match target version (${VERSION})`);
+      const currentVersion = vendor.app_version || 'N/A';
+      
+      if (currentVersion === newVersion) {
+        console.log(`✅ Vendor ${vendorId} (${vendor.name || 'N/A'}) is already at version ${newVersion}`);
+        console.log('   No update needed');
+        process.exit(0);
+      }
+      
+      console.log(`🔄 Updating vendor ${vendorId} (${vendor.name || 'N/A'}): ${currentVersion} → ${newVersion}`);
+      
+      try {
+        const updateCommand = new UpdateCommand({
+          TableName: 'users',
+          Key: { id: parseInt(vendorId) },
+          UpdateExpression: 'SET app_version = :version, updated_at = :updatedAt',
+          ExpressionAttributeValues: {
+            ':version': newVersion,
+            ':updatedAt': new Date().toISOString()
+          }
+        });
+        
+        await client.send(updateCommand);
+        updatedCount++;
+        console.log(`✅ Updated successfully`);
+        
+        // Verify the update
+        const updatedVendor = await User.findById(vendorId);
+        console.log('');
+        console.log(`✅ Verification:`);
+        console.log(`   Vendor ID: ${updatedVendor.id}`);
+        console.log(`   Name: ${updatedVendor.name || 'N/A'}`);
+        console.log(`   App Type: ${updatedVendor.app_type || 'N/A'}`);
+        console.log(`   App Version: ${updatedVendor.app_version || 'N/A'}`);
+      } catch (err) {
+        console.error(`❌ Error updating vendor:`, err.message);
+        errorCount++;
       }
     }
     
-    console.log('✅ Vendor app version update completed!');
+    console.log('');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📊 Summary');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`✅ Updated: ${updatedCount}`);
+    console.log(`⏭️  Skipped: ${skippedCount}`);
+    console.log(`❌ Errors: ${errorCount}`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
   } catch (error) {
-    console.error('❌ Error updating vendor app version:', error);
+    console.error('❌ Error:', error);
+    console.error('   Message:', error.message);
+    console.error('   Stack:', error.stack);
     process.exit(1);
   }
 }
 
-// Run the script
-updateVendorAppVersion()
-  .then(() => {
-    console.log('🎉 Script completed successfully');
-    process.exit(0);
-  })
-  .catch((error) => {
-    console.error('❌ Script failed:', error);
-    process.exit(1);
-  });
-
+updateVendorAppVersion();

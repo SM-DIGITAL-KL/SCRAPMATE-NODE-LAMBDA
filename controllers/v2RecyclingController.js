@@ -108,7 +108,8 @@ class V2RecyclingController {
       let completedOrders = [];
       if (type === 'customer') {
         const allOrders = await Order.findByCustomerId(userIdNum);
-        completedOrders = allOrders.filter(order => order.status === 4);
+        // Status 5 = Pickup Completed (changed from status 4)
+        completedOrders = allOrders.filter(order => order.status === 5);
       } else if (type === 'shop') {
         // For shop type, first find the shop_id from user_id
         const Shop = require('../models/Shop');

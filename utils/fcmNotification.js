@@ -636,11 +636,177 @@ async function sendCustomerNotification(fcmToken, title, body, data = {}) {
   }
 }
 
+/**
+ * Send FCM notification to Flutter app users (legacy users with no app_type)
+ * Uses the default Firebase app (typically scrapmate-ba0f0 or scrapmate-user)
+ * @param {string} fcmToken - FCM token of the Flutter app device
+ * @param {string} title - Notification title
+ * @param {string} body - Notification body
+ * @param {Object} data - Additional data payload (optional)
+ * @returns {Promise<Object>} - FCM send response
+ */
+async function sendFlutterNotification(fcmToken, title, body, data = {}) {
+  try {
+    // Initialize Firebase for Flutter app users
+    // Use the Firebase credentials from PHP project (scrapmate-ba0f0)
+    // Try alternative file first (2f2d530a43), then primary (f88ddf2bbe)
+    const flutterServiceAccountPathAlt = path.join(__dirname, '..', '..', 'SCRAPMATE-ADMIN-PHP', 'storage', 'firebase', 'scrapmate-ba0f0-firebase-adminsdk-tqhai-2f2d530a43.json');
+    const flutterServiceAccountPath = path.join(__dirname, '..', '..', 'SCRAPMATE-ADMIN-PHP', 'storage', 'firebase', 'scrapmate-ba0f0-firebase-adminsdk-tqhai-f88ddf2bbe.json');
+    // Also check in Node.js project root as fallback
+    const flutterServiceAccountPathLocal = path.join(__dirname, '..', 'firebase-service-account.json');
+    
+    let flutterApp = null;
+    
+    // Check if Flutter app is already initialized
+    try {
+      flutterApp = admin.app('flutter-app');
+      console.log('✅ Flutter app Firebase already initialized');
+    } catch (e) {
+      // Not initialized yet, initialize it
+      let serviceAccountPath = null;
+      
+      // Try alternative path first (newer key), then primary, then local
+      if (fs.existsSync(flutterServiceAccountPathAlt)) {
+        serviceAccountPath = flutterServiceAccountPathAlt;
+      } else if (fs.existsSync(flutterServiceAccountPath)) {
+        serviceAccountPath = flutterServiceAccountPath;
+      } else if (fs.existsSync(flutterServiceAccountPathLocal)) {
+        serviceAccountPath = flutterServiceAccountPathLocal;
+      }
+      
+      if (serviceAccountPath) {
+        console.log('🔧 Initializing Firebase for Flutter app from service account file');
+        console.log(`   Using: ${serviceAccountPath}`);
+        const serviceAccountJson = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8'));
+        flutterApp = admin.initializeApp({
+          credential: admin.credential.cert(serviceAccountJson)
+        }, 'flutter-app');
+        console.log('✅ Firebase Admin SDK initialized for Flutter app');
+        console.log(`   Project ID: ${flutterApp.options.projectId || 'N/A'}`);
+        console.log(`   Project: scrapmate-ba0f0 (Flutter app)`);
+      } else {
+        // Fallback to default app if Flutter service account not found
+        console.warn('⚠️ Flutter app service account not found, using default Firebase app');
+        console.warn(`   Checked paths:`);
+        console.warn(`   - ${flutterServiceAccountPath}`);
+        console.warn(`   - ${flutterServiceAccountPathAlt}`);
+        console.warn(`   - ${flutterServiceAccountPathLocal}`);
+        if (!firebaseInitialized) {
+          initializeFirebase();
+        }
+        flutterApp = admin.app();
+      }
+    }
+
+    if (!fcmToken) {
+      throw new Error('FCM token is required');
+    }
+
+    const message = {
+      notification: {
+        title: title,
+        body: body
+      },
+      data: {
+        ...data,
+        // Convert all data values to strings (FCM requirement)
+        ...Object.keys(data).reduce((acc, key) => {
+          acc[key] = String(data[key]);
+          return acc;
+        }, {})
+      },
+      token: fcmToken,
+      android: {
+        priority: 'high',
+        notification: {
+          sound: 'default',
+          channelId: 'default' // Flutter app channel ID
+        }
+      },
+      apns: {
+        payload: {
+          aps: {
+            sound: 'default',
+            badge: 1,
+            contentAvailable: true,
+            alert: {
+              title: title,
+              body: body
+            }
+          }
+        }
+      }
+    };
+
+    // Only log sending attempt, not full details to reduce noise
+    // console.log('📤 Sending FCM notification to Flutter app:', {
+    //   token: fcmToken.substring(0, 20) + '...',
+    //   title,
+    //   body
+    // });
+
+    const response = await flutterApp.messaging().send(message);
+    // Only log success, not full response to reduce noise
+    // console.log('✅ FCM notification sent successfully to Flutter app:', response);
+
+    return {
+      success: true,
+      messageId: response,
+      token: fcmToken
+    };
+  } catch (error) {
+    // Handle specific FCM errors silently (these are expected for invalid tokens)
+    if (error.code === 'messaging/invalid-registration-token' || 
+        error.code === 'messaging/registration-token-not-registered') {
+      // Don't log these as they're expected for users who uninstalled the app
+      return {
+        success: false,
+        error: 'invalid_token',
+        message: 'FCM token is invalid or unregistered'
+      };
+    }
+    
+    // Handle SenderId mismatch (token belongs to different Firebase project)
+    if (error.code === 'messaging/mismatched-credential') {
+      // Don't log these as they're expected for tokens from different projects
+      return {
+        success: false,
+        error: 'senderid_mismatch',
+        message: 'FCM token belongs to a different Firebase project'
+      };
+    }
+    
+    // Handle credential errors (invalid JWT signature, revoked key, etc.)
+    if (error.message && error.message.includes('Invalid JWT Signature') || 
+        error.message && error.message.includes('invalid_grant') ||
+        error.code === 'auth/invalid-credential') {
+      // This is a critical error - credentials are invalid
+      console.error('❌ CRITICAL: Firebase credentials are invalid or revoked');
+      console.error('   Please check the Firebase service account key file');
+      console.error('   Error:', error.message);
+      return {
+        success: false,
+        error: 'invalid_credentials',
+        message: 'Firebase credentials are invalid or revoked. Please check the service account key file.'
+      };
+    }
+
+    // For unexpected errors, log them
+    console.error('❌ Unexpected error sending FCM notification to Flutter app:', error.message);
+    return {
+      success: false,
+      error: error.code || 'unknown_error',
+      message: error.message || 'Unknown error occurred'
+    };
+  }
+}
+
 module.exports = {
   initializeFirebase,
   sendNotification,
   sendVendorNotification,
   sendCustomerNotification,
+  sendFlutterNotification,
   sendMulticastNotification,
   sendTopicNotification
 };

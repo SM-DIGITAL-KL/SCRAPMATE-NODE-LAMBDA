@@ -137,6 +137,22 @@ class V2ProfileService {
             }
             
             if (shop) {
+              // Determine approval_status: if null but signup is complete, set to 'pending'
+              let approvalStatus = shop.approval_status;
+              if (!approvalStatus || approvalStatus === null) {
+                // Check if B2B signup is complete (has company_name and all 4 documents)
+                const hasCompanyName = shop.company_name && shop.company_name.trim() !== '';
+                const hasAllDocuments = shop.business_license_url && shop.business_license_url.trim() !== '' &&
+                  shop.gst_certificate_url && shop.gst_certificate_url.trim() !== '' &&
+                  shop.address_proof_url && shop.address_proof_url.trim() !== '' &&
+                  shop.kyc_owner_url && shop.kyc_owner_url.trim() !== '';
+                
+                if (hasCompanyName && hasAllDocuments) {
+                  approvalStatus = 'pending';
+                  console.log(`📋 Shop has complete B2B signup but approval_status is null - setting to 'pending'`);
+                }
+              }
+              
               profileData.shop = {
                 id: shop.id,
                 shopname: shop.shopname || '',
@@ -153,13 +169,13 @@ class V2ProfileService {
                 gst_certificate_url: shop.gst_certificate_url || '',
                 address_proof_url: shop.address_proof_url || '',
                 kyc_owner_url: shop.kyc_owner_url || '',
-                approval_status: shop.approval_status || null,
+                approval_status: approvalStatus || null,
                 rejection_reason: shop.rejection_reason || null,
                 application_submitted_at: shop.application_submitted_at || null,
                 documents_verified_at: shop.documents_verified_at || null,
                 review_initiated_at: shop.review_initiated_at || null,
               };
-              console.log(`✅ Added shop data to profile for new user (approval_status: ${shop.approval_status || 'null'})`);
+              console.log(`✅ Added shop data to profile for new user (approval_status: ${approvalStatus || 'null'})`);
             }
           }
 
@@ -272,7 +288,22 @@ class V2ProfileService {
                   address_proof_url: b2bShop.address_proof_url || b2cShop.address_proof_url || '',
                   kyc_owner_url: b2bShop.kyc_owner_url || b2cShop.kyc_owner_url || '',
                   // Use B2B approval status if available, otherwise B2C
-                  approval_status: b2bShop.approval_status || b2cShop.approval_status || null,
+                  // If null but B2B signup is complete, set to 'pending'
+                  approval_status: (() => {
+                    let status = b2bShop.approval_status || b2cShop.approval_status || null;
+                    if (!status || status === null) {
+                      const hasCompanyName = b2bShop.company_name && b2bShop.company_name.trim() !== '';
+                      const hasAllDocuments = b2bShop.business_license_url && b2bShop.business_license_url.trim() !== '' &&
+                        b2bShop.gst_certificate_url && b2bShop.gst_certificate_url.trim() !== '' &&
+                        b2bShop.address_proof_url && b2bShop.address_proof_url.trim() !== '' &&
+                        b2bShop.kyc_owner_url && b2bShop.kyc_owner_url.trim() !== '';
+                      if (hasCompanyName && hasAllDocuments) {
+                        status = 'pending';
+                        console.log(`📋 SR user: B2B shop has complete signup but approval_status is null - setting to 'pending'`);
+                      }
+                    }
+                    return status;
+                  })(),
                   rejection_reason: b2bShop.rejection_reason || b2cShop.rejection_reason || null,
                   application_submitted_at: b2bShop.application_submitted_at || b2cShop.application_submitted_at || null,
                   documents_verified_at: b2bShop.documents_verified_at || b2cShop.documents_verified_at || null,
@@ -299,6 +330,22 @@ class V2ProfileService {
           }
 
           if (shop) {
+            // Determine approval_status: if null but B2B signup is complete, set to 'pending'
+            let approvalStatus = shop.approval_status;
+            if (!approvalStatus || approvalStatus === null) {
+              // Check if B2B signup is complete (has company_name and all 4 documents)
+              const hasCompanyName = shop.company_name && shop.company_name.trim() !== '';
+              const hasAllDocuments = shop.business_license_url && shop.business_license_url.trim() !== '' &&
+                shop.gst_certificate_url && shop.gst_certificate_url.trim() !== '' &&
+                shop.address_proof_url && shop.address_proof_url.trim() !== '' &&
+                shop.kyc_owner_url && shop.kyc_owner_url.trim() !== '';
+              
+              if (hasCompanyName && hasAllDocuments) {
+                approvalStatus = 'pending';
+                console.log(`📋 Shop has complete B2B signup but approval_status is null - setting to 'pending' for shop ${shop.id}`);
+              }
+            }
+            
             profileData.shop = {
               id: shop.id,
               shopname: shop.shopname || '',
@@ -316,7 +363,7 @@ class V2ProfileService {
               gst_certificate_url: shop.gst_certificate_url || '',
               address_proof_url: shop.address_proof_url || '',
               kyc_owner_url: shop.kyc_owner_url || '',
-              approval_status: shop.approval_status || null,
+              approval_status: approvalStatus || null,
               rejection_reason: shop.rejection_reason || null,
               application_submitted_at: shop.application_submitted_at || null,
               documents_verified_at: shop.documents_verified_at || null,
@@ -634,6 +681,38 @@ class V2ProfileService {
           invoices.sort((a, b) => (b.id || 0) - (a.id || 0));
           profileData.invoices = invoices;
           console.log(`✅ Added ${invoices.length} invoices to profile for user ${userId}`);
+          
+          // Enrich subscription status from invoices if not set in shop
+          // Find the latest active invoice (to_date >= today)
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          
+          const activeInvoice = invoices.find(inv => {
+            if (!inv.to_date) return false;
+            const toDate = new Date(inv.to_date);
+            toDate.setHours(0, 0, 0, 0);
+            return toDate >= today && inv.type === 'Paid';
+          });
+          
+          if (activeInvoice) {
+            const toDate = new Date(activeInvoice.to_date);
+            toDate.setHours(0, 0, 0, 0);
+            const subscriptionEndsAt = toDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+            
+            // Always enrich shop subscription fields from invoice (invoice is source of truth)
+            if (profileData.shop) {
+              profileData.shop.is_subscribed = true;
+              profileData.shop.subscription_ends_at = subscriptionEndsAt;
+              console.log(`✅ Enriched shop subscription from invoice: is_subscribed=true, subscription_ends_at=${subscriptionEndsAt}`);
+            }
+            
+            // Always enrich b2cShop subscription fields for SR users
+            if (profileData.b2cShop) {
+              profileData.b2cShop.is_subscribed = true;
+              profileData.b2cShop.subscription_ends_at = subscriptionEndsAt;
+              console.log(`✅ Enriched b2cShop subscription from invoice: is_subscribed=true, subscription_ends_at=${subscriptionEndsAt}`);
+            }
+          }
         } catch (invoiceError) {
           console.error('❌ Error fetching invoices for profile:', invoiceError);
           profileData.invoices = [];

@@ -120,18 +120,105 @@ class SmsService {
   }
 
   /**
-   * Send OTP via SMS
+   * Send OTP via SMS using bulksmsind.in API
    * @param {string} phone - Phone number
    * @param {string} otp - OTP code
-   * @returns {Promise<string>} API response
+   * @param {string} userName - User name (optional, defaults to "User")
+   * @returns {Promise<Object>} API response
    */
-  static async sendOtp(phone, otp) {
+  static async sendOtp(phone, otp, userName = 'User') {
     console.log(`📱 [SmsService] sendOtp called for phone: ${phone}, OTP: ${otp}`);
-    const templateId = '1707173856462706835';
-    const message = `Dear User, Your SCRAPMATE application login One Time Password (OTP) is ${otp}. Do not share this OTP with anyone.`;
-    console.log(`📝 [SmsService] OTP message: ${message.substring(0, 50)}...`);
     
-    return await this.singlePushSMS2(phone, templateId, message);
+    return new Promise((resolve, reject) => {
+      const http = require('http');
+      
+      // Clean phone number (remove non-digits)
+      const cleanedPhone = phone.replace(/\D/g, '');
+      
+      // Template message with placeholders
+      // Template: "Dear {#var#}, Your SCRAPMATE application login One Time Password (OTP) is {#var#}. Do not share this OTP with anyone."
+      const message = `Dear ${userName}, Your SCRAPMATE application login One Time Password (OTP) is ${otp}. Do not share this OTP with anyone.`;
+      
+      // SMS API configuration
+      const username = 'scrapmate';
+      const sendername = 'SCRPMT';
+      const smstype = 'TRANS';
+      const apikey = '1bf0131f-d1f2-49ed-9c57-19f1b4400f32';
+      const templateid = '1707173856462706835';
+      const peid = '1701173389563945545';
+      
+      // Build query parameters
+      const params = new URLSearchParams({
+        username: username,
+        sendername: sendername,
+        smstype: smstype,
+        numbers: cleanedPhone,
+        apikey: apikey,
+        message: message,
+        templateid: templateid,
+        peid: peid
+      });
+      
+      const options = {
+        hostname: 'sms.bulksmsind.in',
+        path: `/v2/sendSMS?${params.toString()}`,
+        method: 'GET',
+        timeout: 10000 // 10 second timeout
+      };
+      
+      console.log(`📤 [SmsService] Sending OTP SMS to ${cleanedPhone} via bulksmsind.in`);
+      console.log(`   Message: ${message.substring(0, 60)}...`);
+      console.log(`   URL: https://${options.hostname}${options.path.replace(/apikey=[^&]+/, 'apikey=***')}`);
+      
+      const req = http.request(options, (res) => {
+        let data = '';
+        
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        
+        res.on('end', () => {
+          try {
+            const response = JSON.parse(data);
+            console.log(`✅ [SmsService] OTP SMS sent successfully to ${cleanedPhone}`);
+            console.log(`   Response:`, JSON.stringify(response, null, 2));
+            
+            // Check if response indicates success
+            if (Array.isArray(response) && response.length > 0) {
+              const firstResult = response[0];
+              if (firstResult.status === 'success' || firstResult.status === 'sent') {
+                resolve(response);
+              } else {
+                console.error(`❌ [SmsService] SMS API returned error status:`, firstResult);
+                reject(new Error(`SMS API error: ${firstResult.status || 'unknown error'}`));
+              }
+            } else if (response.status === 'success' || response.status === 'sent') {
+              resolve(response);
+            } else {
+              console.error(`❌ [SmsService] SMS API returned error:`, response);
+              reject(new Error(`SMS API error: ${response.status || response.message || 'unknown error'}`));
+            }
+          } catch (parseError) {
+            console.error(`❌ [SmsService] Failed to parse SMS API response:`, parseError.message);
+            console.error(`   Raw response:`, data);
+            reject(new Error(`Failed to parse SMS API response: ${parseError.message}`));
+          }
+        });
+      });
+      
+      req.on('error', (error) => {
+        console.error(`❌ [SmsService] Error sending OTP SMS:`, error.message);
+        reject(error);
+      });
+      
+      req.on('timeout', () => {
+        console.error(`❌ [SmsService] OTP SMS request timeout`);
+        req.destroy();
+        reject(new Error('SMS request timeout'));
+      });
+      
+      req.end();
+    });
   }
 
   /**

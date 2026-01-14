@@ -674,6 +674,66 @@ class User {
     }
   }
 
+  // Count users by user_type for v2 only (app_version = 'v2' and app_type)
+  // appType: 'vendor_app' for N, R, S, SR, D | 'customer_app' for C
+  static async countByUserTypeV2(userType, appType = null) {
+    try {
+      const client = getDynamoDBClient();
+      let lastKey = null;
+      let count = 0;
+      let totalScanned = 0;
+
+      // Determine app_type based on user_type if not provided
+      if (!appType) {
+        if (userType === 'C') {
+          appType = 'customer_app';
+        } else {
+          // R, S, SR, D are all vendor_app
+          appType = 'vendor_app';
+        }
+      }
+
+      console.log(`📊 [countByUserTypeV2] Counting users: user_type=${userType}, app_version=v2, app_type=${appType}`);
+
+      do {
+        // Filter: user_type must match, app_version must be 'v2', app_type must match, and not deleted
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'user_type = :userType AND app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+          ExpressionAttributeValues: {
+            ':userType': userType,
+            ':appVersion': 'v2',
+            ':appType': appType,
+            ':deleted': 2
+          },
+          Select: 'COUNT'
+        };
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+
+        // With Select: "COUNT", response.Count contains the count
+        const batchCount = response.Count || 0;
+        const batchScanned = response.ScannedCount || 0;
+        count += batchCount;
+        totalScanned += batchScanned;
+
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      console.log(`✅ [countByUserTypeV2] Completed: user_type=${userType}, app_type=${appType}, count=${count}, total_scanned=${totalScanned}`);
+
+      return count;
+    } catch (err) {
+      console.error(`❌ [countByUserTypeV2] Error for user_type ${userType}:`, err);
+      throw err;
+    }
+  }
+
   // Count users by user_type and current month (optimized with Select: "COUNT")
   static async countByUserTypeAndCurrentMonth(userType) {
     try {
@@ -768,15 +828,20 @@ class User {
       const client = getDynamoDBClient();
       const currentYear = new Date().getFullYear();
       const monthlyCounts = new Array(12).fill(0);
+      let totalScanned = 0;
+      let totalMatched = 0;
+
+      console.log(`📊 [getMonthlyCountByUserType] Starting query for user_type: ${userType}, year: ${currentYear}`);
 
       let lastKey = null;
 
       do {
         const params = {
           TableName: TABLE_NAME,
-          FilterExpression: 'user_type = :userType',
+          FilterExpression: 'user_type = :userType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
           ExpressionAttributeValues: {
-            ':userType': userType
+            ':userType': userType,
+            ':deleted': 2
           },
           ProjectionExpression: 'created_at' // Only get needed field
         };
@@ -790,12 +855,18 @@ class User {
 
         // Process items incrementally instead of storing all
         if (response.Items) {
+          totalScanned += response.Items.length;
           response.Items.forEach(user => {
             if (user.created_at) {
+              try {
               const date = new Date(user.created_at);
               if (date.getFullYear() === currentYear) {
                 const month = date.getMonth(); // 0-11
                 monthlyCounts[month]++;
+                  totalMatched++;
+                }
+              } catch (dateError) {
+                console.warn(`⚠️ [getMonthlyCountByUserType] Invalid date format: ${user.created_at}`);
               }
             }
           });
@@ -804,8 +875,91 @@ class User {
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
 
+      console.log(`✅ [getMonthlyCountByUserType] Completed for user_type: ${userType}`);
+      console.log(`   Total scanned: ${totalScanned}, Total matched (current year): ${totalMatched}`);
+      console.log(`   Monthly counts: [${monthlyCounts.join(', ')}]`);
+
       return monthlyCounts;
     } catch (err) {
+      console.error(`❌ [getMonthlyCountByUserType] Error for user_type ${userType}:`, err);
+      throw err;
+    }
+  }
+
+  // Get monthly count by user_type for v2 only (app_version = 'v2' and app_type)
+  // appType: 'vendor_app' for N, R, S, SR, D | 'customer_app' for C
+  static async getMonthlyCountByUserTypeV2(userType, appType = null) {
+    try {
+      const client = getDynamoDBClient();
+      const currentYear = new Date().getFullYear();
+      const monthlyCounts = new Array(12).fill(0);
+      let totalScanned = 0;
+      let totalMatched = 0;
+
+      // Determine app_type based on user_type if not provided
+      if (!appType) {
+        if (userType === 'C') {
+          appType = 'customer_app';
+        } else {
+          // N, R, S, SR, D are all vendor_app
+          appType = 'vendor_app';
+        }
+      }
+
+      console.log(`📊 [getMonthlyCountByUserTypeV2] Starting query for user_type: ${userType}, app_version: v2, app_type: ${appType}, year: ${currentYear}`);
+
+      let lastKey = null;
+
+      do {
+        // Filter: user_type must match, app_version must be 'v2', app_type must match, and not deleted
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'user_type = :userType AND app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+          ExpressionAttributeValues: {
+            ':userType': userType,
+            ':appVersion': 'v2',
+            ':appType': appType,
+            ':deleted': 2
+          },
+          ProjectionExpression: 'created_at' // Only get needed field
+        };
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+
+        // Process items incrementally instead of storing all
+        if (response.Items) {
+          totalScanned += response.Items.length;
+          response.Items.forEach(user => {
+            if (user.created_at) {
+              try {
+                const date = new Date(user.created_at);
+                if (date.getFullYear() === currentYear) {
+                  const month = date.getMonth(); // 0-11
+                  monthlyCounts[month]++;
+                  totalMatched++;
+                }
+              } catch (dateError) {
+                console.warn(`⚠️ [getMonthlyCountByUserTypeV2] Invalid date format: ${user.created_at}`);
+              }
+            }
+          });
+        }
+
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      console.log(`✅ [getMonthlyCountByUserTypeV2] Completed for user_type: ${userType}, app_type: ${appType}`);
+      console.log(`   Total scanned: ${totalScanned}, Total matched (current year, v2): ${totalMatched}`);
+      console.log(`   Monthly counts: [${monthlyCounts.join(', ')}]`);
+
+      return monthlyCounts;
+    } catch (err) {
+      console.error(`❌ [getMonthlyCountByUserTypeV2] Error for user_type ${userType}:`, err);
       throw err;
     }
   }
@@ -1046,9 +1200,16 @@ class User {
         // (we need at least skip + pageSize items, but we'll get all for accurate total count)
       } while (lastKey);
 
-      // Sort by created_at descending (newest first)
+      // Sort by app_version first (v2 users first), then by created_at descending (newest first)
       allUsers.sort((a, b) => {
-        // Handle missing or invalid dates - use created_at or fallback to updated_at
+        // First, prioritize v2 users over v1 users
+        const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+        const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+        if (aIsV2 !== bIsV2) {
+          return bIsV2 - aIsV2; // v2 users come first
+        }
+
+        // If same version, sort by created_at descending (newest first)
         let dateA = a.created_at ? new Date(a.created_at) : null;
         let dateB = b.created_at ? new Date(b.created_at) : null;
 
@@ -1064,7 +1225,7 @@ class User {
         return dateB.getTime() - dateA.getTime();
       });
 
-      console.log(`✅ Sorted ${allUsers.length} B2B users by newest first`);
+      console.log(`✅ Sorted ${allUsers.length} B2B users by v2 first, then newest first`);
       if (allUsers.length > 0) {
         console.log(`   First user: ${allUsers[0].name} (created: ${allUsers[0].created_at})`);
         if (allUsers.length > 1) {
@@ -1176,9 +1337,16 @@ class User {
         // (we need at least skip + pageSize items, but we'll get all for accurate total count)
       } while (lastKey);
 
-      // Sort by created_at descending (newest first)
+      // Sort by app_version first (v2 users first), then by created_at descending (newest first)
       allUsers.sort((a, b) => {
-        // Handle missing or invalid dates - use created_at or fallback to updated_at
+        // First, prioritize v2 users over v1 users
+        const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+        const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+        if (aIsV2 !== bIsV2) {
+          return bIsV2 - aIsV2; // v2 users come first
+        }
+
+        // If same version, sort by created_at descending (newest first)
         let dateA = a.created_at ? new Date(a.created_at) : null;
         let dateB = b.created_at ? new Date(b.created_at) : null;
 
@@ -1194,7 +1362,7 @@ class User {
         return dateB.getTime() - dateA.getTime();
       });
 
-      console.log(`✅ Sorted ${allUsers.length} B2C users by newest first`);
+      console.log(`✅ Sorted ${allUsers.length} B2C users by v2 first, then newest first`);
       if (allUsers.length > 0) {
         console.log(`   First user: ${allUsers[0].name} (created: ${allUsers[0].created_at})`);
         if (allUsers.length > 1) {
@@ -1267,9 +1435,16 @@ class User {
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
 
-      // Sort by created_at descending (newest first)
+      // Sort by app_version first (v2 users first), then by created_at descending (newest first)
       allUsers.sort((a, b) => {
-        // Handle missing or invalid dates - use created_at or fallback to updated_at
+        // First, prioritize v2 users over v1 users
+        const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+        const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+        if (aIsV2 !== bIsV2) {
+          return bIsV2 - aIsV2; // v2 users come first
+        }
+
+        // If same version, sort by created_at descending (newest first)
         let dateA = a.created_at ? new Date(a.created_at) : null;
         let dateB = b.created_at ? new Date(b.created_at) : null;
 
@@ -1285,7 +1460,7 @@ class User {
         return dateB.getTime() - dateA.getTime();
       });
 
-      console.log(`✅ Sorted ${allUsers.length} SR users by newest first`);
+      console.log(`✅ Sorted ${allUsers.length} SR users by v2 first, then newest first`);
 
       // Get total count
       const total = allUsers.length;
@@ -1350,9 +1525,16 @@ class User {
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
 
-      // Sort by created_at descending (newest first)
+      // Sort by app_version first (v2 users first), then by created_at descending (newest first)
       allUsers.sort((a, b) => {
-        // Handle missing or invalid dates - use created_at or fallback to updated_at
+        // First, prioritize v2 users over v1 users
+        const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+        const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+        if (aIsV2 !== bIsV2) {
+          return bIsV2 - aIsV2; // v2 users come first
+        }
+
+        // If same version, sort by created_at descending (newest first)
         let dateA = a.created_at ? new Date(a.created_at) : null;
         let dateB = b.created_at ? new Date(b.created_at) : null;
 
@@ -1368,7 +1550,7 @@ class User {
         return dateB.getTime() - dateA.getTime();
       });
 
-      console.log(`✅ Sorted ${allUsers.length} Delivery users by newest first`);
+      console.log(`✅ Sorted ${allUsers.length} Delivery users by v2 first, then newest first`);
       if (allUsers.length > 0) {
         console.log(`   First user: ${allUsers[0].name} (created: ${allUsers[0].created_at})`);
         if (allUsers.length > 1) {
@@ -1448,22 +1630,14 @@ class User {
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
 
-      // Sort by created_at descending (newest first)
+      // Sort by app_version (v2 first, then v1), without sorting by date
       allUsers.sort((a, b) => {
-        let dateA = a.created_at ? new Date(a.created_at) : null;
-        let dateB = b.created_at ? new Date(b.created_at) : null;
-
-        if (!dateA || isNaN(dateA.getTime())) {
-          dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
-        }
-        if (!dateB || isNaN(dateB.getTime())) {
-          dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
-        }
-
-        return dateB.getTime() - dateA.getTime();
+        const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+        const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+        return bIsV2 - aIsV2; // v2 users come first
       });
 
-      console.log(`✅ Sorted ${allUsers.length} Customer users by newest first`);
+      console.log(`✅ Sorted ${allUsers.length} Customer users by app_version (v2 first, then v1)`);
 
       // Get total count
       const total = allUsers.length;
@@ -1528,9 +1702,16 @@ class User {
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
 
-      // Sort by created_at descending (newest first)
+      // Sort by app_version first (v2 users first), then by created_at descending (newest first)
       allUsers.sort((a, b) => {
-        // Handle missing or invalid dates - use created_at or fallback to updated_at
+        // First, prioritize v2 users over v1 users
+        const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+        const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+        if (aIsV2 !== bIsV2) {
+          return bIsV2 - aIsV2; // v2 users come first
+        }
+
+        // If same version, sort by created_at descending (newest first)
         let dateA = a.created_at ? new Date(a.created_at) : null;
         let dateB = b.created_at ? new Date(b.created_at) : null;
 
@@ -1546,7 +1727,7 @@ class User {
         return dateB.getTime() - dateA.getTime();
       });
 
-      console.log(`✅ Sorted ${allUsers.length} Delivery users by newest first`);
+      console.log(`✅ Sorted ${allUsers.length} Delivery users by v2 first, then newest first`);
       if (allUsers.length > 0) {
         console.log(`   First user: ${allUsers[0].name} (created: ${allUsers[0].created_at})`);
         if (allUsers.length > 1) {
@@ -1626,22 +1807,14 @@ class User {
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
 
-      // Sort by created_at descending (newest first)
+      // Sort by app_version (v2 first, then v1), without sorting by date
       allUsers.sort((a, b) => {
-        let dateA = a.created_at ? new Date(a.created_at) : null;
-        let dateB = b.created_at ? new Date(b.created_at) : null;
-
-        if (!dateA || isNaN(dateA.getTime())) {
-          dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
-        }
-        if (!dateB || isNaN(dateB.getTime())) {
-          dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
-        }
-
-        return dateB.getTime() - dateA.getTime();
+        const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+        const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+        return bIsV2 - aIsV2; // v2 users come first
       });
 
-      console.log(`✅ Sorted ${allUsers.length} Customer users by newest first`);
+      console.log(`✅ Sorted ${allUsers.length} Customer users by app_version (v2 first, then v1)`);
 
       // Get total count
       const total = allUsers.length;
@@ -1665,6 +1838,137 @@ class User {
       };
     } catch (err) {
       console.error('User.getCustomers error:', err);
+      throw err;
+    }
+  }
+
+  // Get users by user_type and date range (for sign up report)
+  static async getUsersByTypeAndDateRange(userType, startDate, endDate) {
+    try {
+      const client = getDynamoDBClient();
+      const allUsers = [];
+      let lastKey = null;
+
+      // Convert date strings to Date objects for comparison
+      const startDateTime = new Date(`${startDate} 00:00:00`);
+      const endDateTime = new Date(`${endDate} 23:59:59`);
+
+      console.log(`🔍 Scanning users for user_type = "${userType}" between ${startDate} and ${endDate}...`);
+
+      do {
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'user_type = :userType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+          ExpressionAttributeValues: {
+            ':userType': userType,
+            ':deleted': 2
+          }
+        };
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+
+        if (response.Items) {
+          // Filter by date range in memory
+          const filteredUsers = response.Items.filter(user => {
+            if (!user.created_at) return false;
+            const userDate = new Date(user.created_at);
+            return userDate >= startDateTime && userDate <= endDateTime;
+          });
+          allUsers.push(...filteredUsers);
+        }
+
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      // Sort by created_at descending (newest first)
+      allUsers.sort((a, b) => {
+        const dateA = new Date(a.created_at || 0);
+        const dateB = new Date(b.created_at || 0);
+        return dateB.getTime() - dateA.getTime();
+      });
+
+      console.log(`✅ Found ${allUsers.length} users of type "${userType}" in date range`);
+
+      return allUsers;
+    } catch (err) {
+      console.error('User.getUsersByTypeAndDateRange error:', err);
+      throw err;
+    }
+  }
+
+  // Count v2 customer_app users (app_version = 'v2' AND app_type = 'customer_app')
+  static async countV2CustomerAppUsers() {
+    try {
+      const client = getDynamoDBClient();
+      let lastKey = null;
+      let count = 0;
+
+      do {
+        const params = {
+          TableName: TABLE_NAME
+        };
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+
+        if (response.Items) {
+          const v2CustomerAppUsers = response.Items.filter(user => {
+            return user.app_version === 'v2' && user.app_type === 'customer_app';
+          });
+          count += v2CustomerAppUsers.length;
+        }
+
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      return count;
+    } catch (err) {
+      console.error('User.countV2CustomerAppUsers error:', err);
+      throw err;
+    }
+  }
+
+  // Count v2 vendor_app users (app_version = 'v2' AND app_type = 'vendor_app')
+  static async countV2VendorAppUsers() {
+    try {
+      const client = getDynamoDBClient();
+      let lastKey = null;
+      let count = 0;
+
+      do {
+        const params = {
+          TableName: TABLE_NAME
+        };
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+
+        if (response.Items) {
+          const v2VendorAppUsers = response.Items.filter(user => {
+            return user.app_version === 'v2' && user.app_type === 'vendor_app';
+          });
+          count += v2VendorAppUsers.length;
+        }
+
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      return count;
+    } catch (err) {
+      console.error('User.countV2VendorAppUsers error:', err);
       throw err;
     }
   }

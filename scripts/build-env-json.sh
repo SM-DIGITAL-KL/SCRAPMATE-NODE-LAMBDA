@@ -27,6 +27,22 @@ else
     FIREBASE_SA_STR=""
 fi
 
+# Strip quotes from Instamojo credentials if present (from aws.txt)
+INSTAMOJO_API_KEY_CLEAN=$(echo "${INSTAMOJO_API_KEY:-}" | sed "s/^[[:space:]]*['\"]//;s/['\"][[:space:]]*$//")
+INSTAMOJO_AUTH_TOKEN_CLEAN=$(echo "${INSTAMOJO_AUTH_TOKEN:-}" | sed "s/^[[:space:]]*['\"]//;s/['\"][[:space:]]*$//")
+INSTAMOJO_SALT_CLEAN=$(echo "${INSTAMOJO_SALT:-}" | sed "s/^[[:space:]]*['\"]//;s/['\"][[:space:]]*$//")
+INSTAMOJO_CLIENT_ID_CLEAN=$(echo "${INSTAMOJO_CLIENT_ID:-}" | sed "s/^[[:space:]]*['\"]//;s/['\"][[:space:]]*$//")
+INSTAMOJO_CLIENT_SECRET_CLEAN=$(echo "${INSTAMOJO_CLIENT_SECRET:-}" | sed "s/^[[:space:]]*['\"]//;s/['\"][[:space:]]*$//")
+
+# Debug: Log if credentials are available (first 8 chars only for security)
+if [ -n "$INSTAMOJO_API_KEY_CLEAN" ] && [ -n "$INSTAMOJO_AUTH_TOKEN_CLEAN" ]; then
+    echo "📋 Instamojo credentials available for environment JSON (API Key: ${INSTAMOJO_API_KEY_CLEAN:0:8}..., Auth Token: ${INSTAMOJO_AUTH_TOKEN_CLEAN:0:8}...)" >&2
+else
+    echo "⚠️  Warning: Instamojo credentials not available when building environment JSON" >&2
+    echo "   INSTAMOJO_API_KEY: ${INSTAMOJO_API_KEY:-EMPTY} (length: ${#INSTAMOJO_API_KEY})" >&2
+    echo "   INSTAMOJO_AUTH_TOKEN: ${INSTAMOJO_AUTH_TOKEN:-EMPTY} (length: ${#INSTAMOJO_AUTH_TOKEN})" >&2
+fi
+
 jq -n \
     --arg node_env "production" \
     --arg api_key "${API_KEY:-zyubkfzeumeoviaqzcsrvfwdzbiwnlnn}" \
@@ -36,6 +52,11 @@ jq -n \
     --arg redis_url "${REDIS_URL:-}" \
     --arg redis_token "${REDIS_TOKEN:-}" \
     --arg firebase_sa "$FIREBASE_SA_STR" \
+    --arg instamojo_api_key "$INSTAMOJO_API_KEY_CLEAN" \
+    --arg instamojo_auth_token "$INSTAMOJO_AUTH_TOKEN_CLEAN" \
+    --arg instamojo_salt "$INSTAMOJO_SALT_CLEAN" \
+    --arg instamojo_client_id "$INSTAMOJO_CLIENT_ID_CLEAN" \
+    --arg instamojo_client_secret "$INSTAMOJO_CLIENT_SECRET_CLEAN" \
     '{
         "Variables": {
             "NODE_ENV": $node_env,
@@ -45,7 +66,13 @@ jq -n \
             "S3_BUCKET_NAME": $s3_bucket,
             "REDIS_URL": $redis_url,
             "REDIS_TOKEN": $redis_token,
-            "FIREBASE_SERVICE_ACCOUNT": (if $firebase_sa == "" then "" else $firebase_sa end)
+            "FIREBASE_SERVICE_ACCOUNT": (if $firebase_sa == "" then "" else $firebase_sa end),
+            "INSTAMOJO_API_KEY": $instamojo_api_key,
+            "INSTAMOJO_AUTH_TOKEN": $instamojo_auth_token,
+            "INSTAMOJO_SALT": $instamojo_salt,
+            "INSTAMOJO_CLIENT_ID": (if $instamojo_client_id == "" then $instamojo_api_key else $instamojo_client_id end),
+            "INSTAMOJO_CLIENT_SECRET": (if $instamojo_client_secret == "" then $instamojo_auth_token else $instamojo_client_secret end),
+            "AWS_REGION": "ap-south-1"
         }
     }' > "$OUTPUT_FILE"
 

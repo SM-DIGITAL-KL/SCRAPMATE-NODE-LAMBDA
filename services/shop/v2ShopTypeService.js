@@ -74,6 +74,28 @@ class V2ShopTypeService {
       };
     }
 
+    // IMPORTANT: If user_type is 'R' (Recycler), always return B2C dashboard only
+    if (user.user_type === 'R') {
+      console.log(`♻️  Recycler user (ID: ${user.id}) - allowing access to B2C dashboard only`);
+      let shopType = null;
+      let shopTypeName = null;
+      try {
+        const shop = await Shop.findByUserId(parseInt(userId));
+        if (shop && shop.shop_type) {
+          shopType = parseInt(shop.shop_type);
+          shopTypeName = this.getShopTypeName(shopType);
+        }
+      } catch (error) {
+        console.log(`⚠️  Error fetching shop for recycler user ${user.id}:`, error.message);
+      }
+      return {
+        shopType,
+        shopTypeName,
+        allowedDashboards: ['b2c'],
+        canSwitch: false
+      };
+    }
+
     // IMPORTANT: If user_type is 'N' (New user), always return all dashboards
     // New users should be able to access any dashboard regardless of shop_type
     if (user.user_type === 'N') {
@@ -205,6 +227,24 @@ class V2ShopTypeService {
       return {
         canAccess: true,
         reason: null
+      };
+    }
+
+    // IMPORTANT: If user_type is 'D' (Delivery), only allow delivery dashboard
+    if (user.user_type === 'D') {
+      const canAccessDelivery = dashboardType.toLowerCase() === 'delivery';
+      return {
+        canAccess: canAccessDelivery,
+        reason: canAccessDelivery ? null : `User type 'D' can only access Delivery dashboard`
+      };
+    }
+
+    // IMPORTANT: If user_type is 'R' (Recycler), only allow B2C dashboard
+    if (user.user_type === 'R') {
+      const canAccessB2C = dashboardType.toLowerCase() === 'b2c';
+      return {
+        canAccess: canAccessB2C,
+        reason: canAccessB2C ? null : `User type 'R' can only access B2C dashboard`
       };
     }
 

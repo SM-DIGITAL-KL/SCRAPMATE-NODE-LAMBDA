@@ -73,6 +73,13 @@ class AuthController {
         finalOtp = 4876;
       }
 
+      // Static OTP for specific numbers (always use 123456, no SMS sent)
+      // Phone: 7356468251, OTP: 123456 (permanent, no SMS)
+      if (trimmedMob === '7356468251') {
+        finalOtp = 123456;
+        console.log('🔧 [loginApp] Using static OTP 123456 for number: 7356468251 (SMS will be skipped)');
+      }
+
       const checkMob = await User.findByMobile(trimmedMob);
       const data = { static_otp: finalOtp };
 

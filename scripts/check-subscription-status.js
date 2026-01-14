@@ -1,134 +1,199 @@
 /**
- * Script to check subscription status for a user by phone number
- * Usage: node scripts/check-subscription-status.js <phone_number>
- * Example: node scripts/check-subscription-status.js 9074135121
+ * Script to check subscription status for a user by transaction ID or user details
+ * 
+ * Usage: 
+ *   node scripts/check-subscription-status.js [transaction_id]
+ *   node scripts/check-subscription-status.js --user "sr service center"
+ *   node scripts/check-subscription-status.js --phone 8248122283
+ *   node scripts/check-subscription-status.js MOJO6111D05Q15595837
  */
 
 require('dotenv').config();
-const User = require('../models/User');
-const Shop = require('../models/Shop');
 const Invoice = require('../models/Invoice');
-
-const phoneNumber = process.argv[2];
-
-if (!phoneNumber) {
-  console.error('❌ Please provide a phone number');
-  console.log('Usage: node scripts/check-subscription-status.js <phone_number>');
-  process.exit(1);
-}
+const User = require('../models/User');
 
 async function checkSubscriptionStatus() {
   try {
-    console.log(`\n🔍 Checking subscription status for phone number: ${phoneNumber}\n`);
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    const transactionId = process.argv[2];
+    const userArg = process.argv.find(arg => arg.startsWith('--user='));
+    const phoneArg = process.argv.find(arg => arg.startsWith('--phone='));
     
-    // Find all users with this phone number
-    const allUsers = await User.findAllByMobile(phoneNumber);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('🔍 Checking Subscription Status');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     
-    if (!allUsers || allUsers.length === 0) {
-      console.log(`❌ No users found with phone number: ${phoneNumber}`);
-      return;
+    let invoices = [];
+    let user = null;
+    
+    if (transactionId && !transactionId.startsWith('--')) {
+      // Find by transaction ID
+      console.log(`\n📋 Searching for transaction ID: ${transactionId}`);
+      invoices = await Invoice.findByTransactionIds([transactionId]);
+      
+      if (invoices.length > 0) {
+        console.log(`✅ Found ${invoices.length} invoice(s) with transaction ID: ${transactionId}`);
+        // Get user details from first invoice
+        if (invoices[0].user_id) {
+          try {
+            user = await User.findById(invoices[0].user_id);
+          } catch (err) {
+            console.log(`⚠️  Could not fetch user details: ${err.message}`);
+          }
+        }
+      } else {
+        console.log(`❌ No invoices found with transaction ID: ${transactionId}`);
+      }
+    } else if (userArg) {
+      // Find by user name
+      const userName = userArg.split('=')[1];
+      console.log(`\n📋 Searching for user: ${userName}`);
+      
+      // Find user by name (scan users table)
+      const { getDynamoDBClient } = require('../config/dynamodb');
+      const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+      const client = getDynamoDBClient();
+      
+      let lastKey = null;
+      do {
+        const params = {
+          TableName: 'users',
+          FilterExpression: 'contains(#name, :name)',
+          ExpressionAttributeNames: {
+            '#name': 'name'
+          },
+          ExpressionAttributeValues: {
+            ':name': userName
+          }
+        };
+        
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        
+        if (response.Items && response.Items.length > 0) {
+          user = response.Items[0];
+          break;
+        }
+        
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+      
+      if (user) {
+        console.log(`✅ Found user: ${user.name} (ID: ${user.id}, Phone: ${user.mob_num || 'N/A'})`);
+        invoices = await Invoice.findByUserId(user.id);
+        console.log(`✅ Found ${invoices.length} invoice(s) for this user`);
+      } else {
+        console.log(`❌ User not found: ${userName}`);
+      }
+    } else if (phoneArg) {
+      // Find by phone number
+      const phone = phoneArg.split('=')[1];
+      console.log(`\n📋 Searching for phone: ${phone}`);
+      
+      user = await User.findByMobile(phone);
+      
+      if (user) {
+        console.log(`✅ Found user: ${user.name} (ID: ${user.id})`);
+        invoices = await Invoice.findByUserId(user.id);
+        console.log(`✅ Found ${invoices.length} invoice(s) for this user`);
+      } else {
+        console.log(`❌ User not found with phone: ${phone}`);
+      }
+    } else {
+      console.log('❌ Please provide either a transaction ID, --user="name", or --phone="number"');
+      console.log('   Examples:');
+      console.log('     node scripts/check-subscription-status.js MOJO6111D05Q15595837');
+      console.log('     node scripts/check-subscription-status.js --user="sr service center"');
+      console.log('     node scripts/check-subscription-status.js --phone=8248122283');
+      process.exit(1);
     }
-
-    console.log(`📋 Found ${allUsers.length} user account(s):\n`);
     
-    for (let i = 0; i < allUsers.length; i++) {
-      const user = allUsers[i];
-      console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      console.log(`\n👤 User ${i + 1}:`);
-      console.log(`   ID: ${user.id}`);
+    if (invoices.length === 0) {
+      console.log('\n❌ No invoices found');
+      process.exit(0);
+    }
+    
+    // Sort invoices by to_date descending (most recent first)
+    invoices.sort((a, b) => {
+      const dateA = new Date(a.to_date || 0);
+      const dateB = new Date(b.to_date || 0);
+      return dateB - dateA;
+    });
+    
+    const latestInvoice = invoices[0];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const toDate = new Date(latestInvoice.to_date);
+    toDate.setHours(0, 0, 0, 0);
+    
+    const isActive = toDate >= today;
+    const diffTime = toDate - today;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('📊 Subscription Status');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    
+    if (user) {
+      console.log(`\n👤 User Information:`);
       console.log(`   Name: ${user.name || 'N/A'}`);
-      console.log(`   Phone: ${user.mob_num}`);
+      console.log(`   User ID: ${user.id || 'N/A'}`);
+      console.log(`   Phone: ${user.mob_num || 'N/A'}`);
       console.log(`   User Type: ${user.user_type || 'N/A'}`);
-      console.log(`   App Type: ${user.app_type || 'N/A'}`);
       console.log(`   Email: ${user.email || 'N/A'}`);
-      
-      // Find shops for this user
-      const shops = await Shop.findAllByUserId(user.id);
-      console.log(`\n🏪 Shops (${shops.length}):`);
-      
-      if (shops.length === 0) {
-        console.log('   No shops found');
-      } else {
-        for (const shop of shops) {
-          console.log(`\n   Shop ID: ${shop.id}`);
-          console.log(`   Shop Name: ${shop.shopname || 'N/A'}`);
-          console.log(`   Shop Type: ${shop.shop_type} (${shop.shop_type === 1 ? 'B2B' : shop.shop_type === 3 ? 'B2C' : 'Other'})`);
-          console.log(`   Is Subscribed: ${shop.is_subscribed ? '✅ YES' : '❌ NO'}`);
-          console.log(`   Subscription Ends At: ${shop.subscription_ends_at || 'N/A'}`);
-          console.log(`   Is Subscription Ends: ${shop.is_subscription_ends ? 'YES' : 'NO'}`);
-          console.log(`   Subscribed Duration: ${shop.subscribed_duration || 'N/A'}`);
-          
-          // Check subscription end date
-          if (shop.subscription_ends_at) {
-            const endDate = new Date(shop.subscription_ends_at);
-            const now = new Date();
-            const isExpired = endDate < now;
-            console.log(`   Status: ${isExpired ? '⚠️ EXPIRED' : '✅ ACTIVE'}`);
-          }
-        }
-      }
-      
-      // Find invoices for this user
-      const allInvoices = await Invoice.getAll();
-      const userInvoices = allInvoices.filter(inv => 
-        inv.user_id === user.id && inv.type === 'Paid'
-      );
-      
-      console.log(`\n💰 Paid Invoices (${userInvoices.length}):`);
-      
-      if (userInvoices.length === 0) {
-        console.log('   No paid invoices found');
-      } else {
-        // Sort by created_at descending
-        userInvoices.sort((a, b) => {
-          const dateA = new Date(a.created_at || 0);
-          const dateB = new Date(b.created_at || 0);
-          return dateB - dateA;
-        });
-        
-        for (const invoice of userInvoices) {
-          console.log(`\n   Invoice ID: ${invoice.id}`);
-          console.log(`   Package ID: ${invoice.package_id || 'N/A'}`);
-          console.log(`   Package Name: ${invoice.name || invoice.displayname || 'N/A'}`);
-          console.log(`   Price: ₹${invoice.price || 0}`);
-          console.log(`   Duration: ${invoice.duration || 'N/A'}`);
-          console.log(`   Approval Status: ${invoice.approval_status || 'pending'}`);
-          console.log(`   From Date: ${invoice.from_date || 'N/A'}`);
-          console.log(`   To Date: ${invoice.to_date || 'N/A'}`);
-          console.log(`   Payment ID: ${invoice.payment_moj_id || 'N/A'}`);
-          console.log(`   Created At: ${invoice.created_at || 'N/A'}`);
-          console.log(`   Approved At: ${invoice.approved_at || 'N/A'}`);
-        }
-        
-        // Get latest approved invoice
-        const approvedInvoice = userInvoices.find(inv => inv.approval_status === 'approved');
-        if (approvedInvoice) {
-          console.log(`\n✅ Latest Approved Subscription:`);
-          console.log(`   Package: ${approvedInvoice.name || approvedInvoice.package_id || 'N/A'}`);
-          console.log(`   Valid From: ${approvedInvoice.from_date || 'N/A'}`);
-          console.log(`   Valid Until: ${approvedInvoice.to_date || 'N/A'}`);
-          
-          if (approvedInvoice.to_date) {
-            const endDate = new Date(approvedInvoice.to_date);
-            const now = new Date();
-            const isExpired = endDate < now;
-            console.log(`   Status: ${isExpired ? '⚠️ EXPIRED' : '✅ ACTIVE'}`);
-          }
-        }
-      }
     }
     
-    console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+    console.log(`\n📋 Latest Invoice (Invoice ID: ${latestInvoice.id}):`);
+    console.log(`   Package Name: ${latestInvoice.name || 'N/A'}`);
+    console.log(`   Display Name: ${latestInvoice.displayname || 'N/A'}`);
+    console.log(`   Type: ${latestInvoice.type || 'N/A'}`);
+    console.log(`   Duration: ${latestInvoice.duration || 'N/A'} days`);
+    console.log(`   Price: ₹${latestInvoice.price || '0'}`);
+    console.log(`   From Date: ${latestInvoice.from_date || 'N/A'}`);
+    console.log(`   To Date: ${latestInvoice.to_date || 'N/A'}`);
+    console.log(`   Payment MOJ ID: ${latestInvoice.payment_moj_id || 'N/A'}`);
+    console.log(`   Payment Req ID: ${latestInvoice.payment_req_id || 'N/A'}`);
+    
+    console.log(`\n📅 Subscription Status:`);
+    console.log(`   Today: ${today.toISOString().split('T')[0]}`);
+    console.log(`   Expiry Date: ${latestInvoice.to_date || 'N/A'}`);
+    
+    if (isActive) {
+      console.log(`   ✅ Status: ACTIVE`);
+      console.log(`   📊 Days Remaining: ${diffDays} day(s)`);
+    } else {
+      console.log(`   ❌ Status: EXPIRED`);
+      console.log(`   📊 Days Since Expiry: ${Math.abs(diffDays)} day(s)`);
+    }
+    
+    if (invoices.length > 1) {
+      console.log(`\n📋 All Invoices (${invoices.length} total):`);
+      invoices.forEach((inv, index) => {
+        const invToDate = new Date(inv.to_date);
+        invToDate.setHours(0, 0, 0, 0);
+        const invIsActive = invToDate >= today;
+        console.log(`\n   ${index + 1}. Invoice ID: ${inv.id}`);
+        console.log(`      Package: ${inv.name || 'N/A'}`);
+        console.log(`      From: ${inv.from_date || 'N/A'} → To: ${inv.to_date || 'N/A'}`);
+        console.log(`      Status: ${invIsActive ? '✅ ACTIVE' : '❌ EXPIRED'}`);
+        console.log(`      Payment ID: ${inv.payment_moj_id || inv.payment_req_id || 'N/A'}`);
+      });
+    }
+    
+    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    
   } catch (error) {
-    console.error('❌ Error checking subscription status:', error);
-    console.error('   Error stack:', error.stack);
+    console.error('❌ Error:', error);
+    console.error('   Message:', error.message);
+    if (error.stack) {
+      console.error('   Stack:', error.stack.split('\n').slice(0, 5).join('\n'));
+    }
     process.exit(1);
   }
 }
 
 checkSubscriptionStatus();
-
-
-
-

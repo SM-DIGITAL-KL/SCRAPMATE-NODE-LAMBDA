@@ -92,17 +92,6 @@ class OrderController {
         });
       }
 
-      // Check Redis cache first (only if previously successful)
-      const cacheKey = RedisCache.listKey('customer_orders', { customer_id });
-      const cached = await RedisCache.get(cacheKey);
-      if (cached) {
-        return res.json({
-          status: 'success',
-          msg: 'Successfull',
-          data: cached
-        });
-      }
-
       const orders = await Order.findByCustomerId(customer_id);
 
       // Get shop details for orders that have shop_id
@@ -175,16 +164,6 @@ class OrderController {
         return formatted;
       }));
 
-      // Cache the result only on success (2 minutes TTL - changes frequently)
-      try {
-        const dataToCache = formattedOrders.length > 0 ? formattedOrders : 'empty data';
-        await RedisCache.set(cacheKey, dataToCache, '365days');
-        console.log(`💾 Redis cache set for customer orders: ${cacheKey}`);
-      } catch (redisErr) {
-        console.error('Redis cache error:', redisErr);
-        // Continue even if Redis fails
-      }
-
       if (formattedOrders.length > 0) {
         res.json({
           status: 'success',
@@ -218,17 +197,6 @@ class OrderController {
           status: 'error',
           msg: 'empty param',
           data: ''
-        });
-      }
-
-      // Check Redis cache first (only if previously successful)
-      const cacheKey = RedisCache.listKey('customer_pending_orders', { customer_id });
-      const cached = await RedisCache.get(cacheKey);
-      if (cached) {
-        return res.json({
-          status: 'success',
-          msg: 'Successfull',
-          data: cached
         });
       }
 
@@ -283,16 +251,6 @@ class OrderController {
         }
         return formatted;
       }));
-
-      // Cache the result only on success (2 minutes TTL - changes frequently)
-      try {
-        const dataToCache = formattedOrders.length > 0 ? formattedOrders : 'empty data';
-        await RedisCache.set(cacheKey, dataToCache, '365days');
-        console.log(`💾 Redis cache set for customer pending orders: ${cacheKey}`);
-      } catch (redisErr) {
-        console.error('Redis cache error:', redisErr);
-        // Continue even if Redis fails
-      }
 
       if (formattedOrders.length > 0) {
         res.json({
@@ -381,8 +339,7 @@ class OrderController {
 
       const order = await Order.create(orderData);
 
-      // Invalidate related caches
-      await RedisCache.delete(RedisCache.listKey('customer_orders', { customer_id }));
+      // Invalidate related caches (excluding customer_orders)
       await RedisCache.delete(RedisCache.listKey('shop_orders', { shop_id }));
       await RedisCache.delete(RedisCache.dashboardKey('shop', shop_id));
       await RedisCache.delete(RedisCache.dashboardKey('customer', customer_id));

@@ -54,7 +54,8 @@ class V2EarningsController {
       if (type === 'customer') {
         // R user type - customer orders (B2C)
         const allOrders = await Order.findByCustomerId(userIdNum);
-        orders = allOrders.filter(order => order.status === 4); // Only completed orders
+        // Status 5 = Pickup Completed (changed from status 4)
+        orders = allOrders.filter(order => order.status === 5); // Only completed orders
       } else if (type === 'shop') {
         // For shop type (B2C vendors), first find the shop_id from user_id
         const Shop = require('../models/Shop');

@@ -13,6 +13,9 @@ const V2OrderController = require('../controllers/v2OrderController');
 const V2NotificationController = require('../controllers/v2NotificationController');
 const V2BulkScrapController = require('../controllers/v2BulkScrapController');
 const V2BulkSellController = require('../controllers/v2BulkSellController');
+const V2FoodWasteController = require('../controllers/v2FoodWasteController');
+const V2InstamojoOrderController = require('../controllers/v2InstamojoOrderController');
+const V2BulkMessageController = require('../controllers/v2BulkMessageController');
 const SubcategoryController = require('../controllers/subcategoryController');
 const UtilityController = require('../controllers/utilityController');
 const SitePanelController = require('../controllers/sitePanelController');
@@ -65,19 +68,37 @@ router.use((req, res, next) => {
   const baseUrl = req.baseUrl || '';
   const pathLower = path.toLowerCase();
   const originalUrlLower = originalUrl.toLowerCase();
+  const fullPath = (baseUrl + path).toLowerCase();
+  const fullOriginalUrl = originalUrl.toLowerCase();
   
-  // Check if this is a PayU endpoint
+  // Check if this is a PayU endpoint or Instamojo redirect endpoint
   const isPayUEndpoint = 
     pathLower.includes('payu') || 
     originalUrlLower.includes('payu') ||
+    fullPath.includes('payu') ||
+    fullOriginalUrl.includes('payu') ||
     path === '/payu-form' ||
     path === '/payu-success' ||
     path === '/payu-failure' ||
     path.startsWith('/payu-') ||
     originalUrl.includes('/payu-');
   
-  if (isPayUEndpoint) {
-    console.log('✅✅✅ PayU endpoint detected in early middleware - will skip API key check');
+  // Instamojo redirect endpoint (called by Instamojo servers, no API key)
+  // Check in path, originalUrl, and full paths (with and without /v2 prefix)
+  const isInstamojoRedirect = 
+    path === '/instamojo/payment-redirect' ||
+    path === '/v2/instamojo/payment-redirect' ||
+    (pathLower.includes('instamojo') && pathLower.includes('payment-redirect')) ||
+    (originalUrlLower.includes('instamojo') && originalUrlLower.includes('payment-redirect')) ||
+    (fullPath.includes('instamojo') && fullPath.includes('payment-redirect')) ||
+    (fullOriginalUrl.includes('instamojo') && fullOriginalUrl.includes('payment-redirect'));
+  
+  if (isPayUEndpoint || isInstamojoRedirect) {
+    console.log('✅✅✅ Public endpoint detected (PayU or Instamojo redirect) - will skip API key check');
+    console.log('   Path:', path);
+    console.log('   OriginalUrl:', originalUrl);
+    console.log('   FullPath:', fullPath);
+    console.log('   isInstamojoRedirect:', isInstamojoRedirect);
     // Mark request to skip API key check
     req.skipApiKeyCheck = true;
   }
@@ -133,8 +154,8 @@ router.post('/payu-failure', (req, res, next) => {
 router.use((req, res, next) => {
   // Check if this request should skip API key check (set by early middleware)
   if (req.skipApiKeyCheck) {
-    console.log('✅✅✅✅✅ PayU endpoint - SKIPPING API key check (marked by early middleware) ✅✅✅✅✅');
-    return next(); // Skip API key check for PayU routes
+    console.log('✅✅✅✅✅ Public endpoint - SKIPPING API key check (marked by early middleware) ✅✅✅✅✅');
+    return next(); // Skip API key check for public routes
   }
   
   // Also check path directly as fallback
@@ -152,11 +173,20 @@ router.use((req, res, next) => {
     path.startsWith('/payu-') ||
     originalUrl.includes('/payu-');
   
-  if (isPayUEndpoint) {
-    console.log('✅✅✅✅✅ PayU endpoint detected in API key middleware - SKIPPING check ✅✅✅✅✅');
+  // Instamojo redirect endpoint (called by Instamojo servers, no API key)
+  // Check multiple variations of the path (with and without /v2 prefix)
+  const isInstamojoRedirect = 
+    path === '/instamojo/payment-redirect' ||
+    path === '/v2/instamojo/payment-redirect' ||
+    (pathLower.includes('instamojo') && pathLower.includes('payment-redirect')) ||
+    (originalUrlLower.includes('instamojo') && originalUrlLower.includes('payment-redirect'));
+  
+  if (isPayUEndpoint || isInstamojoRedirect) {
+    console.log('✅✅✅✅✅ Public endpoint (PayU or Instamojo redirect) detected - SKIPPING API key check ✅✅✅✅✅');
     console.log('   Path:', path);
     console.log('   OriginalUrl:', originalUrl);
-    return next(); // Skip API key check for PayU routes
+    console.log('   isInstamojoRedirect:', isInstamojoRedirect);
+    return next(); // Skip API key check for public routes
   }
   
   // Apply API key check for all other routes
@@ -312,6 +342,58 @@ router.post('/subscription-packages/save', V2SubscriptionPackageController.saveU
  * Body: { user_id: string }
  */
 router.post('/subscription-packages/check-expiry', V2SubscriptionPackageController.checkSubscriptionExpiry);
+
+// ==================== INSTAMOJO PAYMENT ROUTES (WebView) ====================
+/**
+ * POST /api/v2/instamojo/create-payment-request
+ * Create Instamojo payment request (for WebView integration)
+ * Body: {
+ *   purpose: string,
+ *   amount: string | number,
+ *   buyer_name: string,
+ *   email: string,
+ *   phone: string,
+ *   redirect_url: string,
+ *   webhook_url?: string,
+ *   send_email?: boolean,
+ *   send_sms?: boolean,
+ *   allow_repeated_payments?: boolean
+ * }
+ * 
+ * Returns: {
+ *   status: 'success',
+ *   data: {
+ *     payment_request_id: string,
+ *     longurl: string, // Use this in WebView
+ *     ...other payment request fields
+ *   }
+ * }
+ */
+router.post('/instamojo/create-payment-request', V2InstamojoOrderController.createPaymentRequest);
+
+/**
+ * GET /api/v2/instamojo/payment-request/:paymentRequestId
+ * Get Instamojo payment request details including payment status
+ * 
+ * Returns: {
+ *   status: 'success',
+ *   data: {
+ *     payment_request: {...},
+ *     payments: [...]
+ *   }
+ * }
+ */
+router.get('/instamojo/payment-request/:paymentRequestId', V2InstamojoOrderController.getPaymentRequestDetails);
+
+/**
+ * GET /api/v2/instamojo/payment-redirect
+ * Handle Instamojo payment redirect (public endpoint, no API key required)
+ * This is called by Instamojo servers after payment completion
+ * Query params: payment_id, payment_request_id, payment_status
+ * 
+ * Note: The WebView will detect this redirect and extract payment details
+ */
+router.get('/instamojo/payment-redirect', V2InstamojoOrderController.handlePaymentRedirect);
 
 // ==================== GENERAL CATEGORY ROUTES ====================
 /**
@@ -1034,6 +1116,26 @@ router.post('/bulk-sell/requests/:requestId/accept',
  */
 router.post('/bulk-sell/requests/:requestId/reject', V2BulkSellController.rejectBulkSellRequest);
 
+// ==================== FOOD WASTE ENQUIRY ROUTES ====================
+/**
+ * POST /api/v2/food-waste/enquiry
+ * Submit a food waste collection enquiry
+ * Body: {
+ *   user_id: number,
+ *   kg_per_week: string,
+ *   preferred_timings: string[],
+ *   address?: string,
+ *   latitude?: number,
+ *   longitude?: number
+ * }
+ * 
+ * Returns:
+ * - status: 'success' | 'error'
+ * - msg: Message
+ * - data: { enquiry_id, user_id, kg_per_week, preferred_timings, status }
+ */
+router.post('/food-waste/enquiry', V2FoodWasteController.submitEnquiry);
+
 // ==================== APP VERSION ROUTE ====================
 /**
  * GET /api/v2/app-version
@@ -1041,6 +1143,86 @@ router.post('/bulk-sell/requests/:requestId/reject', V2BulkSellController.reject
  * Returns: { status: 'success', msg: 'App version retrieved', data: { appVersion: string } }
  */
 router.get('/app-version', SitePanelController.getAppVersion);
+
+// ==================== BULK MESSAGE NOTIFICATION ROUTES ====================
+/**
+ * POST /api/v2/bulk-message/notify
+ * Save bulk message notification records (single or batch)
+ * Body (single): {
+ *   phone_number: string,
+ *   business_data: { title, street, city?, state?, phone?, categoryName?, url? },
+ *   message: string,
+ *   status?: 'sent' | 'failed' | 'pending',
+ *   language?: string
+ * }
+ * Body (batch): {
+ *   notifications: [
+ *     { phone_number, business_data, message, status?, language? },
+ *     ...
+ *   ]
+ * }
+ * 
+ * Returns:
+ * - status: 'success' | 'error'
+ * - msg: Message
+ * - data: Saved notification(s) or batch result
+ */
+router.post('/bulk-message/notify', V2BulkMessageController.saveNotifications);
+
+/**
+ * GET /api/v2/bulk-message/check/:phoneNumber
+ * Check if a phone number has been notified
+ * 
+ * Returns:
+ * - status: 'success' | 'error'
+ * - msg: Message
+ * - data: {
+ *     phone_number: string,
+ *     is_notified: boolean,
+ *     notification_count: number,
+ *     notifications: Array
+ *   }
+ */
+router.get('/bulk-message/check/:phoneNumber', V2BulkMessageController.checkNotification);
+
+/**
+ * POST /api/v2/bulk-message/check-batch
+ * Check if multiple phone numbers have been notified
+ * Body: {
+ *   phone_numbers: string[]
+ * }
+ * 
+ * Returns:
+ * - status: 'success' | 'error'
+ * - msg: Message
+ * - data: {
+ *     [phone_number]: {
+ *       phone_number: string,
+ *       is_notified: boolean,
+ *       notification_count: number,
+ *       notifications: Array
+ *     },
+ *     ...
+ *   }
+ */
+router.post('/bulk-message/check-batch', V2BulkMessageController.checkNotificationsBatch);
+
+/**
+ * GET /api/v2/bulk-message/notifications
+ * Get all notifications with pagination
+ * Query params: ?limit=100&lastKey=...
+ * 
+ * Returns:
+ * - status: 'success' | 'error'
+ * - msg: Message
+ * - data: {
+ *     items: Array,
+ *     count: number,
+ *     has_more: boolean,
+ *     last_key: string | null
+ *   }
+ */
+router.get('/bulk-message/notifications', V2BulkMessageController.getAllNotifications);
 
 // PayU routes are now defined at the top of the file (before API key middleware)
 // This ensures they are accessible without API key for WebView requests

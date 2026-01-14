@@ -14,3 +14,6 @@ export REDIS_TOKEN=ASU3AAImcDJmYTQ1MjQwNGIzNTA0ZWNlYmRkMDU2OGM3OGRmZWY4NXAyOTUyN
 # Alternative variable names (also supported):
 # export UPSTASH_REDIS_REST_URL=your-redis-url-here
 # export UPSTASH_REDIS_REST_TOKEN=your-redis-token-here
+export INSTAMOJO_API_KEY='755565af96a8bd8e5a7ac657d1f1c1a5'
+export INSTAMOJO_AUTH_TOKEN='5c641317126841399ca2faee00ff8ad4'
+export INSTAMOJO_SALT='5bc029c0048b4b379680a0bf28f84b4e'

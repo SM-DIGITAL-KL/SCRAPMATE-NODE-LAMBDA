@@ -1,0 +1,9 @@
+{
+  "campaign": "Partner App Notification",
+  "environment": "prod",
+  "start_time": "2026-01-05T08:40:17.866Z",
+  "end_time": "2026-01-05T08:40:18.785Z",
+  "error": "Invalid ProjectionExpression: Attribute name is a reserved keyword; reserved keyword: name",
+  "error_stack": "ValidationException: Invalid ProjectionExpression: Attribute name is a reserved keyword; reserved keyword: name\n    at ProtocolLib.getErrorSchemaOrThrowBaseException (/Users/shijo/Documents/GitHub/flutternode/SCRAPMATE-NODE-LAMBDA/node_modules/@aws-sdk/core/dist-cjs/submodules/protocols/index.js:69:67)\n    at AwsJson1_0Protocol.handleError (/Users/shijo/Documents/GitHub/flutternode/SCRAPMATE-NODE-LAMBDA/node_modules/@aws-sdk/core/dist-cjs/submodules/protocols/index.js:640:65)\n    at AwsJson1_0Protocol.deserializeResponse (/Users/shijo/Documents/GitHub/flutternode/SCRAPMATE-NODE-LAMBDA/node_modules/@smithy/core/dist-cjs/submodules/protocols/index.js:467:24)\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async /Users/shijo/Documents/GitHub/flutternode/SCRAPMATE-NODE-LAMBDA/node_modules/@smithy/core/dist-cjs/submodules/schema/index.js:26:24\n    at async /Users/shijo/Documents/GitHub/flutternode/SCRAPMATE-NODE-LAMBDA/node_modules/@aws-sdk/lib-dynamodb/dist-cjs/index.js:107:34\n    at async /Users/shijo/Documents/GitHub/flutternode/SCRAPMATE-NODE-LAMBDA/node_modules/@smithy/core/dist-cjs/index.js:121:20\n    at async /Users/shijo/Documents/GitHub/flutternode/SCRAPMATE-NODE-LAMBDA/node_modules/@smithy/middleware-retry/dist-cjs/index.js:254:46\n    at async /Users/shijo/Documents/GitHub/flutternode/SCRAPMATE-NODE-LAMBDA/node_modules/@aws-sdk/middleware-logger/dist-cjs/index.js:5:26\n    at async sendPartnerNotificationToVendors (/Users/shijo/Documents/GitHub/flutternode/SCRAPMATE-NODE-LAMBDA/scripts/send-partner-notification-to-vendors.js:125:24)",
+  "results": []
+}

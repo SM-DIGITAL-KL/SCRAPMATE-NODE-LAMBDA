@@ -195,6 +195,26 @@ class V2AuthService {
       otp = '487600';
     }
 
+    // Static OTP for specific numbers (always use 123456, no SMS sent)
+    // Phone: 7356468251, OTP: 123456 (permanent, no SMS)
+    if (cleanedPhone === '7356468251') {
+      otp = '123456';
+      console.log('🔧 [generateOtp] Using static OTP 123456 for number: 7356468251 (SMS will be skipped)');
+    }
+   
+    
+    // Phone: 8056744395, OTP: 123456 (permanent, no SMS)
+    if (cleanedPhone === '8056744395') {
+      otp = '123456';
+      console.log('🔧 [generateOtp] Using static OTP 123456 for number: 8056744395 (SMS will be skipped)');
+    }
+
+    // Phone: 9074135121, OTP: 123456 (permanent, no SMS - works in all environments)
+    if (cleanedPhone === '9074135121') {
+      otp = '123456';
+      console.log('🔧 [generateOtp] Using static OTP 123456 for number: 9074135121 (SMS will be skipped)');
+    }
+
     // Determine target app type: if appType is provided, use it; otherwise default to vendor_app
     const targetAppType = appType || 'vendor_app';
     console.log(`📱 generateOtp: targetAppType=${targetAppType}`);
@@ -320,22 +340,29 @@ class V2AuthService {
       // Don't fail the request if cache fails - OTP will still be sent via SMS
     }
 
-    // Send OTP via SMS
-    try {
-      console.log(`📱 [generateOtp] Attempting to send OTP via SMS to ${cleanedPhone}`);
-      const SmsService = require('../../utils/smsService');
-      const smsResult = await SmsService.sendOtp(cleanedPhone, otp);
-      console.log(`✅ [generateOtp] OTP sent via SMS to ${cleanedPhone}`);
-      console.log(`   SMS API Response:`, JSON.stringify(smsResult, null, 2));
-    } catch (smsError) {
-      // Log error but don't fail the request - OTP is still returned in response
-      console.error('❌ [generateOtp] Failed to send OTP via SMS:', smsError.message);
-      console.error('   Error details:', smsError);
-      if (smsError.response) {
-        console.error('   HTTP Status:', smsError.response.status);
-        console.error('   Response data:', JSON.stringify(smsError.response.data, null, 2));
+    // Send OTP via SMS (skip for numbers that should not receive SMS)
+    const skipSmsNumbers = ['7356468251', '8056744395'];
+    if (skipSmsNumbers.includes(cleanedPhone)) {
+      console.log(`🚫 [generateOtp] Skipping SMS for ${cleanedPhone} (permanent no-SMS number)`);
+    } else {
+      try {
+        console.log(`📱 [generateOtp] Attempting to send OTP via SMS to ${cleanedPhone}`);
+        const SmsService = require('../../utils/smsService');
+        // Get user name if user exists, otherwise use "User"
+        const userName = user && user.name ? user.name : 'User';
+        const smsResult = await SmsService.sendOtp(cleanedPhone, otp, userName);
+        console.log(`✅ [generateOtp] OTP sent via SMS to ${cleanedPhone}`);
+        console.log(`   SMS API Response:`, JSON.stringify(smsResult, null, 2));
+      } catch (smsError) {
+        // Log error but don't fail the request - OTP is still returned in response
+        console.error('❌ [generateOtp] Failed to send OTP via SMS:', smsError.message);
+        console.error('   Error details:', smsError);
+        if (smsError.response) {
+          console.error('   HTTP Status:', smsError.response.status);
+          console.error('   Response data:', JSON.stringify(smsError.response.data, null, 2));
+        }
+        console.error('   OTP is still available in API response for testing');
       }
-      console.error('   OTP is still available in API response for testing');
     }
 
     if (user) {
@@ -410,14 +437,26 @@ class V2AuthService {
       const isTestNumber = cleanedPhone === '9605056015' || cleanedPhone === '7994095833';
       const testOtp = '487600';
       
-      if (!normalizedStoredOtp && !isTestNumber) {
+      // Static OTP for Play Store testing (production only)
+      // Phone: 9074135121, OTP: 123456 (non-changeable)
+      const isProduction = process.env.NODE_ENV === 'prod' || process.env.NODE_ENV === 'production' || !process.env.NODE_ENV || process.env.NODE_ENV === '';
+      const isPlayStoreTestNumber = isProduction && cleanedPhone === '9074135121';
+      const playStoreTestOtp = '123456';
+      
+      if (!normalizedStoredOtp && !isTestNumber && !isPlayStoreTestNumber) {
         console.error('❌ [verifyOtpAndLogin] OTP not found in cache and not a test number');
         throw new Error('OTP expired or invalid. Please request a new OTP.');
       }
       
-      // Verify OTP matches (allow test OTP for test numbers)
+      // Verify OTP matches (allow test OTP for test numbers and Play Store testing)
       // Compare normalized values to handle whitespace/encoding issues from SMS auto-fill
-      const isValidOtp = normalizedStoredOtp === normalizedOtp || (isTestNumber && normalizedOtp === testOtp);
+      const isValidOtp = normalizedStoredOtp === normalizedOtp || 
+                         (isTestNumber && normalizedOtp === testOtp) ||
+                         (isPlayStoreTestNumber && normalizedOtp === playStoreTestOtp);
+      
+      if (isPlayStoreTestNumber) {
+        console.log('🔧 [verifyOtpAndLogin] Using static OTP for Play Store testing number: 9074135121');
+      }
       
       if (!isValidOtp) {
         console.error('❌ [verifyOtpAndLogin] OTP mismatch');

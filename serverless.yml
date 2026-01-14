@@ -47,6 +47,17 @@ provider:
     SMS_API_TOKEN: 'EVLZ8267TMY1O2Z'
     SMS_API_KEY: '/BR2+k;L(-aPKA@r%5SO*GzcCm8&Hg6o'
     
+    # Instamojo Payment Gateway Configuration
+    # Get these from: https://www.instamojo.com/developers (after logging in)
+    # API Key (Client ID) and Auth Token (Client Secret) from Instamojo developers page
+    # Set these as environment variables before deployment
+    INSTAMOJO_API_KEY: ${env:INSTAMOJO_API_KEY, ''}
+    INSTAMOJO_AUTH_TOKEN: ${env:INSTAMOJO_AUTH_TOKEN, ''}
+    INSTAMOJO_SALT: ${env:INSTAMOJO_SALT, ''}
+    # Alternative names for backward compatibility (same values)
+    INSTAMOJO_CLIENT_ID: ${env:INSTAMOJO_CLIENT_ID, ''}
+    INSTAMOJO_CLIENT_SECRET: ${env:INSTAMOJO_CLIENT_SECRET, ''}
+    
     # Option: Use SSM Parameter Store (uncomment after setting up parameters)
     # API_KEY: ${ssm:/scrapmate/${self:provider.stage}/API_KEY~true}
     # SESSION_SECRET: ${ssm:/scrapmate/${self:provider.stage}/SESSION_SECRET~true}

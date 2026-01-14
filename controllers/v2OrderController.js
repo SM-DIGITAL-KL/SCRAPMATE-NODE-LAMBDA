@@ -492,7 +492,306 @@ class V2OrderController {
           // Wait for all notifications to be sent (but don't fail if some fail)
           const results = await Promise.allSettled(notificationPromises);
           const successCount = results.filter(r => r.status === 'fulfilled' && r.value?.success).length;
-          console.log(`✅ Sent notifications to ${successCount}/${notifiedVendorIds.length} vendors`);
+          console.log(`✅ Sent FCM notifications to ${successCount}/${notifiedVendorIds.length} vendors`);
+          
+          // Send SMS notifications to vendors using template: "Scrapmate pickup request {#var#}. Payable amount Rs{#var#}. Open B2C dashboard to accept."
+          try {
+            console.log(`📱 [SMS] Starting SMS notification process for order ${order.id} (${order.order_number || order.order_no})`);
+            console.log(`📱 [SMS] Notified vendor IDs: ${notifiedVendorIds.join(', ')}`);
+            console.log(`📱 [SMS] Sending SMS notifications to ${notifiedVendorIds.length} vendor(s)...`);
+            
+            // Extract material name from order details for SMS
+            let materialName = 'scrap';
+            try {
+              const orderDetailsObj = typeof order.orderdetails === 'string'
+                ? JSON.parse(order.orderdetails)
+                : order.orderdetails;
+              
+              if (orderDetailsObj && Array.isArray(orderDetailsObj) && orderDetailsObj.length > 0) {
+                // Get first material name
+                const firstItem = orderDetailsObj[0];
+                materialName = firstItem.material_name || firstItem.name || firstItem.category_name || 'scrap';
+              } else if (orderDetailsObj && typeof orderDetailsObj === 'object') {
+                // Try to extract from nested structure
+                const firstKey = Object.keys(orderDetailsObj)[0];
+                if (firstKey) {
+                  materialName = firstKey;
+                }
+              }
+            } catch (parseErr) {
+              console.warn('⚠️  Could not parse order details for SMS material name:', parseErr.message);
+            }
+            
+            // Build SMS message using template: "Scrapmate pickup request {#var#}. Payable amount Rs{#var#}. Open B2C dashboard to accept."
+            // Example: "Scrapmate pickup request ORD12345 of Books scrap. Payable amount Rs1200. Open B2C dashboard to accept."
+            const orderNumber = order.order_number || order.order_no || 'N/A';
+            const payableAmount = Math.round(order.estim_price || order.estimated_price || 0);
+            
+            // First variable: order number + "of" + material name (e.g., "ORD12345 of Books scrap")
+            const firstVar = `${orderNumber} of ${materialName}`;
+            // Second variable: just the amount number (e.g., "1200")
+            const secondVar = `${payableAmount}`;
+            
+            // Build message - replace {#var#} placeholders with actual values
+            // Template: "Scrapmate pickup request {#var#}. Payable amount Rs{#var#}. Open B2C dashboard to accept."
+            // Example: "Scrapmate pickup request ORD12345 of Books scrap. Payable amount Rs1200. Open B2C dashboard to accept."
+            const smsMessage = `Scrapmate pickup request ${firstVar}. Payable amount Rs${secondVar}. Open B2C dashboard to accept.`;
+            
+            console.log(`📱 SMS message: ${smsMessage}`);
+            console.log(`   Order: ${orderNumber}, Material: ${materialName}, Amount: Rs${payableAmount}`);
+            console.log(`   First var: ${firstVar}, Second var: ${secondVar}`);
+            
+            // Send SMS to each vendor
+            const BulkMessageNotification = require('../models/BulkMessageNotification');
+            const http = require('http');
+            const querystring = require('querystring');
+            
+            const SMS_CONFIG = {
+              username: 'scrapmate',
+              sendername: 'SCRPMT',
+              smstype: 'TRANS',
+              apikey: '1bf0131f-d1f2-49ed-9c57-19f1b4400f32',
+              peid: '1701173389563945545',
+              templateid: '1707176812500484578' // Template ID for pickup request SMS
+            };
+            
+            // Helper function to send SMS
+            const sendSMS = (phoneNumber, message) => {
+              return new Promise((resolve, reject) => {
+                const params = querystring.stringify({
+                  username: SMS_CONFIG.username,
+                  message: message,
+                  sendername: SMS_CONFIG.sendername,
+                  smstype: SMS_CONFIG.smstype,
+                  numbers: phoneNumber,
+                  apikey: SMS_CONFIG.apikey,
+                  peid: SMS_CONFIG.peid,
+                  templateid: SMS_CONFIG.templateid,
+                });
+                
+                const options = {
+                  hostname: 'sms.bulksmsind.in',
+                  path: `/v2/sendSMS?${params}`,
+                  method: 'GET',
+                };
+                
+                const req = http.request(options, (res) => {
+                  let data = '';
+                  res.on('data', (chunk) => { data += chunk; });
+                  res.on('end', () => {
+                    try {
+                      const response = JSON.parse(data);
+                      resolve(response);
+                    } catch (e) {
+                      resolve({ raw: data });
+                    }
+                  });
+                });
+                
+                req.on('error', (error) => reject(error));
+                req.end();
+              });
+            };
+            
+            // Helper function to extract phone number
+            const extractPhoneNumber = (phone) => {
+              if (!phone) return null;
+              // Convert to string if it's a number
+              let phoneStr = String(phone);
+              let cleaned = phoneStr.replace(/\s+/g, '').replace(/[^\d+]/g, '');
+              if (cleaned.startsWith('+91')) {
+                cleaned = cleaned.substring(3);
+              } else if (cleaned.startsWith('91') && cleaned.length === 12) {
+                cleaned = cleaned.substring(2);
+              }
+              if (cleaned.length === 10 && /^[6-9]\d{9}$/.test(cleaned)) {
+                return cleaned;
+              }
+              return null;
+            };
+            
+            // Send SMS to each vendor
+            console.log(`📱 [SMS] Creating SMS promises for ${notifiedVendorIds.length} vendors...`);
+            const smsPromises = notifiedVendorIds.map(async (vendorUserId) => {
+              try {
+                console.log(`📱 [SMS] Processing SMS for vendor user_id: ${vendorUserId}`);
+                const vendorUser = await User.findById(vendorUserId);
+                
+                if (!vendorUser) {
+                  console.warn(`⚠️  [SMS] Vendor user (user_id: ${vendorUserId}) not found in database`);
+                  return { success: false, user_id: vendorUserId, reason: 'user_not_found' };
+                }
+                
+                console.log(`📱 [SMS] Vendor found: ${vendorUser.name || 'N/A'}, Phone: ${vendorUser.mob_num || 'N/A'}`);
+                
+                if (vendorUser.mob_num) {
+                  const phoneNumber = extractPhoneNumber(vendorUser.mob_num);
+                  
+                  if (phoneNumber) {
+                    console.log(`📱 [SMS] Extracted phone number: ${phoneNumber} (from ${vendorUser.mob_num})`);
+                    
+                    // Send SMS
+                    console.log(`📱 [SMS] Sending SMS to ${phoneNumber} (vendor ${vendorUserId})...`);
+                    console.log(`📱 [SMS] Message: ${smsMessage}`);
+                    let smsResult = null;
+                    try {
+                      smsResult = await sendSMS(phoneNumber, smsMessage);
+                      console.log(`📱 [SMS] API response for ${phoneNumber}:`, JSON.stringify(smsResult));
+                    } catch (smsApiError) {
+                      console.error(`❌ [SMS ERROR] SMS API error for ${phoneNumber} (vendor ${vendorUserId}):`, smsApiError);
+                      console.error(`   [SMS ERROR] Error name:`, smsApiError.name);
+                      console.error(`   [SMS ERROR] Error message:`, smsApiError.message);
+                      console.error(`   [SMS ERROR] Error stack:`, smsApiError.stack);
+                      smsResult = { error: smsApiError.message, status: 'error' };
+                    }
+                    
+                    // Save to bulk_message_notifications table
+                    try {
+                      const notificationRecord = await BulkMessageNotification.save({
+                        phone_number: phoneNumber,
+                        business_data: {
+                          order_id: order.id,
+                          order_number: orderNumber,
+                          vendor_user_id: vendorUserId,
+                          material_name: materialName,
+                          amount: payableAmount
+                        },
+                        message: smsMessage,
+                        status: (() => {
+                          // Check if SMS was successful - handle array response format
+                          if (Array.isArray(smsResult) && smsResult.length > 0) {
+                            return smsResult[0].status === 'success' ? 'sent' : 'failed';
+                          } else if (smsResult && typeof smsResult === 'object') {
+                            return (smsResult.status === 'success' || smsResult.success === true) ? 'sent' : 'failed';
+                          }
+                          return 'failed';
+                        })(),
+                        language: 'en'
+                      });
+                      console.log(`📱 [SMS] ✅ Saved SMS record to database: ${notificationRecord.id}`);
+                    } catch (dbErr) {
+                      console.error(`❌ [SMS ERROR] Error saving SMS to database for vendor ${vendorUserId}:`, dbErr);
+                      console.error(`   [SMS ERROR] DB Error message:`, dbErr.message);
+                      console.error(`   [SMS ERROR] DB Error stack:`, dbErr.stack);
+                    }
+                    
+                    // Check if SMS was successful - API returns array with object containing status
+                    let isSuccess = false;
+                    if (Array.isArray(smsResult) && smsResult.length > 0) {
+                      // API returns array: [{ status: 'success', msg: '...', msgid: '...' }]
+                      isSuccess = smsResult[0].status === 'success';
+                    } else if (smsResult && typeof smsResult === 'object') {
+                      // Check for direct status or success field
+                      isSuccess = smsResult.status === 'success' || smsResult.success === true;
+                    }
+                    
+                    if (isSuccess) {
+                      console.log(`✅ [SMS] SMS sent successfully to vendor (user_id: ${vendorUserId}, phone: ${phoneNumber})`);
+                      if (Array.isArray(smsResult) && smsResult[0].msgid) {
+                        console.log(`📱 [SMS] Message ID: ${smsResult[0].msgid}`);
+                      }
+                    } else {
+                      console.warn(`⚠️  [SMS] SMS may have failed for vendor (user_id: ${vendorUserId}, phone: ${phoneNumber}):`, smsResult);
+                    }
+                    return { success: isSuccess, user_id: vendorUserId, phone: phoneNumber, smsResult };
+                  } else {
+                    console.warn(`⚠️  [SMS] Invalid phone number for vendor (user_id: ${vendorUserId}): ${vendorUser.mob_num}`);
+                    return { success: false, user_id: vendorUserId, reason: 'invalid_phone', original_phone: vendorUser.mob_num };
+                  }
+                } else {
+                  console.warn(`⚠️  [SMS] Vendor user (user_id: ${vendorUserId}) has no phone number (mob_num is null/undefined)`);
+                  return { success: false, user_id: vendorUserId, reason: 'no_phone' };
+                }
+              } catch (err) {
+                console.error(`❌ [SMS ERROR] Error sending SMS to vendor (user_id: ${vendorUserId}):`, err);
+                console.error(`   [SMS ERROR] Error name:`, err.name);
+                console.error(`   [SMS ERROR] Error message:`, err.message);
+                console.error(`   [SMS ERROR] Error stack:`, err.stack);
+                return { success: false, user_id: vendorUserId, error: err.message };
+              }
+            });
+            
+            // Wait for all SMS to be sent (but don't fail if some fail)
+            console.log(`📱 [SMS] Waiting for all SMS promises to complete...`);
+            const smsResults = await Promise.allSettled(smsPromises);
+            console.log(`📱 [SMS] All SMS promises completed. Total results: ${smsResults.length}`);
+            
+            const smsSuccessCount = smsResults.filter(r => r.status === 'fulfilled' && r.value?.success).length;
+            const smsFailedResults = smsResults.filter(r => r.status === 'fulfilled' && !r.value?.success);
+            const smsRejectedResults = smsResults.filter(r => r.status === 'rejected');
+            
+            console.log(`📱 [SMS] Summary: ${smsSuccessCount} successful, ${smsFailedResults.length} failed, ${smsRejectedResults.length} rejected`);
+            console.log(`✅ [SMS] Sent SMS notifications to ${smsSuccessCount}/${notifiedVendorIds.length} vendors`);
+            if (smsFailedResults.length > 0) {
+              console.warn(`⚠️  [SMS] ${smsFailedResults.length} SMS failed:`);
+              smsFailedResults.forEach(r => {
+                const result = r.value;
+                console.warn(`   [SMS] - Vendor ${result?.user_id}: ${result?.reason || result?.error || 'unknown error'}`);
+                if (result?.phone) {
+                  console.warn(`     [SMS] Phone: ${result.phone}`);
+                } else if (result?.original_phone) {
+                  console.warn(`     [SMS] Original phone: ${result.original_phone}`);
+                }
+                if (result?.smsResult) {
+                  console.warn(`     [SMS] API Response:`, JSON.stringify(result.smsResult));
+                }
+              });
+            }
+            
+            if (smsRejectedResults.length > 0) {
+              console.error(`❌ [SMS ERROR] ${smsRejectedResults.length} SMS promises were rejected (threw exceptions):`);
+              smsRejectedResults.forEach((r, index) => {
+                console.error(`   [SMS ERROR] Rejected promise ${index + 1}:`, r.reason);
+                console.error(`   [SMS ERROR] Error message:`, r.reason?.message || 'Unknown error');
+                console.error(`   [SMS ERROR] Error stack:`, r.reason?.stack || 'No stack trace');
+              });
+            }
+            
+            // Check if vendor with phone 9074135121 is in the list
+            const targetPhone = '9074135121';
+            const targetVendorResult = smsResults.find(r => {
+              const result = r.value;
+              return result && (result.phone === targetPhone || result.original_phone === targetPhone);
+            });
+            if (targetVendorResult) {
+              const result = targetVendorResult.value;
+              console.log(`📱 SMS status for vendor ${targetPhone}:`, result);
+            } else {
+              // Check if vendor with this phone is in notified_vendor_ids
+              try {
+                const vendorWithPhone = await User.findByMobile(targetPhone);
+                if (vendorWithPhone) {
+                  const isInNotifiedList = notifiedVendorIds.includes(vendorWithPhone.id) || 
+                                          notifiedVendorIds.includes(String(vendorWithPhone.id)) ||
+                                          notifiedVendorIds.includes(Number(vendorWithPhone.id));
+                  console.log(`🔍 Vendor with phone ${targetPhone} found:`, {
+                    user_id: vendorWithPhone.id,
+                    name: vendorWithPhone.name,
+                    is_in_notified_list: isInNotifiedList,
+                    notified_vendor_ids: notifiedVendorIds
+                  });
+                  if (!isInNotifiedList) {
+                    console.warn(`⚠️  Vendor ${vendorWithPhone.id} (phone: ${targetPhone}) is NOT in notified_vendor_ids list!`);
+                  }
+                } else {
+                  console.warn(`⚠️  Vendor with phone ${targetPhone} not found in database`);
+                }
+              } catch (findErr) {
+                console.error(`❌ Error finding vendor with phone ${targetPhone}:`, findErr);
+              }
+            }
+          } catch (smsError) {
+            // Don't fail the order placement if SMS fails
+            console.error('❌ [SMS ERROR] CRITICAL: Error in SMS notification block:', smsError);
+            console.error('   [SMS ERROR] Error name:', smsError.name);
+            console.error('   [SMS ERROR] Error message:', smsError.message);
+            console.error('   [SMS ERROR] Error stack:', smsError.stack);
+            console.error('   [SMS ERROR] Order ID:', order.id);
+            console.error('   [SMS ERROR] Order Number:', order.order_number || order.order_no);
+            console.error('   [SMS ERROR] Notified Vendor IDs:', notifiedVendorIds);
+            console.error('   [SMS ERROR] This error prevented SMS from being sent to any vendors');
+            console.error('   [SMS ERROR] Order was still created successfully');
+          }
         } catch (notifError) {
           // Don't fail the order placement if notification fails
           console.error('❌ Error sending notifications to vendors:', notifError);
@@ -722,6 +1021,7 @@ class V2OrderController {
         // CRITICAL: Only show unassigned orders to vendors who were notified (in notified_vendor_ids)
         // This ensures only the 5 nearby vendors who were notified can see and accept unassigned orders
         // Exception: If order is assigned to this vendor's shop, they can see it regardless (auto-assigned)
+        let isVendorNotified = false;
         if (!isAssignedToThisVendor) {
           if (order.notified_vendor_ids) {
             try {
@@ -736,17 +1036,19 @@ class V2OrderController {
               }
 
               // Check if current vendor is in the notified list
-              const isNotified = notifiedVendorIds.some(id => {
+              isVendorNotified = notifiedVendorIds.some(id => {
                 const notifiedId = typeof id === 'string' ? parseInt(id) : id;
                 return notifiedId === userIdNum;
               });
 
-              if (!isNotified) {
+              if (!isVendorNotified) {
                 console.log(`🚫 Filtering out order ${order.order_number || order.id} - vendor ${userIdNum} was not notified (not in notified_vendor_ids)`);
                 return false;
               }
 
-              console.log(`✅ Order ${order.order_number || order.id} - vendor ${userIdNum} is in notified_vendor_ids`);
+              // Mark order as notified so location filter knows to skip distance check
+              order._isVendorNotified = true;
+              console.log(`✅ Order ${order.order_number || order.id} - vendor ${userIdNum} is in notified_vendor_ids - WILL SHOW regardless of location/radius`);
             } catch (parseErr) {
               console.warn(`⚠️  Could not parse notified_vendor_ids for order ${order.order_number || order.id}:`, parseErr.message);
               // If we can't parse notified_vendor_ids, filter out the order for safety
@@ -760,6 +1062,8 @@ class V2OrderController {
           }
         } else {
           // Order is assigned to this vendor's shop - they can see it (auto-assigned)
+          isVendorNotified = true; // Mark as notified so location filter doesn't apply
+          order._isVendorNotified = true; // Mark order so location filter knows to skip distance check
           console.log(`✅ Order ${order.order_number || order.id} - assigned to vendor's shop (shop_id: ${orderShopId}), showing regardless of notified_vendor_ids`);
         }
 
@@ -792,12 +1096,29 @@ class V2OrderController {
       });
 
       // If location provided, filter by distance
+      // IMPORTANT: If vendor is in notified_vendor_ids, they should see the order regardless of distance
       if (latitude && longitude) {
         const userLat = parseFloat(latitude);
         const userLng = parseFloat(longitude);
         const radiusKm = parseFloat(radius);
 
         orders = orders.filter(order => {
+          // If vendor is in notified_vendor_ids (marked in previous filter), always show the order (skip distance check)
+          if (order._isVendorNotified) {
+            console.log(`✅ Order ${order.order_number || order.id} - vendor ${userIdNum} is notified, showing regardless of distance`);
+            // Still calculate distance for display purposes
+            if (order.lat_log) {
+              const [orderLat, orderLng] = order.lat_log.split(',').map(Number);
+              if (!isNaN(orderLat) && !isNaN(orderLng)) {
+                const distance = calculateDistance(userLat, userLng, orderLat, orderLng);
+                order.distance_km = distance;
+              }
+            }
+            return true;
+          }
+
+          // For orders where vendor is NOT in notified_vendor_ids, apply distance filter
+          // (This shouldn't happen since we already filtered by notified_vendor_ids above, but safety check)
           if (!order.lat_log) return false;
           const [orderLat, orderLng] = order.lat_log.split(',').map(Number);
           if (isNaN(orderLat) || isNaN(orderLng)) return false;
@@ -808,7 +1129,7 @@ class V2OrderController {
           return distance <= radiusKm;
         });
 
-        // Sort by distance
+        // Sort by distance (notified orders will have their distance calculated, others filtered by radius)
         orders.sort((a, b) => (a.distance_km || Infinity) - (b.distance_km || Infinity));
       }
 
@@ -3422,6 +3743,36 @@ class V2OrderController {
           }
         }
 
+        // Parse latitude and longitude - match getActivePickup logic
+        // Priority: 1) lat_log (most reliable), 2) latitude/longitude fields, 3) null
+        let latitude = null;
+        let longitude = null;
+        
+        // First, try to parse from lat_log (same as getActivePickup)
+        if (order.lat_log) {
+          try {
+            const [lat, lng] = order.lat_log.split(',').map(Number);
+            if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+              latitude = lat;
+              longitude = lng;
+              console.log(`✅ [getCompletedPickups] Parsed coordinates from lat_log for order ${order.id}: ${latitude}, ${longitude}`);
+            }
+          } catch (parseError) {
+            console.warn(`⚠️  [getCompletedPickups] Error parsing lat_log for order ${order.id}:`, parseError.message);
+          }
+        }
+        
+        // If lat_log parsing failed or lat_log is empty, try latitude/longitude fields
+        if ((!latitude || !longitude) && (order.latitude || order.longitude)) {
+          const lat = order.latitude ? parseFloat(order.latitude) : null;
+          const lng = order.longitude ? parseFloat(order.longitude) : null;
+          if (lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+            latitude = lat;
+            longitude = lng;
+            console.log(`✅ [getCompletedPickups] Using latitude/longitude fields for order ${order.id}: ${latitude}, ${longitude}`);
+          }
+        }
+
         return {
           order_id: order.id,
           order_number: order.order_number || order.order_no,
@@ -3429,8 +3780,8 @@ class V2OrderController {
           customer_name: customer?.name || null,
           customer_phone: customer?.contact || customer?.mob_num || null,
           address: order.customerdetails || order.address || null,
-          latitude: order.latitude || null,
-          longitude: order.longitude || null,
+          latitude: latitude,
+          longitude: longitude,
           scrap_description: order.scrap_description || null,
           estimated_weight_kg: order.estim_weight || order.estimated_weight_kg || null,
           estimated_price: order.estim_price || order.estimated_price || null,
@@ -3653,18 +4004,59 @@ V2OrderController.startPickup = async (req, res) => {
     let vendorShopId = null;
     if (user_type === 'R' || user_type === 'S' || user_type === 'SR') {
       const Shop = require('../models/Shop');
-      const shop = await Shop.findByUserId(parseInt(user_id));
-      if (shop && shop.id) {
-        vendorShopId = parseInt(shop.id);
-        console.log(`🏪 [startPickup] Vendor shop ID: ${vendorShopId}, Order shop ID: ${order.shop_id}`);
+      
+      // For SR users, check all shops to find the one that matches the order's shop_id
+      // For R users, find B2C shop (shop_type = 3) to ensure consistency
+      // For S users, use findByUserId
+      if (user_type === 'SR') {
+        // SR users can have multiple shops - check if order's shop_id belongs to any of their shops
+        const allShops = await Shop.findAllByUserId(parseInt(user_id));
+        const orderShopId = order.shop_id ? parseInt(order.shop_id) : null;
+        
+        if (orderShopId) {
+          const matchingShop = allShops.find(s => parseInt(s.id) === orderShopId);
+          if (matchingShop) {
+            vendorShopId = parseInt(matchingShop.id);
+            console.log(`✅ [startPickup] SR user: Found matching shop ${vendorShopId} (shop_type: ${matchingShop.shop_type}) for order shop_id ${orderShopId}`);
+          } else {
+            console.error(`❌ [startPickup] SR user: Order shop_id ${orderShopId} does not match any of user's shops:`, allShops.map(s => ({ id: s.id, shop_type: s.shop_type })));
+          }
+        } else {
+          console.error(`❌ [startPickup] SR user: Order has no shop_id`);
+        }
+      } else if (user_type === 'R') {
+        // For R users (B2C), find B2C shop (shop_type = 3) to ensure consistency
+        const allShops = await Shop.findAllByUserId(parseInt(user_id));
+        const b2cShop = allShops.find(s => parseInt(s.shop_type) === 3);
+        if (b2cShop && b2cShop.id) {
+          vendorShopId = parseInt(b2cShop.id);
+          console.log(`✅ [startPickup] R user: Found B2C shop ${vendorShopId} (shop_type=3) for user ${user_id}`);
+        }
       } else {
-        console.error(`❌ [startPickup] No shop found for user ${user_id}`);
+        // For S users, use findByUserId
+        const shop = await Shop.findByUserId(parseInt(user_id));
+        if (shop && shop.id) {
+          vendorShopId = parseInt(shop.id);
+          console.log(`✅ [startPickup] S user: Found shop ${vendorShopId} for user ${user_id}`);
+        }
       }
-      if (!vendorShopId || parseInt(order.shop_id) !== vendorShopId) {
+      
+      if (!vendorShopId) {
+        console.error(`❌ [startPickup] No shop found for user ${user_id} (user_type: ${user_type})`);
+        return res.status(403).json({
+          status: 'error',
+          msg: `No shop found for your account. Please contact support.`,
+          data: null
+        });
+      }
+      
+      console.log(`🏪 [startPickup] Vendor shop ID: ${vendorShopId}, Order shop ID: ${order.shop_id}`);
+      
+      if (parseInt(order.shop_id) !== vendorShopId) {
         console.error(`❌ [startPickup] Order shop_id (${order.shop_id}) does not match vendor shop_id (${vendorShopId})`);
         return res.status(403).json({
           status: 'error',
-          msg: `Order is not assigned to you. Order shop_id: ${order.shop_id}, Your shop_id: ${vendorShopId || 'not found'}`,
+          msg: `Order is not assigned to you. Order shop_id: ${order.shop_id}, Your shop_id: ${vendorShopId}`,
           data: null
         });
       }
@@ -4080,18 +4472,33 @@ V2OrderController.arrivedLocation = async (req, res) => {
     console.log(`   Is bulk request order: ${isBulkRequestOrder}`);
     
     // Allow status 2 (Accepted) or 3 (Pickup Initiated) to directly transition to 4 (Arrived Location)
+    // Also allow status 4 (Arrived Location) to be marked again (idempotent) - useful if user clicks button multiple times
     // This allows orders to skip status 3 if needed and go directly from 2 to 4
     // For bulk request orders, status 2 is common when buyer starts pickup
-    const isValidStatus = order.status === 2 || order.status === 3;
+    const isValidStatus = order.status === 2 || order.status === 3 || order.status === 4;
     
     console.log(`   Is valid status: ${isValidStatus} (order.status=${order.status}, isBulkRequestOrder=${isBulkRequestOrder})`);
     
     if (!isValidStatus) {
-      console.error(`❌ [arrivedLocation] Order status is ${order.status}, expected 2 (Accepted) or 3 (Pickup Initiated)`);
+      console.error(`❌ [arrivedLocation] Order status is ${order.status}, expected 2 (Accepted), 3 (Pickup Initiated), or 4 (Arrived Location)`);
       return res.status(400).json({
         status: 'error',
-        msg: `Order must be in accepted (2) or pickup initiated (3) state before marking as arrived. Current status: ${order.status}`,
+        msg: `Order must be in accepted (2), pickup initiated (3), or arrived location (4) state. Current status: ${order.status}`,
         data: null
+      });
+    }
+    
+    // If order is already at status 4, just return success (idempotent operation)
+    if (order.status === 4) {
+      console.log(`ℹ️  [arrivedLocation] Order is already at status 4 (Arrived Location) - returning success (idempotent)`);
+      return res.json({
+        status: 'success',
+        msg: 'Order is already marked as arrived',
+        data: {
+          order_id: order.id,
+          order_number: order.order_number,
+          status: 4 // Already at Arrived Location
+        }
       });
     }
 
@@ -4109,10 +4516,41 @@ V2OrderController.arrivedLocation = async (req, res) => {
         // Also allow vendor to mark arrived for their own bulk request order
         if (user_type === 'R' || user_type === 'S' || user_type === 'SR') {
           const Shop = require('../models/Shop');
-          const shop = await Shop.findByUserId(parseInt(user_id));
-          if (shop && shop.id && parseInt(order.shop_id) === parseInt(shop.id)) {
+          let vendorShopId = null;
+          
+          // For SR users, check all shops to find the one that matches the order's shop_id
+          // For R users, find B2C shop (shop_type = 3) to ensure consistency
+          // For S users, use findByUserId
+          if (user_type === 'SR') {
+            // SR users can have multiple shops - check if order's shop_id belongs to any of their shops
+            const allShops = await Shop.findAllByUserId(parseInt(user_id));
+            const orderShopId = order.shop_id ? parseInt(order.shop_id) : null;
+            
+            if (orderShopId) {
+              const matchingShop = allShops.find(s => parseInt(s.id) === orderShopId);
+              if (matchingShop) {
+                vendorShopId = parseInt(matchingShop.id);
+                console.log(`✅ [arrivedLocation] SR user (bulk): Found matching shop ${vendorShopId} (shop_type: ${matchingShop.shop_type}) for order shop_id ${orderShopId}`);
+              }
+            }
+          } else if (user_type === 'R') {
+            // For R users (B2C), find B2C shop (shop_type = 3) to ensure consistency
+            const allShops = await Shop.findAllByUserId(parseInt(user_id));
+            const b2cShop = allShops.find(s => parseInt(s.shop_type) === 3);
+            if (b2cShop && b2cShop.id) {
+              vendorShopId = parseInt(b2cShop.id);
+            }
+          } else {
+            // For S users, use findByUserId
+            const shop = await Shop.findByUserId(parseInt(user_id));
+            if (shop && shop.id) {
+              vendorShopId = parseInt(shop.id);
+            }
+          }
+          
+          if (vendorShopId && parseInt(order.shop_id) === vendorShopId) {
             isAuthorized = true;
-            console.log(`✅ [arrivedLocation] Authorized: User ${user_id} is the vendor (shop) for bulk request order`);
+            console.log(`✅ [arrivedLocation] Authorized: User ${user_id} is the vendor (shop ${vendorShopId}) for bulk request order`);
           }
         }
       }
@@ -4120,16 +4558,54 @@ V2OrderController.arrivedLocation = async (req, res) => {
       // For regular orders, check vendor or delivery person assignment
       if (user_type === 'R' || user_type === 'S' || user_type === 'SR') {
         const Shop = require('../models/Shop');
-        const shop = await Shop.findByUserId(parseInt(user_id));
-        if (shop && shop.id) {
-          const vendorShopId = parseInt(shop.id);
-          if (parseInt(order.shop_id) === vendorShopId) {
-            isAuthorized = true;
+        let vendorShopId = null;
+        
+        // For SR users, check all shops to find the one that matches the order's shop_id
+        // For R users, find B2C shop (shop_type = 3) to ensure consistency
+        // For S users, use findByUserId
+        if (user_type === 'SR') {
+          // SR users can have multiple shops - check if order's shop_id belongs to any of their shops
+          const allShops = await Shop.findAllByUserId(parseInt(user_id));
+          const orderShopId = order.shop_id ? parseInt(order.shop_id) : null;
+          
+          if (orderShopId) {
+            const matchingShop = allShops.find(s => parseInt(s.id) === orderShopId);
+            if (matchingShop) {
+              vendorShopId = parseInt(matchingShop.id);
+              console.log(`✅ [arrivedLocation] SR user: Found matching shop ${vendorShopId} (shop_type: ${matchingShop.shop_type}) for order shop_id ${orderShopId}`);
+            } else {
+              console.error(`❌ [arrivedLocation] SR user: Order shop_id ${orderShopId} does not match any of user's shops:`, allShops.map(s => ({ id: s.id, shop_type: s.shop_type })));
+            }
+          } else {
+            console.error(`❌ [arrivedLocation] SR user: Order has no shop_id`);
           }
+        } else if (user_type === 'R') {
+          // For R users (B2C), find B2C shop (shop_type = 3) to ensure consistency
+          const allShops = await Shop.findAllByUserId(parseInt(user_id));
+          const b2cShop = allShops.find(s => parseInt(s.shop_type) === 3);
+          if (b2cShop && b2cShop.id) {
+            vendorShopId = parseInt(b2cShop.id);
+            console.log(`✅ [arrivedLocation] R user: Found B2C shop ${vendorShopId} (shop_type=3) for user ${user_id}`);
+          }
+        } else {
+          // For S users, use findByUserId
+          const shop = await Shop.findByUserId(parseInt(user_id));
+          if (shop && shop.id) {
+            vendorShopId = parseInt(shop.id);
+            console.log(`✅ [arrivedLocation] S user: Found shop ${vendorShopId} for user ${user_id}`);
+          }
+        }
+        
+        if (vendorShopId && parseInt(order.shop_id) === vendorShopId) {
+          isAuthorized = true;
+          console.log(`✅ [arrivedLocation] Authorized: Vendor shop_id ${vendorShopId} matches order shop_id ${order.shop_id}`);
+        } else {
+          console.error(`❌ [arrivedLocation] Not authorized: Vendor shop_id ${vendorShopId || 'not found'} does not match order shop_id ${order.shop_id}`);
         }
       } else if (user_type === 'D') {
         if (parseInt(order.delv_id) === parseInt(user_id) || parseInt(order.delv_boy_id) === parseInt(user_id)) {
           isAuthorized = true;
+          console.log(`✅ [arrivedLocation] Authorized: Delivery user ${user_id} matches order delv_id/delv_boy_id`);
         }
       }
     }
@@ -4400,14 +4876,59 @@ V2OrderController.completePickup = async (req, res) => {
     let vendorShopId = null;
     if (user_type === 'R' || user_type === 'S' || user_type === 'SR') {
       const Shop = require('../models/Shop');
-      const shop = await Shop.findByUserId(parseInt(user_id));
-      if (shop && shop.id) {
-        vendorShopId = parseInt(shop.id);
+      
+      // For SR users, check all shops to find the one that matches the order's shop_id
+      // For R users, find B2C shop (shop_type = 3) to ensure consistency
+      // For S users, use findByUserId
+      if (user_type === 'SR') {
+        // SR users can have multiple shops - check if order's shop_id belongs to any of their shops
+        const allShops = await Shop.findAllByUserId(parseInt(user_id));
+        const orderShopId = order.shop_id ? parseInt(order.shop_id) : null;
+        
+        if (orderShopId) {
+          const matchingShop = allShops.find(s => parseInt(s.id) === orderShopId);
+          if (matchingShop) {
+            vendorShopId = parseInt(matchingShop.id);
+            console.log(`✅ [completePickup] SR user: Found matching shop ${vendorShopId} (shop_type: ${matchingShop.shop_type}) for order shop_id ${orderShopId}`);
+          } else {
+            console.error(`❌ [completePickup] SR user: Order shop_id ${orderShopId} does not match any of user's shops:`, allShops.map(s => ({ id: s.id, shop_type: s.shop_type })));
+          }
+        } else {
+          console.error(`❌ [completePickup] SR user: Order has no shop_id`);
+        }
+      } else if (user_type === 'R') {
+        // For R users (B2C), find B2C shop (shop_type = 3) to ensure consistency
+        const allShops = await Shop.findAllByUserId(parseInt(user_id));
+        const b2cShop = allShops.find(s => parseInt(s.shop_type) === 3);
+        if (b2cShop && b2cShop.id) {
+          vendorShopId = parseInt(b2cShop.id);
+          console.log(`✅ [completePickup] R user: Found B2C shop ${vendorShopId} (shop_type=3) for user ${user_id}`);
+        }
+      } else {
+        // For S users, use findByUserId
+        const shop = await Shop.findByUserId(parseInt(user_id));
+        if (shop && shop.id) {
+          vendorShopId = parseInt(shop.id);
+          console.log(`✅ [completePickup] S user: Found shop ${vendorShopId} for user ${user_id}`);
+        }
       }
-      if (!vendorShopId || parseInt(order.shop_id) !== vendorShopId) {
+      
+      if (!vendorShopId) {
+        console.error(`❌ [completePickup] No shop found for user ${user_id} (user_type: ${user_type})`);
         return res.status(403).json({
           status: 'error',
-          msg: 'Order is not assigned to you',
+          msg: `No shop found for your account. Please contact support.`,
+          data: null
+        });
+      }
+      
+      console.log(`🏪 [completePickup] Vendor shop ID: ${vendorShopId}, Order shop ID: ${order.shop_id}`);
+      
+      if (parseInt(order.shop_id) !== vendorShopId) {
+        console.error(`❌ [completePickup] Order shop_id (${order.shop_id}) does not match vendor shop_id (${vendorShopId})`);
+        return res.status(403).json({
+          status: 'error',
+          msg: `Order is not assigned to you. Order shop_id: ${order.shop_id}, Your shop_id: ${vendorShopId}`,
           data: null
         });
       }
@@ -4643,6 +5164,16 @@ V2OrderController.completePickup = async (req, res) => {
         await RedisCache.invalidateV2ApiCache('active_pickup', order.customer_id, {
           user_type: 'U'
         });
+        
+        // Invalidate recycling stats cache for customer (used by dashboard stats)
+        const recyclingStatsCacheKey = RedisCache.userKey(order.customer_id, 'recycling_stats_customer');
+        await RedisCache.delete(recyclingStatsCacheKey);
+        console.log(`🗑️  Invalidated recycling stats cache for customer_id: ${order.customer_id}`);
+        
+        // Invalidate earnings cache for customer (used by dashboard stats)
+        const earningsCacheKey = RedisCache.userKey(order.customer_id, 'earnings_monthly_customer_6');
+        await RedisCache.delete(earningsCacheKey);
+        console.log(`🗑️  Invalidated earnings cache for customer_id: ${order.customer_id}`);
       }
       await RedisCache.invalidateV2ApiCache('order', null, {
         order_id: order.id,

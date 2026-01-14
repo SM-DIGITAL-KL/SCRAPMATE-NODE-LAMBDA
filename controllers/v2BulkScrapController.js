@@ -2503,6 +2503,12 @@ class V2BulkScrapController {
 
       const orders = await PendingBulkBuyOrder.findByUserId(user_id);
 
+      // Log orders with their statuses for debugging
+      console.log(`📋 Found ${orders.length} pending bulk buy orders for user ${user_id}`);
+      orders.forEach(order => {
+        console.log(`   Order ${order.id}: status = "${order.status}"`);
+      });
+
       // Parse JSON strings back to objects for response
       let parsedOrders = orders.map(order => {
         const parsed = { ...order };

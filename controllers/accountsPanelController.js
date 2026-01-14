@@ -974,9 +974,15 @@ class AccountsPanelController {
    */
   static async updatePendingBulkBuyOrderApproval(req, res) {
     try {
+      console.log('🟢 AccountsPanelController.updatePendingBulkBuyOrderApproval called');
+      console.log('   Request body:', JSON.stringify(req.body, null, 2));
+      console.log('   Request params:', JSON.stringify(req.params, null, 2));
+      console.log('   Request query:', JSON.stringify(req.query, null, 2));
+      
       const { order_id, action, notes } = req.body;
       
       if (!order_id || !action) {
+        console.error('❌ Missing required parameters:', { order_id, action });
         return res.status(400).json({
           status: 'error',
           msg: 'order_id and action are required',
@@ -985,6 +991,7 @@ class AccountsPanelController {
       }
       
       if (!['approve', 'reject'].includes(action)) {
+        console.error('❌ Invalid action:', action);
         return res.status(400).json({
           status: 'error',
           msg: 'action must be "approve" or "reject"',
@@ -992,7 +999,7 @@ class AccountsPanelController {
         });
       }
       
-      console.log('🟢 AccountsPanelController.updatePendingBulkBuyOrderApproval called', {
+      console.log('🟢 Processing approval request:', {
         order_id,
         action,
         notes: notes || '(no notes provided)'
@@ -1002,8 +1009,10 @@ class AccountsPanelController {
       const Invoice = require('../models/Invoice');
       
       // Get the pending order
+      console.log('🔍 Fetching pending order:', order_id);
       const order = await PendingBulkBuyOrder.findById(order_id);
       if (!order) {
+        console.error('❌ Pending bulk buy order not found:', order_id);
         return res.status(404).json({
           status: 'error',
           msg: 'Pending bulk buy order not found',
@@ -1011,8 +1020,16 @@ class AccountsPanelController {
         });
       }
       
+      console.log('📋 Found order:', {
+        id: order.id,
+        current_status: order.status,
+        transaction_id: order.transaction_id,
+        user_id: order.user_id
+      });
+      
       // Update the invoice approval status if transaction_id exists
       if (order.transaction_id) {
+        console.log('🔍 Looking for invoice with transaction_id:', order.transaction_id);
         // Find invoice by transaction ID
         const invoices = await Invoice.findByTransactionIds([order.transaction_id]);
         const invoice = invoices.length > 0 ? invoices[0] : null;
@@ -1024,18 +1041,36 @@ class AccountsPanelController {
             approved_at: new Date().toISOString()
           };
           
+          console.log('📝 Updating invoice:', invoice.id, 'with data:', updateData);
           await Invoice.update(invoice.id, updateData);
-          console.log('✅ Invoice updated:', invoice.id, updateData.approval_status);
+          console.log('✅ Invoice updated successfully:', invoice.id, updateData.approval_status);
         } else {
           console.warn('⚠️ Invoice not found for transaction_id:', order.transaction_id);
         }
+      } else {
+        console.log('ℹ️ No transaction_id found in order, skipping invoice update');
       }
       
       // Update pending order status
       const newStatus = action === 'approve' ? 'payment_approved' : 'pending_payment';
-      await PendingBulkBuyOrder.updateStatus(order_id, newStatus);
+      console.log('📝 Updating order status from', order.status, 'to', newStatus);
       
-      console.log('✅ Pending bulk buy order updated:', order_id, newStatus);
+      const updatedOrder = await PendingBulkBuyOrder.updateStatus(order_id, newStatus);
+      
+      console.log('✅ Pending bulk buy order updated successfully:', {
+        order_id,
+        old_status: order.status,
+        new_status: updatedOrder?.status || newStatus,
+        updated_at: updatedOrder?.updated_at
+      });
+      
+      // Verify the update by fetching the order again
+      const verifyOrder = await PendingBulkBuyOrder.findById(order_id);
+      console.log('🔍 Verification - Order status after update:', {
+        order_id,
+        status: verifyOrder?.status,
+        updated_at: verifyOrder?.updated_at
+      });
       
       // Note: We no longer automatically create bulk purchase requests when approving payment
       // The admin only approves the payment status. The user will need to manually create 
@@ -1049,16 +1084,19 @@ class AccountsPanelController {
         msg: `Order ${action === 'approve' ? 'approved' : 'rejected'} successfully`,
         data: {
           order_id,
-          status: newStatus,
-          action
+          status: verifyOrder?.status || newStatus,
+          action,
+          verified: true
         }
       });
     } catch (error) {
       console.error('❌ updatePendingBulkBuyOrderApproval error:', error);
+      console.error('   Error name:', error.name);
+      console.error('   Error message:', error.message);
       console.error('   Error stack:', error.stack);
       res.status(500).json({
         status: 'error',
-        msg: 'Error updating pending bulk buy order approval',
+        msg: 'Error updating pending bulk buy order approval: ' + (error.message || 'Unknown error'),
         data: null
       });
     }

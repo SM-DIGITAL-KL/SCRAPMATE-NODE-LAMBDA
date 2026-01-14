@@ -42,10 +42,37 @@ class V2B2BSignupService {
         throw new Error('USER_NOT_FOUND');
       }
 
+      // Allow deleted users (del_status = 2) to re-register as any type
+      // Deleted users should be treated as new users and can register as S, R, D, or SR
+      const isDeletedUser = user.del_status === 2;
+      if (isDeletedUser) {
+        console.log(`🔄 Deleted user (del_status=2) re-registering - allowing B2B signup for user ${userId}`);
+        // Reset user_type to 'N' to allow fresh registration
+        // The user_type will be updated to 'S' after successful signup
+        if (user.user_type !== 'N') {
+          console.log(`🔄 Resetting user_type from '${user.user_type}' to 'N' for deleted user re-registration`);
+          try {
+            const resetResult = await User.updateProfile(userId, { user_type: 'N' });
+            console.log(`✅ User type reset to 'N' completed:`, resetResult);
+            user.user_type = 'N';
+          } catch (resetError) {
+            console.error(`❌ ERROR resetting user_type to 'N' for deleted user:`, {
+              error: resetError,
+              errorMessage: resetError?.message,
+              errorStack: resetError?.stack,
+              errorName: resetError?.name,
+              errorCode: resetError?.code,
+              userId: userId
+            });
+            throw resetError;
+          }
+        }
+      }
+
       // Allow B2C users (R) to convert to B2B+B2C (SR)
       // Also allow existing B2B (S) and B2B+B2C (SR) users
-      // Block Delivery (D) and Customer app (C) users from B2B signup
-      if (user.user_type === 'D') {
+      // Block Delivery (D) and Customer app (C) users from B2B signup (unless deleted)
+      if (user.user_type === 'D' && !isDeletedUser) {
         throw new Error('INVALID_USER_TYPE');
       }
 
@@ -54,11 +81,22 @@ class V2B2BSignupService {
       let updatedUserType = user.user_type;
 
       // Find or create shop
+      // For deleted users, treat as new registration - can create new shop or update existing
       // For R users, check ALL shops to find B2C shop (shop_type = 3) for R->SR conversion detection
       let shop = null;
       let allShops = [];
       
-      if (user.user_type === 'R' || user.user_type === 'SR') {
+      if (isDeletedUser) {
+        // Deleted users can re-register - find any existing shop (including deleted ones)
+        // They can update existing shop or create new one
+        console.log(`🔍 Deleted user re-registration - checking for existing shops for user ${userId}`);
+        shop = await Shop.findByUserId(userId);
+        if (shop) {
+          console.log(`✅ Found existing shop ${shop.id} for deleted user - will update instead of creating new`);
+        } else {
+          console.log(`ℹ️  No existing shop found for deleted user - will create new shop`);
+        }
+      } else if (user.user_type === 'R' || user.user_type === 'SR') {
         // For R/SR users, check all shops to find B2C and B2B shops
         allShops = await Shop.findAllByUserId(userId);
         console.log(`🔍 All shops lookup for user ${userId}:`, allShops.length > 0 ? `Found ${allShops.length} shops` : 'Not found');
@@ -70,19 +108,22 @@ class V2B2BSignupService {
       }
 
       // Check if all required documents are uploaded
+      // GST certificate is now optional (removed GST validation requirement)
       const hasAllDocuments = !!(
         signupData.businessLicenseUrl &&
-        signupData.gstCertificateUrl &&
         signupData.addressProofUrl &&
         signupData.kycOwnerUrl
+        // gstCertificateUrl is optional - removed from required documents
       );
 
       // Check if all required form fields are filled
+      // Company name is required, GST number is optional (matches frontend validation)
       const hasCompanyName = signupData.companyName && signupData.companyName.trim() !== '';
       const hasGstNumber = signupData.gstNumber && signupData.gstNumber.trim() !== '';
-      const hasCompleteForm = hasCompanyName && hasGstNumber;
+      // Form is complete if company name is provided (GST is optional)
+      const hasCompleteForm = hasCompanyName;
 
-      // User is only considered a B2B user if BOTH form is complete AND all documents are uploaded
+      // User is only considered a B2B user if BOTH form is complete (company name) AND all documents are uploaded
       const isCompleteB2BSignup = hasCompleteForm && hasAllDocuments;
 
       console.log(`📋 B2B signup completeness check:`, {
@@ -94,20 +135,25 @@ class V2B2BSignupService {
       });
 
       // For v1 or new users: Don't save/register if signup is incomplete
+      // Deleted users are treated as new users, so they also need complete signup
       const isV1User = !user.app_version || user.app_version === 'v1' || user.app_version === 'v1.0';
       const isNewUser = !shop || !shop.id;
+      // Deleted users should be treated as new users for signup validation
+      const shouldRequireCompleteSignup = isV1User || isNewUser || isDeletedUser;
 
-      if ((isV1User || isNewUser) && !isCompleteB2BSignup) {
-        console.log(`❌ Incomplete B2B signup for v1/new user - preventing save`);
+      if (shouldRequireCompleteSignup && !isCompleteB2BSignup) {
+        console.log(`❌ Incomplete B2B signup for ${isDeletedUser ? 'deleted' : isV1User ? 'v1' : 'new'} user - preventing save`);
         throw new Error('INCOMPLETE_SIGNUP: Please complete all required fields and upload all documents before submitting.');
       }
 
       // For R users converting to SR, or SR users adding B2B: Check if they already have a B2C shop (shop_type = 3)
       // If so, we'll create a NEW B2B shop instead of updating the existing one
       // Use allShops if available, otherwise check the single shop
+      // Note: Deleted users are treated as 'N' users, so they don't trigger R->SR conversion
       let existingB2CShop = null;
       let existingB2BShop = null;
-      if ((user.user_type === 'R' || user.user_type === 'SR') && allShops.length > 0) {
+      const effectiveUserType = isDeletedUser ? 'N' : user.user_type;
+      if ((effectiveUserType === 'R' || effectiveUserType === 'SR') && allShops.length > 0) {
         existingB2CShop = allShops.find(s => s.shop_type === 3);
         existingB2BShop = allShops.find(s => s.shop_type === 1 || s.shop_type === 4);
         console.log(`🔍 R/SR->SR conversion check - found B2C shop:`, existingB2CShop ? `ID ${existingB2CShop.id}, shop_type ${existingB2CShop.shop_type}` : 'None');
@@ -116,19 +162,24 @@ class V2B2BSignupService {
       const existingShopType = existingB2CShop?.shop_type || shop?.shop_type;
       // For R users: converting to SR (has B2C, creating B2B)
       // For SR users: adding B2B shop (has B2C, creating B2B if B2B doesn't exist)
-      const isRUserConvertingToSR = user.user_type === 'R' && existingShopType === 3;
-      const isSRUserAddingB2B = user.user_type === 'SR' && existingB2CShop && !existingB2BShop;
+      // Deleted users are treated as 'N', so they don't trigger R->SR conversion
+      const isRUserConvertingToSR = effectiveUserType === 'R' && existingShopType === 3 && !isDeletedUser;
+      const isSRUserAddingB2B = effectiveUserType === 'SR' && existingB2CShop && !existingB2BShop && !isDeletedUser;
       const shouldCreateNewB2BShop = isRUserConvertingToSR || isSRUserAddingB2B;
       
       console.log(`🔍 R/SR->SR conversion check:`, {
         user_type: user.user_type,
+        effectiveUserType,
+        isDeletedUser,
+        user_del_status: user.del_status,
         existingShopType,
         isRUserConvertingToSR,
         isSRUserAddingB2B,
         shouldCreateNewB2BShop,
         hasB2CShop: !!existingB2CShop,
         hasB2BShop: !!existingB2BShop,
-        allShopsCount: allShops.length
+        allShopsCount: allShops.length,
+        shop_del_status: shop?.del_status
       });
       
       // Set approval_status to 'pending' only if signup is complete (form + all documents)
@@ -146,12 +197,17 @@ class V2B2BSignupService {
           console.log(`📋 R user converting to SR - setting approval_status to 'pending' for new B2B shop`);
         } else if (shop) {
           approvalStatus = shop.approval_status || null;
-          // If status is 'rejected', change it back to 'pending' when user resubmits
-          if (approvalStatus === 'rejected') {
+          // For deleted shops (del_status = 2), always set to 'pending' when resubmitting
+          // Also handle rejected or null status
+          if (shop.del_status === 2) {
+            approvalStatus = 'pending';
+            shouldSetApplicationSubmitted = true;
+            console.log(`📋 Complete B2B signup (form + documents) - setting approval_status to 'pending' for deleted shop re-registration (user ${userId})`);
+          } else if (approvalStatus === 'rejected') {
             approvalStatus = 'pending';
             shouldSetApplicationSubmitted = true;
             console.log(`📋 Complete B2B signup (form + documents) - changing approval_status from 'rejected' to 'pending' for user ${userId} (resubmission)`);
-          } else if (!approvalStatus || approvalStatus === null) {
+          } else if (!approvalStatus || approvalStatus === null || approvalStatus === undefined) {
             approvalStatus = 'pending';
             shouldSetApplicationSubmitted = true;
             console.log(`📋 Complete B2B signup (form + documents) - setting approval_status to 'pending' for user ${userId}`);
@@ -189,16 +245,29 @@ class V2B2BSignupService {
         contact: signupData.contactNumber || shop?.contact || '',
         address: signupData.businessAddress || shop?.address || '',
         // For R->SR conversion, create new B2B shop with shop_type = 1 or 4
+        // For N->S conversion or deleted user re-registration, update shop_type to 4 (Wholesaler) if it was 3 (Retailer)
         // For other cases, use existing shop_type or default to 1
-        shop_type: isRUserConvertingToSR ? (signupData.shopType || 1) : (shop?.shop_type || 1),
+        shop_type: isRUserConvertingToSR 
+          ? (signupData.shopType || 1) 
+          : ((user.user_type === 'N' || isDeletedUser) && shop?.shop_type === 3) 
+            ? 4 // Update from Retailer (3) to Wholesaler (4) for N->S conversion or deleted user re-registration
+            : (shop?.shop_type || 1),
         // Additional B2B fields
         company_name: signupData.companyName || '',
         gst_number: signupData.gstNumber || '',
         pan_number: signupData.panNumber || '',
         contact_person_name: signupData.contactPersonName || '',
         contact_person_email: signupData.contactEmail || '',
-        approval_status: approvalStatus,
+        approval_status: approvalStatus, // Will be 'pending' if signup is complete, null otherwise
       };
+      
+      // Ensure approval_status is set for complete signups (safety check)
+      if (isCompleteB2BSignup && !approvalStatus) {
+        console.log(`⚠️  WARNING: approvalStatus is null/undefined for complete signup - forcing to 'pending'`);
+        shopData.approval_status = 'pending';
+        approvalStatus = 'pending';
+        shouldSetApplicationSubmitted = true;
+      }
 
       // Add location fields from signup data (only if provided)
       if (latLog) {
@@ -304,11 +373,23 @@ class V2B2BSignupService {
       
       if (shop && !shouldCreateNewB2BShop) {
         // Update existing shop (for S users or SR users who already have B2B shop)
+        // For N->S conversion or deleted user re-registration, also update shop_type from 3 (Retailer) to 4 (Wholesaler)
+        if ((user.user_type === 'N' || isDeletedUser) && shop.shop_type === 3) {
+          console.log(`🔄 ${isDeletedUser ? 'Deleted user re-registration' : 'N->S conversion'} detected - updating shop_type from 3 (Retailer) to 4 (Wholesaler)`);
+          shopData.shop_type = 4;
+          // Also reactivate shop if it was deleted
+          if (shop.del_status === 2) {
+            shopData.del_status = 1;
+            console.log(`🔄 Reactivating deleted shop ${shop.id}`);
+          }
+        }
+        
         console.log(`📝 Updating existing shop ${shop.id} for user ${userId}`);
         console.log(`📝 Shop data being updated:`, {
           user_id: shopData.user_id,
           company_name: shopData.company_name,
           gst_number: shopData.gst_number,
+          shop_type: shopData.shop_type,
           approval_status: shopData.approval_status,
         });
         
@@ -410,25 +491,34 @@ class V2B2BSignupService {
           kyc_owner_url: shop.kyc_owner_url || 'missing',
         });
 
-        const hasAllB2BDocuments = shop.business_license_url && shop.business_license_url.trim() !== '' &&
-          shop.gst_certificate_url && shop.gst_certificate_url.trim() !== '' &&
-          shop.address_proof_url && shop.address_proof_url.trim() !== '' &&
-          shop.kyc_owner_url && shop.kyc_owner_url.trim() !== '';
-        const hasAllB2BFields = shop.company_name && shop.company_name.trim() !== '' &&
-          shop.gst_number && shop.gst_number.trim() !== '';
-        const isB2BSignupTrulyComplete = hasAllB2BDocuments && hasAllB2BFields;
+        // Check documents - allow for eventual consistency by checking signupData as fallback
+        const hasAllB2BDocuments = (shop.business_license_url && shop.business_license_url.trim() !== '') &&
+          (shop.gst_certificate_url && shop.gst_certificate_url.trim() !== '') &&
+          (shop.address_proof_url && shop.address_proof_url.trim() !== '') &&
+          (shop.kyc_owner_url && shop.kyc_owner_url.trim() !== '');
+        
+        // Fallback: if shop doesn't have documents but signupData does, use signupData
+        const hasAllB2BDocumentsInSignupData = signupData.businessLicenseUrl && signupData.businessLicenseUrl.trim() !== '' &&
+          signupData.gstCertificateUrl && signupData.gstCertificateUrl.trim() !== '' &&
+          signupData.addressProofUrl && signupData.addressProofUrl.trim() !== '' &&
+          signupData.kycOwnerUrl && signupData.kycOwnerUrl.trim() !== '';
+        
+        // Company name is required, GST number is optional (matches frontend validation)
+        const hasAllB2BFields = shop.company_name && shop.company_name.trim() !== '';
+        const isB2BSignupTrulyComplete = (hasAllB2BDocuments || hasAllB2BDocumentsInSignupData) && hasAllB2BFields;
 
         if (!isB2BSignupTrulyComplete) {
           console.log(`❌ B2B signup verification failed - not all documents/fields saved correctly`);
           console.log(`   Shop ID: ${shop.id}`);
-          console.log(`   Documents check: ${hasAllB2BDocuments}`);
+          console.log(`   Documents check (shop): ${hasAllB2BDocuments}`);
+          console.log(`   Documents check (signupData): ${hasAllB2BDocumentsInSignupData}`);
           console.log(`     business_license_url: ${shop.business_license_url ? '✅' : '❌'} (${shop.business_license_url || 'missing'})`);
           console.log(`     gst_certificate_url: ${shop.gst_certificate_url ? '✅' : '❌'} (${shop.gst_certificate_url || 'missing'})`);
           console.log(`     address_proof_url: ${shop.address_proof_url ? '✅' : '❌'} (${shop.address_proof_url || 'missing'})`);
           console.log(`     kyc_owner_url: ${shop.kyc_owner_url ? '✅' : '❌'} (${shop.kyc_owner_url || 'missing'})`);
           console.log(`   Fields check: ${hasAllB2BFields}`);
           console.log(`     company_name: ${shop.company_name ? '✅' : '❌'} (${shop.company_name || 'missing'})`);
-          console.log(`     gst_number: ${shop.gst_number ? '✅' : '❌'} (${shop.gst_number || 'missing'})`);
+          console.log(`     gst_number: ${shop.gst_number ? '✅' : '⚠️ (optional)'} (${shop.gst_number || 'not provided'})`);
           console.log(`   Full shop object keys:`, Object.keys(shop));
           console.log(`   Full shop object:`, JSON.stringify(shop, null, 2));
           throw new Error('INCOMPLETE_SIGNUP: Signup data was not saved correctly. Please try again.');
@@ -503,8 +593,23 @@ class V2B2BSignupService {
               updateData.app_version = 'v2';
               console.log(`📱 Upgrading V1 user to V2 after B2B signup completion`);
             }
-            await User.updateProfile(userId, updateData);
-            console.log(`✅ User type updated from R to SR for user ${userId}`);
+            try {
+              console.log(`🔄 Attempting to update user_type to 'SR' for user ${userId} with data:`, JSON.stringify(updateData));
+              const updateResult = await User.updateProfile(userId, updateData);
+              console.log(`✅ User.updateProfile call completed for user ${userId}:`, updateResult);
+              console.log(`✅ User type updated from R to SR for user ${userId}`);
+            } catch (updateError) {
+              console.error(`❌ ERROR in User.updateProfile (R->SR) for user ${userId}:`, {
+                error: updateError,
+                errorMessage: updateError?.message,
+                errorStack: updateError?.stack,
+                errorName: updateError?.name,
+                errorCode: updateError?.code,
+                updateData: updateData,
+                userId: userId
+              });
+              throw updateError;
+            }
             
             // Verify user details are preserved (only user_type should change)
             const updatedUser = await User.findById(userId);
@@ -578,20 +683,171 @@ class V2B2BSignupService {
               updateData.app_version = 'v2';
               console.log(`📱 Upgrading V1 user to V2 after B2B signup completion`);
             }
-            await User.updateProfile(userId, updateData);
-            console.log(`✅ User type updated from R to S for user ${userId} (no B2C shop found)`);
+            try {
+              console.log(`🔄 Attempting to update user_type to 'S' (R->S) for user ${userId} with data:`, JSON.stringify(updateData));
+              const updateResult = await User.updateProfile(userId, updateData);
+              console.log(`✅ User.updateProfile call completed for user ${userId}:`, updateResult);
+              console.log(`✅ User type updated from R to S for user ${userId} (no B2C shop found)`);
+            } catch (updateError) {
+              console.error(`❌ ERROR in User.updateProfile (R->S) for user ${userId}:`, {
+                error: updateError,
+                errorMessage: updateError?.message,
+                errorStack: updateError?.stack,
+                errorName: updateError?.name,
+                errorCode: updateError?.code,
+                updateData: updateData,
+                userId: userId
+              });
+              throw updateError;
+            }
           }
-        } else if (user.user_type === 'N') {
-          // New user (N) completing B2B signup - set to B2B (S)
-          console.log(`🔄 B2B signup complete - updating new user (N) to S (B2B) for user ${userId}`);
+        } else if (user.user_type === 'N' || isDeletedUser) {
+          // New user (N) or deleted user completing B2B signup - set to B2B (S)
+          // Deleted users are treated as new users and can register as any type
+          if (isDeletedUser) {
+            console.log(`🔄 B2B signup complete - updating deleted user to S (B2B) for user ${userId}`);
+          } else {
+            console.log(`🔄 B2B signup complete - updating new user (N) to S (B2B) for user ${userId}`);
+          }
           updatedUserType = 'S';
           const updateData = { user_type: 'S' };
+          // Reset del_status to 1 (active) for deleted users re-registering
+          if (isDeletedUser) {
+            updateData.del_status = 1;
+            console.log(`🔄 Resetting del_status to 1 (active) for re-registered user ${userId}`);
+          }
           if (isV1User) {
             updateData.app_version = 'v2';
             console.log(`📱 Upgrading V1 user to V2 after B2B signup completion`);
           }
-          await User.updateProfile(userId, updateData);
-          console.log(`✅ User type updated from N to S for user ${userId}`);
+          
+          // Attempt user_type update with detailed error logging
+          try {
+            console.log(`🔄 Attempting to update user_type to 'S' for user ${userId} with data:`, JSON.stringify(updateData));
+            const updateResult = await User.updateProfile(userId, updateData);
+            console.log(`✅ User.updateProfile call completed for user ${userId}:`, updateResult);
+          } catch (updateError) {
+            console.error(`❌ ERROR in User.updateProfile for user ${userId}:`, {
+              error: updateError,
+              errorMessage: updateError?.message,
+              errorStack: updateError?.stack,
+              errorName: updateError?.name,
+              errorCode: updateError?.code,
+              updateData: updateData,
+              userId: userId,
+              userIdType: typeof userId
+            });
+            // Re-throw to be caught by outer error handler
+            throw updateError;
+          }
+          
+          // Update shop_type to 4 (Wholesaler) if it was 3 (Retailer)
+          if (shop && shop.shop_type === 3) {
+            console.log(`🔄 Updating shop_type from 3 (Retailer) to 4 (Wholesaler) for B2B signup`);
+            await Shop.update(shop.id, { shop_type: 4, del_status: 1 }); // Also reactivate shop if deleted
+            // Re-fetch shop to get updated shop_type
+            shop = await Shop.findById(shop.id);
+            console.log(`✅ Shop shop_type updated to 4 (Wholesaler) for shop ${shop.id}`);
+          }
+          
+          // Verify user_type was actually updated (with retry and delay for eventual consistency)
+          let updatedUser = null;
+          let retryCount = 0;
+          const maxRetries = 3;
+          
+          try {
+            updatedUser = await User.findById(userId);
+            console.log(`🔍 Initial user fetch after update:`, {
+              userId: userId,
+              userFound: !!updatedUser,
+              user_type: updatedUser?.user_type,
+              del_status: updatedUser?.del_status,
+              app_version: updatedUser?.app_version
+            });
+          } catch (fetchError) {
+            console.error(`❌ ERROR fetching user after update:`, {
+              error: fetchError,
+              errorMessage: fetchError?.message,
+              errorStack: fetchError?.stack,
+              userId: userId
+            });
+            throw new Error(`Failed to fetch user after update: ${fetchError?.message || 'Unknown error'}`);
+          }
+          
+          while (retryCount < maxRetries && (!updatedUser || updatedUser.user_type !== 'S')) {
+            if (retryCount > 0) {
+              console.log(`🔄 Retry ${retryCount}/${maxRetries - 1}: User type update verification failed. Expected 'S', got '${updatedUser?.user_type || 'null'}'. Retrying...`);
+              // Wait a bit for eventual consistency
+              await new Promise(resolve => setTimeout(resolve, 500));
+              
+              try {
+                console.log(`🔄 Retry attempt ${retryCount}: Updating user_type with data:`, JSON.stringify(updateData));
+                const retryUpdateResult = await User.updateProfile(userId, updateData);
+                console.log(`✅ Retry update call completed:`, retryUpdateResult);
+              } catch (retryError) {
+                console.error(`❌ ERROR in retry User.updateProfile (attempt ${retryCount}):`, {
+                  error: retryError,
+                  errorMessage: retryError?.message,
+                  errorStack: retryError?.stack,
+                  errorName: retryError?.name,
+                  errorCode: retryError?.code,
+                  updateData: updateData,
+                  userId: userId
+                });
+                // Continue to next retry instead of throwing immediately
+              }
+            }
+            
+            try {
+              updatedUser = await User.findById(userId);
+              console.log(`🔍 User fetch after retry ${retryCount}:`, {
+                userId: userId,
+                userFound: !!updatedUser,
+                user_type: updatedUser?.user_type,
+                del_status: updatedUser?.del_status
+              });
+            } catch (fetchError) {
+              console.error(`❌ ERROR fetching user after retry ${retryCount}:`, {
+                error: fetchError,
+                errorMessage: fetchError?.message,
+                userId: userId
+              });
+            }
+            
+            if (updatedUser && updatedUser.user_type === 'S') {
+              console.log(`✅ User type successfully updated from N to S for user ${userId}${retryCount > 0 ? ` (after ${retryCount} retry)` : ''}`);
+              break;
+            }
+            retryCount++;
+          }
+          
+          if (!updatedUser || updatedUser.user_type !== 'S') {
+            // Fetch one more time to get the latest state
+            try {
+              const finalUser = await User.findById(userId);
+              console.error(`❌ CRITICAL: User type update failed after ${maxRetries} attempts!`, {
+                expected: 'S',
+                actual: finalUser?.user_type || 'null',
+                userId: userId,
+                finalUserState: {
+                  id: finalUser?.id,
+                  user_type: finalUser?.user_type,
+                  del_status: finalUser?.del_status,
+                  app_version: finalUser?.app_version,
+                  name: finalUser?.name,
+                  email: finalUser?.email
+                },
+                updateDataAttempted: updateData
+              });
+            } catch (finalFetchError) {
+              console.error(`❌ ERROR in final user fetch:`, {
+                error: finalFetchError,
+                errorMessage: finalFetchError?.message,
+                userId: userId
+              });
+            }
+            throw new Error(`Failed to update user_type to 'S' after ${maxRetries} attempts. Current type: '${updatedUser?.user_type || 'null'}'. Check logs above for detailed error information.`);
+          }
         } else if (user.user_type !== 'S' && user.user_type !== 'SR') {
           // Other type - set to B2B (S)
           console.log(`🔄 B2B signup complete - setting user type to S (B2B) for user ${userId}`);
@@ -601,8 +857,94 @@ class V2B2BSignupService {
             updateData.app_version = 'v2';
             console.log(`📱 Upgrading V1 user to V2 after B2B signup completion`);
           }
-          await User.updateProfile(userId, updateData);
-          console.log(`✅ User type updated to S for user ${userId}`);
+          
+          try {
+            console.log(`🔄 Attempting to update user_type to 'S' (other type) for user ${userId} with data:`, JSON.stringify(updateData));
+            const updateResult = await User.updateProfile(userId, updateData);
+            console.log(`✅ User.updateProfile call completed for user ${userId}:`, updateResult);
+            console.log(`✅ User type update call completed for user ${userId}`);
+          } catch (updateError) {
+            console.error(`❌ ERROR in User.updateProfile (other type->S) for user ${userId}:`, {
+              error: updateError,
+              errorMessage: updateError?.message,
+              errorStack: updateError?.stack,
+              errorName: updateError?.name,
+              errorCode: updateError?.code,
+              updateData: updateData,
+              userId: userId
+            });
+            throw updateError;
+          }
+          
+          // Verify user_type was actually updated
+          let updatedUser = null;
+          try {
+            updatedUser = await User.findById(userId);
+            console.log(`🔍 User fetch after update:`, {
+              userId: userId,
+              userFound: !!updatedUser,
+              user_type: updatedUser?.user_type,
+              del_status: updatedUser?.del_status,
+              app_version: updatedUser?.app_version
+            });
+          } catch (fetchError) {
+            console.error(`❌ ERROR fetching user after update:`, {
+              error: fetchError,
+              errorMessage: fetchError?.message,
+              errorStack: fetchError?.stack,
+              userId: userId
+            });
+            throw new Error(`Failed to fetch user after update: ${fetchError?.message || 'Unknown error'}`);
+          }
+          
+          if (updatedUser && updatedUser.user_type === 'S') {
+            console.log(`✅ User type successfully updated to S for user ${userId}`);
+          } else {
+            console.error(`❌ CRITICAL: User type update failed! Expected 'S', got '${updatedUser?.user_type || 'null'}'`);
+            // Retry the update
+            console.log(`🔄 Retrying user_type update for user ${userId}`);
+            try {
+              const retryUpdateResult = await User.updateProfile(userId, updateData);
+              console.log(`✅ Retry update call completed:`, retryUpdateResult);
+            } catch (retryError) {
+              console.error(`❌ ERROR in retry User.updateProfile:`, {
+                error: retryError,
+                errorMessage: retryError?.message,
+                errorStack: retryError?.stack,
+                errorName: retryError?.name,
+                errorCode: retryError?.code,
+                updateData: updateData,
+                userId: userId
+              });
+            }
+            
+            try {
+              const retryUser = await User.findById(userId);
+              if (retryUser && retryUser.user_type === 'S') {
+                console.log(`✅ User type successfully updated on retry for user ${userId}`);
+              } else {
+                console.error(`❌ CRITICAL: User type still not updated after retry!`, {
+                  expected: 'S',
+                  actual: retryUser?.user_type || 'null',
+                  userId: userId,
+                  retryUserState: {
+                    id: retryUser?.id,
+                    user_type: retryUser?.user_type,
+                    del_status: retryUser?.del_status,
+                    app_version: retryUser?.app_version
+                  }
+                });
+                throw new Error(`Failed to update user_type to 'S'. Current type: '${retryUser?.user_type || 'null'}'. Check logs above for detailed error information.`);
+              }
+            } catch (retryFetchError) {
+              console.error(`❌ ERROR fetching user after retry:`, {
+                error: retryFetchError,
+                errorMessage: retryFetchError?.message,
+                userId: userId
+              });
+              throw new Error(`Failed to fetch user after retry: ${retryFetchError?.message || 'Unknown error'}`);
+            }
+          }
         }
 
         // Invalidate profile cache to ensure fresh data is fetched

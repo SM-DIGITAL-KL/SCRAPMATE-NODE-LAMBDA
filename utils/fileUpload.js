@@ -89,24 +89,23 @@ const orderImageUpload = multer({
   fileFilter: fileFilter
 });
 
-// PDF file filter for documents
-const pdfFileFilter = (req, file, cb) => {
-  const allowedTypes = /pdf/;
-  const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = file.mimetype === 'application/pdf';
-  
-  if (mimetype && extname) {
+// Document file filter - allows any file type (images, PDFs, etc.)
+const documentFileFilter = (req, file, cb) => {
+  // If file is not provided or is empty, allow it (optional file upload)
+  if (!file || !file.originalname) {
     return cb(null, true);
-  } else {
-    cb(new Error('Only PDF files are allowed!'));
   }
+  
+  // Allow any file type - images, PDFs, documents, etc.
+  // Only check file size (handled by limits)
+  return cb(null, true);
 };
 
-// Document upload (PDF only) for Aadhar and Driving License
+// Document upload (any file type) for Aadhar and Driving License
 const documentUpload = multer({
   storage: createMemoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit for PDFs
-  fileFilter: pdfFileFilter
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: documentFileFilter
 });
 
 // Helper function to get file size

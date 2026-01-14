@@ -184,6 +184,8 @@ class PendingBulkBuyOrder {
     try {
       const client = getDynamoDBClient();
       
+      console.log(`🔄 Updating pending order ${orderId} status to: ${status}`);
+      
       const command = new UpdateCommand({
         TableName: TABLE_NAME,
         Key: {
@@ -201,9 +203,15 @@ class PendingBulkBuyOrder {
       });
 
       const response = await client.send(command);
-      return response.Attributes;
+      const updatedOrder = response.Attributes;
+      
+      console.log(`✅ Pending order ${orderId} status updated successfully. New status: ${updatedOrder?.status}`);
+      
+      return updatedOrder;
     } catch (error) {
       console.error('❌ Error updating pending order status:', error);
+      console.error('   Order ID:', orderId);
+      console.error('   New Status:', status);
       throw error;
     }
   }

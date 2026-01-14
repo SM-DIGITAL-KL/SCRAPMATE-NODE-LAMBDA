@@ -282,6 +282,12 @@ app.use('/', webRoutes);
 
 // Error handler for API routes
 app.use((err, req, res, next) => {
+  // Check if headers have already been sent
+  if (res.headersSent) {
+    console.error('⚠️ Error after response sent:', err.message);
+    return;
+  }
+  
   return res.status(err.status || 500).json({
     status: 'error',
     msg: err.message || 'Internal server error',

@@ -664,19 +664,13 @@ class V2ProfileController {
       if (!req.file) {
         return res.status(400).json({
           status: 'error',
-          msg: 'PDF file is required',
+          msg: 'File is required',
           data: null,
         });
       }
 
-      // Verify it's a PDF file
-      if (req.file.mimetype !== 'application/pdf') {
-        return res.status(400).json({
-          status: 'error',
-          msg: 'Only PDF files are allowed',
-          data: null,
-        });
-      }
+      // Allow any file type (images, PDFs, etc.)
+      // File type validation is handled by multer fileFilter
 
       // Check if user exists BEFORE uploading to S3
       const User = require('../models/User');
@@ -706,13 +700,59 @@ class V2ProfileController {
       }
 
       console.log(`📤 Uploading Aadhar card for user ${userId}`);
+      console.log(`📤 File type: ${req.file.mimetype || 'unknown'}`);
       console.log(`📤 Original file size: ${(req.file.buffer.length / 1024).toFixed(2)}KB`);
+      console.log(`📤 Original filename: ${req.file.originalname}`);
 
-      // Generate unique filename
-      const ext = path.extname(req.file.originalname).toLowerCase() || '.pdf';
-      const filename = `aadhar-${userId}-${Date.now()}${ext}`;
+      // Generate unique filename - extract valid extension from mimetype or originalname
+      let ext = '';
+      
+      // First, try to get extension from mimetype
+      if (req.file.mimetype) {
+        const mimeToExt = {
+          'image/jpeg': '.jpg',
+          'image/jpg': '.jpg',
+          'image/png': '.png',
+          'image/gif': '.gif',
+          'image/webp': '.webp',
+          'image/bmp': '.bmp',
+          'application/pdf': '.pdf',
+          'application/msword': '.doc',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+        };
+        ext = mimeToExt[req.file.mimetype.toLowerCase()] || '';
+      }
+      
+      // If no extension from mimetype, try to extract from originalname (but sanitize it)
+      if (!ext && req.file.originalname) {
+        // Clean the originalname - remove content:// URIs and URL encoding
+        let cleanName = req.file.originalname;
+        // Remove content:// protocol
+        cleanName = cleanName.replace(/^content:\/\//, '');
+        // Decode URL encoding
+        try {
+          cleanName = decodeURIComponent(cleanName);
+        } catch (e) {
+          // If decoding fails, use as is
+        }
+        // Extract extension from cleaned name
+        const extractedExt = path.extname(cleanName).toLowerCase();
+        // Only use if it's a valid extension (1-5 chars, alphanumeric)
+        if (extractedExt && /^\.\w{1,5}$/.test(extractedExt)) {
+          ext = extractedExt;
+        }
+      }
+      
+      // Default to .jpg if no extension found
+      if (!ext) {
+        ext = '.jpg';
+        console.log(`⚠️  No valid extension found, defaulting to .jpg`);
+      }
+      
+      // Sanitize filename - remove any invalid characters
+      const filename = `aadhar-${userId}-${Date.now()}${ext}`.replace(/[^a-zA-Z0-9._-]/g, '_');
 
-      // Upload PDF directly to S3 (no compression for PDFs)
+      // Upload file directly to S3
       const s3Result = await uploadBufferToS3(req.file.buffer, filename, 'documents');
       console.log(`✅ Aadhar card uploaded to S3: ${s3Result.s3Url}`);
 
@@ -748,14 +788,20 @@ class V2ProfileController {
         const updateData = { aadhar_card: s3Result.s3Url };
         
         // If status is 'rejected', change it to 'pending' when user resubmits documents
-        if (shop && shop.approval_status === 'rejected') {
-          updateData.approval_status = 'pending';
-          updateData.application_submitted_at = new Date().toISOString();
-          console.log(`📋 Aadhar upload - changing approval_status from 'rejected' to 'pending' for user ${userId} (resubmission)`);
-        }
-        
         if (shop) {
+          console.log(`📋 Aadhar upload - Current shop approval_status: "${shop.approval_status}"`);
+          if (shop.approval_status === 'rejected' || shop.approval_status === 'Rejected') {
+            updateData.approval_status = 'pending';
+            updateData.application_submitted_at = new Date().toISOString();
+            // Clear rejection reason when resubmitting
+            if (shop.rejection_reason) {
+              updateData.rejection_reason = null;
+            }
+            console.log(`📋 Aadhar upload - changing approval_status from '${shop.approval_status}' to 'pending' for user ${userId} (resubmission)`);
+          }
+          
           await Shop.update(shop.id, updateData);
+          console.log(`✅ Shop ${shop.id} updated with approval_status: ${updateData.approval_status || shop.approval_status}`);
         } else {
           // Create shop record if it doesn't exist
           await Shop.create({
@@ -842,19 +888,13 @@ class V2ProfileController {
       if (!req.file) {
         return res.status(400).json({
           status: 'error',
-          msg: 'PDF file is required',
+          msg: 'File is required',
           data: null,
         });
       }
 
-      // Verify it's a PDF file
-      if (req.file.mimetype !== 'application/pdf') {
-        return res.status(400).json({
-          status: 'error',
-          msg: 'Only PDF files are allowed',
-          data: null,
-        });
-      }
+      // Allow any file type (images, PDFs, etc.)
+      // File type validation is handled by multer fileFilter
 
       // Check if user exists BEFORE uploading to S3
       const User = require('../models/User');
@@ -868,13 +908,59 @@ class V2ProfileController {
       }
 
       console.log(`📤 Uploading driving license for user ${userId}`);
+      console.log(`📤 File type: ${req.file.mimetype || 'unknown'}`);
       console.log(`📤 Original file size: ${(req.file.buffer.length / 1024).toFixed(2)}KB`);
+      console.log(`📤 Original filename: ${req.file.originalname}`);
 
-      // Generate unique filename
-      const ext = path.extname(req.file.originalname).toLowerCase() || '.pdf';
-      const filename = `driving-license-${userId}-${Date.now()}${ext}`;
+      // Generate unique filename - extract valid extension from mimetype or originalname
+      let ext = '';
+      
+      // First, try to get extension from mimetype
+      if (req.file.mimetype) {
+        const mimeToExt = {
+          'image/jpeg': '.jpg',
+          'image/jpg': '.jpg',
+          'image/png': '.png',
+          'image/gif': '.gif',
+          'image/webp': '.webp',
+          'image/bmp': '.bmp',
+          'application/pdf': '.pdf',
+          'application/msword': '.doc',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+        };
+        ext = mimeToExt[req.file.mimetype.toLowerCase()] || '';
+      }
+      
+      // If no extension from mimetype, try to extract from originalname (but sanitize it)
+      if (!ext && req.file.originalname) {
+        // Clean the originalname - remove content:// URIs and URL encoding
+        let cleanName = req.file.originalname;
+        // Remove content:// protocol
+        cleanName = cleanName.replace(/^content:\/\//, '');
+        // Decode URL encoding
+        try {
+          cleanName = decodeURIComponent(cleanName);
+        } catch (e) {
+          // If decoding fails, use as is
+        }
+        // Extract extension from cleaned name
+        const extractedExt = path.extname(cleanName).toLowerCase();
+        // Only use if it's a valid extension (1-5 chars, alphanumeric)
+        if (extractedExt && /^\.\w{1,5}$/.test(extractedExt)) {
+          ext = extractedExt;
+        }
+      }
+      
+      // Default to .jpg if no extension found
+      if (!ext) {
+        ext = '.jpg';
+        console.log(`⚠️  No valid extension found, defaulting to .jpg`);
+      }
+      
+      // Sanitize filename - remove any invalid characters
+      const filename = `driving-license-${userId}-${Date.now()}${ext}`.replace(/[^a-zA-Z0-9._-]/g, '_');
 
-      // Upload PDF directly to S3 (no compression for PDFs)
+      // Upload file directly to S3
       const s3Result = await uploadBufferToS3(req.file.buffer, filename, 'documents');
       console.log(`✅ Driving license uploaded to S3: ${s3Result.s3Url}`);
 
@@ -910,14 +996,20 @@ class V2ProfileController {
         const updateData = { driving_license: s3Result.s3Url };
         
         // If status is 'rejected', change it to 'pending' when user resubmits documents
-        if (shop && shop.approval_status === 'rejected') {
-          updateData.approval_status = 'pending';
-          updateData.application_submitted_at = new Date().toISOString();
-          console.log(`📋 Driving license upload - changing approval_status from 'rejected' to 'pending' for user ${userId} (resubmission)`);
-        }
-        
         if (shop) {
+          console.log(`📋 Driving license upload - Current shop approval_status: "${shop.approval_status}"`);
+          if (shop.approval_status === 'rejected' || shop.approval_status === 'Rejected') {
+            updateData.approval_status = 'pending';
+            updateData.application_submitted_at = new Date().toISOString();
+            // Clear rejection reason when resubmitting
+            if (shop.rejection_reason) {
+              updateData.rejection_reason = null;
+            }
+            console.log(`📋 Driving license upload - changing approval_status from '${shop.approval_status}' to 'pending' for user ${userId} (resubmission)`);
+          }
+          
           await Shop.update(shop.id, updateData);
+          console.log(`✅ Shop ${shop.id} updated with approval_status: ${updateData.approval_status || shop.approval_status}`);
         } else {
           // Create shop record if it doesn't exist
           await Shop.create({

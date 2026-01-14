@@ -717,7 +717,7 @@ class V2CategoryController {
       // Get current timestamp for lastUpdatedOn
       const currentTimestamp = new Date().toISOString();
       
-      // Fetch user stats if userId is provided (from Redis cache)
+      // Fetch user stats if userId is provided (from Redis cache or calculate on-the-fly)
       let userStats = null;
       if (userId) {
         try {
@@ -731,40 +731,137 @@ class V2CategoryController {
           const earningsCacheKey = RedisCache.userKey(userIdNum, `earnings_monthly_${userTypeForStats}_6`);
           
           try {
-            const recyclingData = await RedisCache.get(recyclingCacheKey);
-            const earningsData = await RedisCache.get(earningsCacheKey);
+            let recyclingData = await RedisCache.get(recyclingCacheKey);
+            let earningsData = await RedisCache.get(earningsCacheKey);
             
-            if (recyclingData && earningsData) {
-              userStats = {
-                totalOrders: recyclingData.total_orders_completed || earningsData.totalOrders || 0,
-                totalEarned: earningsData.totalEarnings || 0,
-                totalRecycled: recyclingData.total_recycled_weight_kg || 0
-              };
-              console.log(`✅ [getIncrementalUpdates] User stats fetched from cache:`, userStats);
-            } else {
-              console.log(`ℹ️ [getIncrementalUpdates] Stats not available in cache, skipping stats in response`);
+            // If stats not in cache, calculate them on-the-fly by directly calling the calculation logic
+            if (!recyclingData) {
+              console.log(`📊 [getIncrementalUpdates] Recycling stats not in cache, calculating on-the-fly...`);
+              try {
+                const Order = require('../models/Order');
+                // Directly calculate recycling stats for customer
+                if (userTypeForStats === 'customer') {
+                  const allOrders = await Order.findByCustomerId(userIdNum);
+                  const completedOrders = allOrders.filter(order => order.status === 5);
+                  
+                  // Calculate basic stats
+                  let totalRecycledWeight = 0;
+                  for (const order of completedOrders) {
+                    const orderWeight = parseFloat(order.estim_weight || 0);
+                    totalRecycledWeight += orderWeight;
+                  }
+                  
+                  recyclingData = {
+                    total_orders_completed: completedOrders.length,
+                    total_recycled_weight_kg: parseFloat(totalRecycledWeight.toFixed(2)),
+                    total_carbon_offset_kg: 0,
+                    category_breakdown: [],
+                    monthly_breakdown: [],
+                    trees_equivalent: 0,
+                    cars_off_road_days: 0
+                  };
+                  
+                  // Cache the calculated stats
+                  await RedisCache.set(recyclingCacheKey, recyclingData, 'long');
+                  console.log(`✅ [getIncrementalUpdates] Recycling stats calculated:`, recyclingData);
+                }
+              } catch (calcError) {
+                console.warn(`⚠️ [getIncrementalUpdates] Error calculating recycling stats:`, calcError.message);
+                recyclingData = {
+                  total_orders_completed: 0,
+                  total_recycled_weight_kg: 0,
+                  total_carbon_offset_kg: 0
+                };
+              }
             }
+            
+            if (!earningsData) {
+              console.log(`📊 [getIncrementalUpdates] Earnings stats not in cache, calculating on-the-fly...`);
+              try {
+                const Order = require('../models/Order');
+                // Directly calculate earnings stats for customer
+                if (userTypeForStats === 'customer') {
+                  const allOrders = await Order.findByCustomerId(userIdNum);
+                  const completedOrders = allOrders.filter(order => order.status === 5);
+                  
+                  // Calculate total earnings
+                  let totalEarnings = 0;
+                  for (const order of completedOrders) {
+                    const earnings = parseFloat(order.estim_price || 0);
+                    totalEarnings += earnings;
+                  }
+                  
+                  earningsData = {
+                    totalOrders: completedOrders.length,
+                    totalEarnings: parseFloat(totalEarnings.toFixed(2)),
+                    monthlyBreakdown: [],
+                    currency: 'INR',
+                    period: 'Last 6 months'
+                  };
+                  
+                  // Cache the calculated stats
+                  await RedisCache.set(earningsCacheKey, earningsData, 'long');
+                  console.log(`✅ [getIncrementalUpdates] Earnings stats calculated:`, earningsData);
+                }
+              } catch (calcError) {
+                console.warn(`⚠️ [getIncrementalUpdates] Error calculating earnings stats:`, calcError.message);
+                earningsData = {
+                  totalOrders: 0,
+                  totalEarnings: 0
+                };
+              }
+            }
+            
+            // Build stats from available data (always include stats, even if zero)
+            userStats = {
+              totalOrders: recyclingData?.total_orders_completed || earningsData?.totalOrders || 0,
+              totalEarned: earningsData?.totalEarnings || 0,
+              totalRecycled: recyclingData?.total_recycled_weight_kg || 0
+            };
+            console.log(`✅ [getIncrementalUpdates] User stats prepared:`, userStats);
           } catch (cacheError) {
-            console.warn(`⚠️ [getIncrementalUpdates] Error fetching stats from cache:`, cacheError.message);
+            console.warn(`⚠️ [getIncrementalUpdates] Error fetching/calculating stats:`, cacheError.message);
+            // Return zero stats on error
+            userStats = {
+              totalOrders: 0,
+              totalEarned: 0,
+              totalRecycled: 0
+            };
           }
         } catch (statsError) {
           console.warn(`⚠️ [getIncrementalUpdates] Error processing user stats:`, statsError.message);
-          // Continue without stats if there's an error
+          // Return zero stats on error
+          userStats = {
+            totalOrders: 0,
+            totalEarned: 0,
+            totalRecycled: 0
+          };
         }
+      }
+      
+      // Always include stats in response if userId was provided
+      const responseData = {
+        categories: filteredCategories,
+        subcategories: filteredSubcategories,
+        deleted: {
+          categories: deletedCategories,
+          subcategories: deletedSubcategories
+        }
+      };
+      
+      // Always include stats if userId was provided (even if zero)
+      if (userId) {
+        responseData.stats = userStats || {
+          totalOrders: 0,
+          totalEarned: 0,
+          totalRecycled: 0
+        };
       }
       
       const response = {
         status: 'success',
         msg: 'Incremental updates retrieved successfully',
-        data: {
-          categories: filteredCategories,
-          subcategories: filteredSubcategories,
-          deleted: {
-            categories: deletedCategories,
-            subcategories: deletedSubcategories
-          },
-          ...(userStats ? { stats: userStats } : {})
-        },
+        data: responseData,
         meta: {
           categories_count: filteredCategories.length,
           subcategories_count: filteredSubcategories.length,

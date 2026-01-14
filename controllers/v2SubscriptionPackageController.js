@@ -130,11 +130,11 @@ exports.checkSubscriptionExpiry = async (req, res) => {
 
 /**
  * Get subscription packages for a specific user type (B2B or B2C)
- * GET /api/v2/subscription-packages?userType=b2b|b2c
+ * GET /api/v2/subscription-packages?userType=b2b|b2c&language=en|hi|ta|te|...
  */
 exports.getSubscriptionPackages = async (req, res) => {
   try {
-    const { userType } = req.query;
+    const { userType, language = 'en' } = req.query;
     
     if (!userType || !['b2b', 'b2c'].includes(userType)) {
       return res.status(400).json({
@@ -143,7 +143,10 @@ exports.getSubscriptionPackages = async (req, res) => {
       });
     }
 
-    const cacheKey = RedisCache.listKey(`subscription_packages_${userType}`);
+    // Normalize language code (e.g., 'en-US' -> 'en')
+    const langCode = language.split('-')[0].toLowerCase();
+    
+    const cacheKey = RedisCache.listKey(`subscription_packages_${userType}_${langCode}`);
     
     // Try to get from cache
     const cached = await RedisCache.get(cacheKey);
@@ -192,8 +195,57 @@ exports.getSubscriptionPackages = async (req, res) => {
       return false;
     });
     
+    // Helper function to get translated field
+    const getTranslatedField = (pkg, fieldName, defaultLang = 'en') => {
+      // Check for language-specific field (e.g., name_en, name_hi, description_en, etc.)
+      const langField = `${fieldName}_${langCode}`;
+      const defaultLangField = `${fieldName}_${defaultLang}`;
+      
+      // Try language-specific field first
+      if (pkg[langField] !== undefined && pkg[langField] !== null) {
+        return pkg[langField];
+      }
+      
+      // Try default language field
+      if (pkg[defaultLangField] !== undefined && pkg[defaultLangField] !== null) {
+        return pkg[defaultLangField];
+      }
+      
+      // Fallback to base field (for backward compatibility)
+      if (pkg[fieldName] !== undefined && pkg[fieldName] !== null) {
+        return pkg[fieldName];
+      }
+      
+      return null;
+    };
+    
     // For B2B per-order subscriptions, change from fixed 999 to 0.5% of order value
     const processedPackages = filteredPackages.map(pkg => {
+      // Get translated fields
+      const translatedName = getTranslatedField(pkg, 'name') || pkg.name;
+      const translatedDescription = getTranslatedField(pkg, 'description') || pkg.description || '';
+      
+      // Handle features translation (can be array or object with language keys)
+      let translatedFeatures = pkg.features || [];
+      if (Array.isArray(translatedFeatures)) {
+        // If features is an array, check if there's a language-specific version
+        const langFeatures = pkg[`features_${langCode}`];
+        if (langFeatures && Array.isArray(langFeatures)) {
+          translatedFeatures = langFeatures;
+        }
+      } else if (typeof translatedFeatures === 'object') {
+        // If features is an object with language keys
+        translatedFeatures = translatedFeatures[langCode] || translatedFeatures['en'] || [];
+      }
+      
+      // Build translated package
+      const translatedPkg = {
+        ...pkg,
+        name: translatedName,
+        description: translatedDescription,
+        features: translatedFeatures,
+      };
+      
       // If it's a B2B per-order subscription, modify the price to indicate percentage-based pricing
       if (userType === 'b2b' && pkg.duration === 'order') {
         // Use stored percentage if available, otherwise default to 0.5%
@@ -202,14 +254,14 @@ exports.getSubscriptionPackages = async (req, res) => {
           : 0.5; // Default to 0.5% if not set
         
         return {
-          ...pkg,
+          ...translatedPkg,
           price: 0, // Set price to 0 for percentage-based plans (will be calculated per order)
           pricePercentage: pricePercentage, // Percentage of order value (0.5 = 0.5%)
           originalPrice: pkg.price, // Keep original price for reference
           isPercentageBased: pkg.isPercentageBased !== undefined ? pkg.isPercentageBased : true
         };
       }
-      return pkg;
+      return translatedPkg;
     });
 
     // Sort by price (monthly first, then yearly)

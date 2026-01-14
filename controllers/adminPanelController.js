@@ -224,27 +224,54 @@ class AdminPanelController {
       });
 
       const dataPromise = Promise.all([
-        User.getMonthlyCountByUserType('C'),
+        User.getMonthlyCountByUserType('N'),
+        User.getMonthlyCountByUserType('D'),
+        User.getMonthlyCountByUserType('R'),
         User.getMonthlyCountByUserType('S'),
+        User.getMonthlyCountByUserType('C'),
+        User.getMonthlyCountByUserType('SR'),
         Order.getMonthlyCount(),
         Order.getMonthlyCount(4),
-        Order.getMonthlyPendingCount()
+        Order.getMonthlyPendingCount(),
+        User.countV2CustomerAppUsers(),
+        User.countV2VendorAppUsers()
       ]);
 
       const [
-        month_wise_customers_count,
+        month_wise_new_users_count,
+        month_wise_delivery_count,
+        month_wise_recycler_count,
         month_wise_vendor_count,
+        month_wise_customers_count,
+        month_wise_shop_recycler_count,
         month_wise_orders_count,
         month_wise_completed_orders_count,
-        month_wise_pending_orders_count
+        month_wise_pending_orders_count,
+        v2_customer_app_count,
+        v2_vendor_app_count
       ] = await Promise.race([dataPromise, timeoutPromise]);
 
+      // Log the results for debugging
+      console.log('📊 [dashboardCharts] Monthly counts retrieved:');
+      console.log(`   N (New Users): [${month_wise_new_users_count.join(', ')}] - Total: ${month_wise_new_users_count.reduce((a, b) => a + b, 0)}`);
+      console.log(`   D (Delivery): [${month_wise_delivery_count.join(', ')}] - Total: ${month_wise_delivery_count.reduce((a, b) => a + b, 0)}`);
+      console.log(`   R (Recycler): [${month_wise_recycler_count.join(', ')}] - Total: ${month_wise_recycler_count.reduce((a, b) => a + b, 0)}`);
+      console.log(`   S (Vendors): [${month_wise_vendor_count.join(', ')}] - Total: ${month_wise_vendor_count.reduce((a, b) => a + b, 0)}`);
+      console.log(`   C (Customers): [${month_wise_customers_count.join(', ')}] - Total: ${month_wise_customers_count.reduce((a, b) => a + b, 0)}`);
+      console.log(`   SR (Shop+Recycler): [${month_wise_shop_recycler_count.join(', ')}] - Total: ${month_wise_shop_recycler_count.reduce((a, b) => a + b, 0)}`);
+
       const result = {
-        month_wise_customers_count,
-        month_wise_vendor_count,
+        month_wise_new_users_count,      // N
+        month_wise_delivery_count,       // D
+        month_wise_recycler_count,       // R
+        month_wise_vendor_count,         // S
+        month_wise_customers_count,      // C
+        month_wise_shop_recycler_count,  // SR
         month_wise_orders_count,
         month_wise_completed_orders_count,
-        month_wise_pending_orders_count
+        month_wise_pending_orders_count,
+        v2_customer_app_count,
+        v2_vendor_app_count
       };
 
       // Cache for 2 hours (7200 seconds) - Chart data doesn't change frequently
@@ -285,25 +312,43 @@ class AdminPanelController {
   static async _refreshChartsCache(cacheKey) {
     try {
       const [
-        month_wise_customers_count,
+        month_wise_new_users_count,
+        month_wise_delivery_count,
+        month_wise_recycler_count,
         month_wise_vendor_count,
+        month_wise_customers_count,
+        month_wise_shop_recycler_count,
         month_wise_orders_count,
         month_wise_completed_orders_count,
-        month_wise_pending_orders_count
+        month_wise_pending_orders_count,
+        v2_customer_app_count,
+        v2_vendor_app_count
       ] = await Promise.all([
-        User.getMonthlyCountByUserType('C'),
+        User.getMonthlyCountByUserType('N'),
+        User.getMonthlyCountByUserType('D'),
+        User.getMonthlyCountByUserType('R'),
         User.getMonthlyCountByUserType('S'),
+        User.getMonthlyCountByUserType('C'),
+        User.getMonthlyCountByUserType('SR'),
         Order.getMonthlyCount(),
         Order.getMonthlyCount(4),
-        Order.getMonthlyPendingCount()
+        Order.getMonthlyPendingCount(),
+        User.countV2CustomerAppUsers(),
+        User.countV2VendorAppUsers()
       ]);
 
       const result = {
-        month_wise_customers_count,
-        month_wise_vendor_count,
+        month_wise_new_users_count,      // N
+        month_wise_delivery_count,       // D
+        month_wise_recycler_count,       // R
+        month_wise_vendor_count,         // S
+        month_wise_customers_count,      // C
+        month_wise_shop_recycler_count,  // SR
         month_wise_orders_count,
         month_wise_completed_orders_count,
-        month_wise_pending_orders_count
+        month_wise_pending_orders_count,
+        v2_customer_app_count,
+        v2_vendor_app_count
       };
 
       await RedisCache.set(cacheKey, result, 7200);
@@ -880,7 +925,10 @@ class AdminPanelController {
       const userTypeMap = {
         'S': 'Vendors',
         'C': 'Customers',
-        'D': 'Door Step Buyers'
+        'D': 'Door Step Buyers',
+        'N': 'New Users (Not Registered)',
+        'R': 'Retailers (B2C)',
+        'SR': 'Shop + Recycler (B2B + B2C)'
       };
       const userTypeName = userTypeMap[user_type] || `Unknown (${user_type})`;
 
@@ -890,107 +938,63 @@ class AdminPanelController {
       console.log('   End Date:', end_date);
       console.log('   Date Range:', `${start_date} to ${end_date}`);
 
-      // Build query based on user_type to join with appropriate table
-      let query;
-      let params;
-      let tableJoin = '';
-
-      if (user_type === 'S') {
-        // Vendors - join with shops table
-        tableJoin = 'shops';
-        query = `
-          SELECT 
-            u.id,
-            u.name,
-            u.email,
-            u.mob_num,
-            s.address,
-            s.place,
-            u.created_at
-          FROM users u
-          LEFT JOIN shops s ON u.id = s.user_id
-          WHERE u.created_at BETWEEN ? AND ? AND u.user_type = ?
-          ORDER BY u.created_at DESC
-        `;
-        params = [`${start_date} 00:00:00`, `${end_date} 23:59:59`, user_type];
-      } else if (user_type === 'C') {
-        // Customers - join with customer table
-        tableJoin = 'customer';
-        query = `
-          SELECT 
-            u.id,
-            u.name,
-            u.email,
-            u.mob_num,
-            c.address,
-            c.place,
-            u.created_at
-          FROM users u
-          LEFT JOIN customer c ON u.id = c.user_id
-          WHERE u.created_at BETWEEN ? AND ? AND u.user_type = ?
-          ORDER BY u.created_at DESC
-        `;
-        params = [`${start_date} 00:00:00`, `${end_date} 23:59:59`, user_type];
-      } else {
-        // Door Step Buyers or other types - just users table
-        tableJoin = 'none';
-        query = `
-          SELECT 
-            u.id,
-            u.name,
-            u.email,
-            u.mob_num,
-            '' as address,
-            '' as place,
-            u.created_at
-          FROM users u
-          WHERE u.created_at BETWEEN ? AND ? AND u.user_type = ?
-          ORDER BY u.created_at DESC
-        `;
-        params = [`${start_date} 00:00:00`, `${end_date} 23:59:59`, user_type];
-      }
-
-      console.log('🔍 Query Details:');
-      console.log('   Table Join:', tableJoin || 'None (users only)');
-      console.log('   SQL Query:', query.replace(/\s+/g, ' ').trim());
-      console.log('   Query Params:', params);
-      console.log('   Date Range in Query:', `${params[0]} to ${params[1]}`);
-
       const queryStartTime = Date.now();
-      console.log('⏱️  Executing database query...');
+      console.log('⏱️  Executing DynamoDB query...');
 
-      db.query(query, params, async (err, results) => {
+      try {
+        // Get users by type and date range using DynamoDB
+        const users = await User.getUsersByTypeAndDateRange(user_type, start_date, end_date);
         const queryDuration = Date.now() - queryStartTime;
-
-        if (err) {
-          console.error('═══════════════════════════════════════════════════════════');
-          console.error('❌ signUpReport DATABASE ERROR');
-          console.error('═══════════════════════════════════════════════════════════');
-          console.error('   Error code:', err.code);
-          console.error('   Error number:', err.errno);
-          console.error('   Error message:', err.message);
-          console.error('   SQL State:', err.sqlState);
-          console.error('   Query Duration:', queryDuration, 'ms');
-          console.error('   Failed Query:', query.replace(/\s+/g, ' ').trim());
-          console.error('   Failed Params:', params);
-          return res.json({
-            status: 'error',
-            msg: 'Error fetching report data',
-            data: []
-          });
-        }
 
         console.log('═══════════════════════════════════════════════════════════');
         console.log('✅ signUpReport SUCCESS');
         console.log('═══════════════════════════════════════════════════════════');
-        console.log(`   Total Records Found: ${results.length}`);
+        console.log(`   Total Records Found: ${users.length}`);
         console.log(`   Query Duration: ${queryDuration}ms`);
         console.log(`   User Type: ${user_type} (${userTypeName})`);
         console.log(`   Date Range: ${start_date} to ${end_date}`);
 
-        if (results.length > 0) {
+        // Enrich users with shop/customer data based on user_type
+        const Customer = require('../models/Customer');
+        const enrichedResults = await Promise.all(users.map(async (user) => {
+          let address = '';
+          let place = '';
+
+          try {
+            if (user_type === 'S' || user_type === 'SR' || user_type === 'R') {
+              // Vendors - get from shops table
+              const shop = await Shop.findByUserId(user.id);
+              if (shop) {
+                address = shop.address || '';
+                place = shop.place || '';
+              }
+            } else if (user_type === 'C') {
+              // Customers - get from customer table
+              const customer = await Customer.findByUserId(user.id);
+              if (customer) {
+                address = customer.address || '';
+                place = customer.place || '';
+              }
+            }
+            // For 'N' and 'D' types, address and place remain empty
+          } catch (err) {
+            console.error(`Error fetching shop/customer for user ${user.id}:`, err);
+          }
+
+          return {
+            id: user.id,
+            name: user.name || '',
+            email: user.email || '',
+            mob_num: user.mob_num || '',
+            address: address,
+            place: place,
+            created_at: user.created_at || ''
+          };
+        }));
+
+        if (enrichedResults.length > 0) {
           console.log('📋 Sample Records (first 3):');
-          results.slice(0, 3).forEach((record, index) => {
+          enrichedResults.slice(0, 3).forEach((record, index) => {
             console.log(`   Record ${index + 1}:`, {
               id: record.id,
               name: record.name || 'N/A',
@@ -1003,11 +1007,11 @@ class AdminPanelController {
           });
 
           // Summary statistics
-          const withAddress = results.filter(r => r.address && r.address.trim() !== '').length;
-          const withPlace = results.filter(r => r.place && r.place.trim() !== '').length;
+          const withAddress = enrichedResults.filter(r => r.address && r.address.trim() !== '').length;
+          const withPlace = enrichedResults.filter(r => r.place && r.place.trim() !== '').length;
           console.log('📊 Data Quality:');
-          console.log(`   Records with address: ${withAddress}/${results.length} (${Math.round(withAddress / results.length * 100)}%)`);
-          console.log(`   Records with place: ${withPlace}/${results.length} (${Math.round(withPlace / results.length * 100)}%)`);
+          console.log(`   Records with address: ${withAddress}/${enrichedResults.length} (${Math.round(withAddress / enrichedResults.length * 100)}%)`);
+          console.log(`   Records with place: ${withPlace}/${enrichedResults.length} (${Math.round(withPlace / enrichedResults.length * 100)}%)`);
         } else {
           console.log('⚠️  No records found for the specified criteria');
         }
@@ -1017,7 +1021,7 @@ class AdminPanelController {
         const response = {
           status: 'success',
           msg: 'Report data retrieved',
-          data: results
+          data: enrichedResults
         };
 
         // Cache report data for 10 minutes (only if params provided)
@@ -1032,7 +1036,20 @@ class AdminPanelController {
         }
 
         res.json(response);
-      });
+      } catch (err) {
+        const queryDuration = Date.now() - queryStartTime;
+        console.error('═══════════════════════════════════════════════════════════');
+        console.error('❌ signUpReport DATABASE ERROR');
+        console.error('═══════════════════════════════════════════════════════════');
+        console.error('   Error message:', err.message);
+        console.error('   Query Duration:', queryDuration, 'ms');
+        console.error('   Error stack:', err.stack);
+        return res.json({
+          status: 'error',
+          msg: 'Error fetching report data',
+          data: []
+        });
+      }
     } catch (error) {
       console.error('═══════════════════════════════════════════════════════════');
       console.error('❌ signUpReport EXCEPTION');
@@ -1693,25 +1710,7 @@ class AdminPanelController {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 10;
       const search = req.query.search || null;
-
-      // Check Redis cache first (only if no search term)
-      const cacheKey = RedisCache.adminKey('b2b_users', null, { page, limit, search });
-      // Don't cache search results
-      if (!search) {
-        try {
-          const cached = await RedisCache.get(cacheKey);
-          if (cached) {
-            console.log('⚡ B2B users cache hit');
-            return res.json({
-              status: 'success',
-              msg: 'B2B users retrieved',
-              data: cached
-            });
-          }
-        } catch (err) {
-          console.error('Redis get error:', err);
-        }
-      }
+      const appVersion = req.query.app_version || null;
 
       const User = require('../models/User');
       const Shop = require('../models/Shop');
@@ -1892,19 +1891,12 @@ class AdminPanelController {
 
         console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} users found after filtering`);
 
-        // Re-sort enriched users by created_at (newest first)
+        // Re-sort enriched users: v2 users first, then v1 users
         enrichedUsers.sort((a, b) => {
-          let dateA = a.created_at ? new Date(a.created_at) : null;
-          let dateB = b.created_at ? new Date(b.created_at) : null;
-
-          if (!dateA || isNaN(dateA.getTime())) {
-            dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
-          }
-          if (!dateB || isNaN(dateB.getTime())) {
-            dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
-          }
-
-          return dateB.getTime() - dateA.getTime();
+          // Prioritize v2 users over v1 users
+          const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+          const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+          return bIsV2 - aIsV2; // v2 users come first
         });
 
         // Apply pagination after filtering
@@ -1914,8 +1906,81 @@ class AdminPanelController {
         enrichedUsers = paginatedUsers;
 
         console.log(`🔍 Paginated search results: Showing ${paginatedUsers.length} of ${total} users`);
+      } else if (appVersion && (appVersion === 'v1' || appVersion === 'v2')) {
+        // If app_version filter is specified, get all users first, then filter and paginate
+        console.log(`🔍 Filtering by app_version=${appVersion}, fetching all users first`);
+        const allResult = await User.getB2BUsers(1, 999999, null);
+
+        // Enrich all users with shop data
+        enrichedUsers = await Promise.all(allResult.users.map(async (user) => {
+          try {
+            const shop = await Shop.findByUserId(user.id);
+
+            // Determine email - prioritize shop email fields for v2 B2B users
+            let email = '';
+            if (shop) {
+              email = shop.contact_person_email || shop.email || user.email || '';
+            } else {
+              email = user.email || '';
+            }
+
+            return {
+              ...user,
+              shop: shop || null,
+              shopname: shop?.shopname || '',
+              contact: shop?.contact || user.mob_num || '',
+              address: shop?.address || '',
+              shop_type: shop?.shop_type || null,
+              approval_status: shop?.approval_status || null,
+              company_name: shop?.company_name || '',
+              gst_number: shop?.gst_number || '',
+              email: email,
+              contact_person_email: shop?.contact_person_email || shop?.email || '',
+              contact_person_name: shop?.contact_person_name || ''
+            };
+          } catch (err) {
+            console.error(`Error fetching shop for user ${user.id}:`, err);
+            return {
+              ...user,
+              shop: null,
+              shopname: '',
+              contact: user.mob_num || '',
+              address: '',
+              shop_type: null,
+              approval_status: null,
+              company_name: '',
+              gst_number: '',
+              email: user.email || '',
+              contact_person_email: '',
+              contact_person_name: ''
+            };
+          }
+        }));
+
+        // Filter by app_version
+        enrichedUsers = enrichedUsers.filter(user => {
+          const userAppVersion = user.app_version || 'v1';
+          const matches = userAppVersion === appVersion;
+          return matches;
+        });
+        console.log(`✅ Filtered by app_version=${appVersion}: ${enrichedUsers.length} users found out of ${allResult.users.length} total`);
+
+        // Sort enriched users: v2 users first, then v1 users (though all should be same version now)
+        enrichedUsers.sort((a, b) => {
+          const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+          const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+          return bIsV2 - aIsV2;
+        });
+
+        // Apply pagination after filtering
+        total = enrichedUsers.length;
+        const skip = (pageNumber - 1) * pageSize;
+        const paginatedUsers = enrichedUsers.slice(skip, skip + pageSize);
+        enrichedUsers = paginatedUsers;
+
+        console.log(`🔍 Paginated filtered results: Showing ${paginatedUsers.length} of ${total} users`);
       } else {
-        // No search - use normal pagination
+        // No search and no app_version filter - use normal pagination
         const result = await User.getB2BUsers(page, limit, null);
 
         // Enrich paginated users with shop data
@@ -1986,7 +2051,30 @@ class AdminPanelController {
           }
         }));
 
-        total = result.total;
+        // Filter by app_version if specified
+        if (appVersion && (appVersion === 'v1' || appVersion === 'v2')) {
+          enrichedUsers = enrichedUsers.filter(user => {
+            const userAppVersion = user.app_version || 'v1';
+            const matches = userAppVersion === appVersion;
+            return matches;
+          });
+          console.log(`✅ Filtered by app_version=${appVersion}: ${enrichedUsers.length} users found`);
+          // Recalculate total after filtering
+          total = enrichedUsers.length;
+          
+          // Re-apply pagination after filtering
+          const skip = (pageNumber - 1) * pageSize;
+          const paginatedUsers = enrichedUsers.slice(skip, skip + pageSize);
+          enrichedUsers = paginatedUsers;
+        } else {
+          // Sort enriched users: v2 users first, then v1 users
+          enrichedUsers.sort((a, b) => {
+            const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+            const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+            return bIsV2 - aIsV2; // v2 users come first
+          });
+          total = result.total;
+        }
       }
 
       const responseData = {
@@ -1997,16 +2085,6 @@ class AdminPanelController {
         totalPages: Math.ceil(total / pageSize),
         hasMore: (pageNumber * pageSize) < total
       };
-
-      // Cache for 5 minutes (only if no search term)
-      if (!search) {
-        try {
-          await RedisCache.set(cacheKey, responseData, 'short');
-          console.log('💾 B2B users cached');
-        } catch (err) {
-          console.error('Redis cache set error:', err);
-        }
-      }
 
       res.json({
         status: 'success',
@@ -2264,25 +2342,8 @@ class AdminPanelController {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 10;
       const search = req.query.search || null;
-
-      // Check Redis cache first (only if no search term)
-      const cacheKey = RedisCache.adminKey('b2c_users', null, { page, limit, search });
-      // Don't cache search results
-      if (!search) {
-        try {
-          const cached = await RedisCache.get(cacheKey);
-          if (cached) {
-            console.log('⚡ B2C users cache hit');
-            return res.json({
-              status: 'success',
-              msg: 'B2C users retrieved',
-              data: cached
-            });
-          }
-        } catch (err) {
-          console.error('Redis get error:', err);
-        }
-      }
+      const appVersion = req.query.app_version || null;
+      const approvalStatus = req.query.approval_status || null;
 
       const User = require('../models/User');
       const Shop = require('../models/Shop');
@@ -2313,7 +2374,8 @@ class AdminPanelController {
               address: shop?.address || '',
               aadhar_card: shop?.aadhar_card || '',
               driving_license: shop?.driving_license || '',
-              approval_status: shop?.approval_status || null
+              approval_status: shop?.approval_status || null,
+              is_contacted: shop?.is_contacted === true || shop?.is_contacted === 1 || false
             };
           } catch (err) {
             console.error(`Error fetching shop for user ${user.id}:`, err);
@@ -2324,7 +2386,8 @@ class AdminPanelController {
               contact: user.mob_num || '',
               address: '',
               aadhar_card: '',
-              driving_license: ''
+              driving_license: '',
+              is_contacted: false
             };
           }
         }));
@@ -2371,19 +2434,35 @@ class AdminPanelController {
 
         console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} users found after filtering`);
 
-        // Re-sort enriched users by created_at (newest first)
+        // Filter by app_version if specified
+        if (appVersion && (appVersion === 'v1' || appVersion === 'v2')) {
+          enrichedUsers = enrichedUsers.filter(user => {
+            const userAppVersion = user.app_version || 'v1';
+            return userAppVersion === appVersion;
+          });
+          console.log(`🔍 Filtered by app_version=${appVersion}: ${enrichedUsers.length} users found`);
+        }
+
+        // Filter by approval_status if specified (only for v2 users)
+        if (approvalStatus && (approvalStatus === 'pending' || approvalStatus === 'approved' || approvalStatus === 'rejected')) {
+          enrichedUsers = enrichedUsers.filter(user => {
+            const userAppVersion = user.app_version || 'v1';
+            // Only apply approval_status filter to v2 users
+            if (userAppVersion !== 'v2') {
+              return true; // Include v1 users regardless of approval_status filter
+            }
+            const userApprovalStatus = user.approval_status || 'pending';
+            return userApprovalStatus === approvalStatus;
+          });
+          console.log(`🔍 Filtered by approval_status=${approvalStatus} (v2 only): ${enrichedUsers.length} users found`);
+        }
+
+        // Re-sort enriched users: v2 users first, then v1 users
         enrichedUsers.sort((a, b) => {
-          let dateA = a.created_at ? new Date(a.created_at) : null;
-          let dateB = b.created_at ? new Date(b.created_at) : null;
-
-          if (!dateA || isNaN(dateA.getTime())) {
-            dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
-          }
-          if (!dateB || isNaN(dateB.getTime())) {
-            dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
-          }
-
-          return dateB.getTime() - dateA.getTime();
+          // Prioritize v2 users over v1 users
+          const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+          const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+          return bIsV2 - aIsV2; // v2 users come first
         });
 
         // Apply pagination after filtering
@@ -2393,8 +2472,97 @@ class AdminPanelController {
         enrichedUsers = paginatedUsers;
 
         console.log(`🔍 Paginated search results: Showing ${paginatedUsers.length} of ${total} users`);
+      } else if (appVersion && (appVersion === 'v1' || appVersion === 'v2')) {
+        // If app_version filter is specified, get all users first, then filter and paginate
+        console.log(`🔍 Filtering by app_version=${appVersion}, fetching all users first`);
+        const allResult = await User.getB2CUsers(1, 999999, null);
+
+        // Enrich all users with shop data
+        enrichedUsers = await Promise.all(allResult.users.map(async (user) => {
+          try {
+            const shop = await Shop.findByUserId(user.id);
+
+            return {
+              ...user,
+              shop: shop || null,
+              shopname: shop?.shopname || '',
+              contact: shop?.contact || user.mob_num || '',
+              address: shop?.address || '',
+              aadhar_card: shop?.aadhar_card || '',
+              driving_license: shop?.driving_license || '',
+              approval_status: shop?.approval_status || null,
+              is_contacted: shop?.is_contacted === true || shop?.is_contacted === 1 || false
+            };
+          } catch (err) {
+            console.error(`Error fetching shop for user ${user.id}:`, err);
+            return {
+              ...user,
+              shop: null,
+              shopname: '',
+              contact: user.mob_num || '',
+              address: '',
+              aadhar_card: '',
+              driving_license: '',
+              is_contacted: false
+            };
+          }
+        }));
+
+        // Filter by app_version - ensure we check the actual app_version field
+        enrichedUsers = enrichedUsers.filter(user => {
+          // Get app_version from user object (should be preserved during enrichment)
+          const userAppVersion = user.app_version || 'v1';
+          const matches = userAppVersion === appVersion;
+          if (!matches && enrichedUsers.length < 100) {
+            // Only log first 100 mismatches to avoid spam
+            console.log(`❌ User ${user.id} (${user.name}) filtered out: app_version="${userAppVersion}", expected="${appVersion}"`);
+          }
+          return matches;
+        });
+        console.log(`✅ Filtered by app_version=${appVersion}: ${enrichedUsers.length} users found out of ${allResult.users.length} total`);
+
+        // Filter by approval_status if specified (only for v2 users)
+        if (approvalStatus && (approvalStatus === 'pending' || approvalStatus === 'approved' || approvalStatus === 'rejected')) {
+          enrichedUsers = enrichedUsers.filter(user => {
+            const userAppVersion = user.app_version || 'v1';
+            // Only apply approval_status filter to v2 users
+            if (userAppVersion !== 'v2') {
+              return true; // Include v1 users regardless of approval_status filter
+            }
+            const userApprovalStatus = user.approval_status || 'pending';
+            return userApprovalStatus === approvalStatus;
+          });
+          console.log(`🔍 Filtered by approval_status=${approvalStatus} (v2 only): ${enrichedUsers.length} users found`);
+        }
+        
+        // Verify all remaining users have correct app_version
+        const incorrectVersions = enrichedUsers.filter(user => {
+          const userAppVersion = user.app_version || 'v1';
+          return userAppVersion !== appVersion;
+        });
+        if (incorrectVersions.length > 0) {
+          console.error(`⚠️ WARNING: Found ${incorrectVersions.length} users with incorrect app_version after filtering!`);
+          incorrectVersions.slice(0, 5).forEach(user => {
+            console.error(`   User ${user.id} (${user.name}): app_version="${user.app_version || 'v1'}", expected="${appVersion}"`);
+          });
+        }
+
+        // Sort enriched users: v2 users first, then v1 users (though all should be same version now)
+        enrichedUsers.sort((a, b) => {
+          const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+          const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+          return bIsV2 - aIsV2; // v2 users come first
+        });
+
+        // Apply pagination after filtering
+        total = enrichedUsers.length;
+        const skip = (pageNumber - 1) * pageSize;
+        const paginatedUsers = enrichedUsers.slice(skip, skip + pageSize);
+        enrichedUsers = paginatedUsers;
+
+        console.log(`🔍 Paginated filtered results: Showing ${paginatedUsers.length} of ${total} users`);
       } else {
-        // No search - use normal pagination
+        // No search and no app_version filter - use normal pagination
         const result = await User.getB2CUsers(page, limit, null);
 
         // Enrich paginated users with shop data
@@ -2410,7 +2578,8 @@ class AdminPanelController {
               address: shop?.address || '',
               aadhar_card: shop?.aadhar_card || '',
               driving_license: shop?.driving_license || '',
-              approval_status: shop?.approval_status || null
+              approval_status: shop?.approval_status || null,
+              is_contacted: shop?.is_contacted === true || shop?.is_contacted === 1 || false
             };
           } catch (err) {
             console.error(`Error fetching shop for user ${user.id}:`, err);
@@ -2421,12 +2590,39 @@ class AdminPanelController {
               contact: user.mob_num || '',
               address: '',
               aadhar_card: '',
-              driving_license: ''
+              driving_license: '',
+              is_contacted: false
             };
           }
         }));
 
-        total = result.total;
+        // Sort enriched users: v2 users first, then v1 users
+        enrichedUsers.sort((a, b) => {
+          const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+          const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+          return bIsV2 - aIsV2; // v2 users come first
+        });
+
+        // Filter by approval_status if specified (only for v2 users)
+        if (approvalStatus && (approvalStatus === 'pending' || approvalStatus === 'approved' || approvalStatus === 'rejected')) {
+          enrichedUsers = enrichedUsers.filter(user => {
+            const userAppVersion = user.app_version || 'v1';
+            // Only apply approval_status filter to v2 users
+            if (userAppVersion !== 'v2') {
+              return true; // Include v1 users regardless of approval_status filter
+            }
+            const userApprovalStatus = user.approval_status || 'pending';
+            return userApprovalStatus === approvalStatus;
+          });
+          console.log(`🔍 Filtered by approval_status=${approvalStatus} (v2 only): ${enrichedUsers.length} users found`);
+          // Recalculate total after filtering
+          total = enrichedUsers.length;
+          // Re-apply pagination after filtering
+          const skip = (pageNumber - 1) * pageSize;
+          enrichedUsers = enrichedUsers.slice(skip, skip + pageSize);
+        } else {
+          total = result.total;
+        }
       }
 
       const responseData = {
@@ -2437,16 +2633,6 @@ class AdminPanelController {
         totalPages: Math.ceil(total / pageSize),
         hasMore: (pageNumber * pageSize) < total
       };
-
-      // Cache for 5 minutes (only if no search term)
-      if (!search) {
-        try {
-          await RedisCache.set(cacheKey, responseData, 'short');
-          console.log('💾 B2C users cached');
-        } catch (err) {
-          console.error('Redis cache set error:', err);
-        }
-      }
 
       res.json({
         status: 'success',
@@ -2477,25 +2663,6 @@ class AdminPanelController {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 10;
       const search = req.query.search || null;
-
-      // Check Redis cache first (only if no search term)
-      const cacheKey = RedisCache.adminKey('sr_users', null, { page, limit, search });
-      // Don't cache search results
-      if (!search) {
-        try {
-          const cached = await RedisCache.get(cacheKey);
-          if (cached) {
-            console.log('⚡ SR users cache hit');
-            return res.json({
-              status: 'success',
-              msg: 'SR users retrieved',
-              data: cached
-            });
-          }
-        } catch (err) {
-          console.error('Redis get error:', err);
-        }
-      }
 
       const User = require('../models/User');
       const Shop = require('../models/Shop');
@@ -2640,19 +2807,12 @@ class AdminPanelController {
 
         console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} users found after filtering`);
 
-        // Re-sort enriched users by created_at (newest first)
+        // Re-sort enriched users: v2 users first, then v1 users
         enrichedUsers.sort((a, b) => {
-          let dateA = a.created_at ? new Date(a.created_at) : null;
-          let dateB = b.created_at ? new Date(b.created_at) : null;
-
-          if (!dateA || isNaN(dateA.getTime())) {
-            dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
-          }
-          if (!dateB || isNaN(dateB.getTime())) {
-            dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
-          }
-
-          return dateB.getTime() - dateA.getTime();
+          // Prioritize v2 users over v1 users
+          const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+          const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+          return bIsV2 - aIsV2; // v2 users come first
         });
 
         // Apply pagination after filtering
@@ -2751,6 +2911,13 @@ class AdminPanelController {
           }
         }));
 
+        // Sort enriched users: v2 users first, then v1 users
+        enrichedUsers.sort((a, b) => {
+          const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+          const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+          return bIsV2 - aIsV2; // v2 users come first
+        });
+
         total = result.total;
       }
 
@@ -2762,16 +2929,6 @@ class AdminPanelController {
         totalPages: Math.ceil(total / pageSize),
         hasMore: (pageNumber * pageSize) < total
       };
-
-      // Cache for 5 minutes (only if no search term)
-      if (!search) {
-        try {
-          await RedisCache.set(cacheKey, responseData, 'short');
-          console.log('💾 SR users cached');
-        } catch (err) {
-          console.error('Redis cache set error:', err);
-        }
-      }
 
       res.json({
         status: 'success',
@@ -3134,25 +3291,7 @@ class AdminPanelController {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 10;
       const search = req.query.search || null;
-
-      // Check Redis cache first (only if no search term)
-      const cacheKey = RedisCache.adminKey('delivery_users', null, { page, limit, search });
-      // Don't cache search results
-      if (!search) {
-        try {
-          const cached = await RedisCache.get(cacheKey);
-          if (cached) {
-            console.log('⚡ Delivery users cache hit');
-            return res.json({
-              status: 'success',
-              msg: 'Delivery users retrieved',
-              data: cached
-            });
-          }
-        } catch (err) {
-          console.error('Redis get error:', err);
-        }
-      }
+      const appVersion = req.query.app_version || null;
 
       const User = require('../models/User');
       const DeliveryBoy = require('../models/DeliveryBoy');
@@ -3242,19 +3381,21 @@ class AdminPanelController {
 
         console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} users found after filtering`);
 
-        // Re-sort enriched users by created_at (newest first)
+        // Filter by app_version if specified
+        if (appVersion && (appVersion === 'v1' || appVersion === 'v2')) {
+          enrichedUsers = enrichedUsers.filter(user => {
+            const userAppVersion = user.app_version || 'v1';
+            return userAppVersion === appVersion;
+          });
+          console.log(`🔍 Filtered by app_version=${appVersion}: ${enrichedUsers.length} users found`);
+        }
+
+        // Re-sort enriched users: v2 users first, then v1 users
         enrichedUsers.sort((a, b) => {
-          let dateA = a.created_at ? new Date(a.created_at) : null;
-          let dateB = b.created_at ? new Date(b.created_at) : null;
-
-          if (!dateA || isNaN(dateA.getTime())) {
-            dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
-          }
-          if (!dateB || isNaN(dateB.getTime())) {
-            dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
-          }
-
-          return dateB.getTime() - dateA.getTime();
+          // Prioritize v2 users over v1 users
+          const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+          const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+          return bIsV2 - aIsV2; // v2 users come first
         });
 
         // Apply pagination after filtering
@@ -3264,8 +3405,66 @@ class AdminPanelController {
         enrichedUsers = paginatedUsers;
 
         console.log(`🔍 Paginated search results: Showing ${paginatedUsers.length} of ${total} users`);
+      } else if (appVersion && (appVersion === 'v1' || appVersion === 'v2')) {
+        // If app_version filter is specified, get all users first, then filter and paginate
+        console.log(`🔍 Filtering by app_version=${appVersion}, fetching all users first`);
+        const allResult = await User.getDeliveryUsers(1, 999999, null);
+
+        // Enrich all users with delivery boy data
+        enrichedUsers = await Promise.all(allResult.users.map(async (user) => {
+          try {
+            const deliveryBoy = await DeliveryBoy.findByUserId(user.id);
+            const deliveryData = Array.isArray(deliveryBoy) && deliveryBoy.length > 0 ? deliveryBoy[0] : deliveryBoy;
+
+            return {
+              ...user,
+              delivery: deliveryData || null,
+              delivery_boy: deliveryData || null,
+              contact: deliveryData?.contact || user.mob_num || '',
+              address: deliveryData?.address || '',
+              aadhar_card: deliveryData?.aadhar_card || '',
+              driving_license: deliveryData?.driving_license || '',
+              approval_status: deliveryData?.approval_status || 'pending'
+            };
+          } catch (err) {
+            console.error(`Error fetching delivery boy for user ${user.id}:`, err);
+            return {
+              ...user,
+              delivery: null,
+              delivery_boy: null,
+              contact: user.mob_num || '',
+              address: '',
+              aadhar_card: '',
+              driving_license: '',
+              approval_status: 'pending'
+            };
+          }
+        }));
+
+        // Filter by app_version
+        enrichedUsers = enrichedUsers.filter(user => {
+          const userAppVersion = user.app_version || 'v1';
+          const matches = userAppVersion === appVersion;
+          return matches;
+        });
+        console.log(`✅ Filtered by app_version=${appVersion}: ${enrichedUsers.length} users found out of ${allResult.users.length} total`);
+
+        // Sort enriched users: v2 users first, then v1 users (though all should be same version now)
+        enrichedUsers.sort((a, b) => {
+          const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+          const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+          return bIsV2 - aIsV2;
+        });
+
+        // Apply pagination after filtering
+        total = enrichedUsers.length;
+        const skip = (pageNumber - 1) * pageSize;
+        const paginatedUsers = enrichedUsers.slice(skip, skip + pageSize);
+        enrichedUsers = paginatedUsers;
+
+        console.log(`🔍 Paginated filtered results: Showing ${paginatedUsers.length} of ${total} users`);
       } else {
-        // No search - use normal pagination
+        // No search and no app_version filter - use normal pagination
         const result = await User.getDeliveryUsers(page, limit, null);
 
         // Enrich paginated users with delivery boy data
@@ -3299,7 +3498,30 @@ class AdminPanelController {
           }
         }));
 
-        total = result.total;
+        // Filter by app_version if specified
+        if (appVersion && (appVersion === 'v1' || appVersion === 'v2')) {
+          enrichedUsers = enrichedUsers.filter(user => {
+            const userAppVersion = user.app_version || 'v1';
+            const matches = userAppVersion === appVersion;
+            return matches;
+          });
+          console.log(`✅ Filtered by app_version=${appVersion}: ${enrichedUsers.length} users found`);
+          // Recalculate total after filtering
+          total = enrichedUsers.length;
+          
+          // Re-apply pagination after filtering
+          const skip = (pageNumber - 1) * pageSize;
+          const paginatedUsers = enrichedUsers.slice(skip, skip + pageSize);
+          enrichedUsers = paginatedUsers;
+        } else {
+          // Sort enriched users: v2 users first, then v1 users
+          enrichedUsers.sort((a, b) => {
+            const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+            const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+            return bIsV2 - aIsV2; // v2 users come first
+          });
+          total = result.total;
+        }
       }
 
       const responseData = {
@@ -3310,16 +3532,6 @@ class AdminPanelController {
         totalPages: Math.ceil(total / pageSize),
         hasMore: (pageNumber * pageSize) < total
       };
-
-      // Cache for 5 minutes (only if no search term)
-      if (!search) {
-        try {
-          await RedisCache.set(cacheKey, responseData, 'short');
-          console.log('💾 Delivery users cached');
-        } catch (err) {
-          console.error('Redis cache set error:', err);
-        }
-      }
 
       res.json({
         status: 'success',
@@ -3387,15 +3599,44 @@ class AdminPanelController {
         console.log(`📊 Total customers fetched: ${allResult.total}, users in result: ${allResult.users.length}`);
 
         // Enrich all users with customer data
+        const Address = require('../models/Address');
         enrichedUsers = await Promise.all(allResult.users.map(async (user) => {
           try {
             const customer = await Customer.findByUserId(user.id);
+            
+            // Get address from customer table first, then from addresses table if not found
+            let customerAddress = customer?.address || '';
+            if (!customerAddress) {
+              try {
+                let addresses = [];
+                // Try with customer.id first
+                if (customer?.id) {
+                  addresses = await Address.findByCustomerId(customer.id);
+                }
+                // Also try with user.id (user_id) as addresses are often saved with customer_id = user_id
+                if ((!addresses || addresses.length === 0) && user.id) {
+                  addresses = await Address.findByCustomerId(user.id);
+                }
+                
+                if (addresses && addresses.length > 0) {
+                  // Sort by created_at (most recent first) and get the latest address
+                  addresses.sort((a, b) => {
+                    const dateA = new Date(a.created_at || a.updated_at || 0).getTime();
+                    const dateB = new Date(b.created_at || b.updated_at || 0).getTime();
+                    return dateB - dateA; // Descending order (newest first)
+                  });
+                  customerAddress = addresses[0]?.address || '';
+                }
+              } catch (addrErr) {
+                console.error(`Error fetching addresses for customer ${customer?.id || user.id}:`, addrErr);
+              }
+            }
 
             return {
               ...user,
               customer: customer || null,
               contact: customer?.contact ? String(customer.contact) : (user.mob_num ? String(user.mob_num) : ''),
-              address: customer?.address || '',
+              address: customerAddress,
               email: customer?.email || user.email || '',
               location: customer?.location || '',
               state: customer?.state || '',
@@ -3462,19 +3703,11 @@ class AdminPanelController {
 
         console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} customers found after filtering`);
 
-        // Re-sort enriched users by created_at (newest first)
+        // Sort enriched users by app_version (v2 first, then v1), without sorting by date
         enrichedUsers.sort((a, b) => {
-          let dateA = a.created_at ? new Date(a.created_at) : null;
-          let dateB = b.created_at ? new Date(b.created_at) : null;
-
-          if (!dateA || isNaN(dateA.getTime())) {
-            dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
-          }
-          if (!dateB || isNaN(dateB.getTime())) {
-            dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
-          }
-
-          return dateB.getTime() - dateA.getTime();
+          const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+          const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+          return bIsV2 - aIsV2; // v2 users come first
         });
 
         // Apply pagination after filtering
@@ -3489,15 +3722,44 @@ class AdminPanelController {
         const result = await User.getCustomers(page, limit, null);
 
         // Enrich paginated users with customer data
+        const Address = require('../models/Address');
         enrichedUsers = await Promise.all(result.users.map(async (user) => {
           try {
             const customer = await Customer.findByUserId(user.id);
+            
+            // Get address from customer table first, then from addresses table if not found
+            let customerAddress = customer?.address || '';
+            if (!customerAddress) {
+              try {
+                let addresses = [];
+                // Try with customer.id first
+                if (customer?.id) {
+                  addresses = await Address.findByCustomerId(customer.id);
+                }
+                // Also try with user.id (user_id) as addresses are often saved with customer_id = user_id
+                if ((!addresses || addresses.length === 0) && user.id) {
+                  addresses = await Address.findByCustomerId(user.id);
+                }
+                
+                if (addresses && addresses.length > 0) {
+                  // Sort by created_at (most recent first) and get the latest address
+                  addresses.sort((a, b) => {
+                    const dateA = new Date(a.created_at || a.updated_at || 0).getTime();
+                    const dateB = new Date(b.created_at || b.updated_at || 0).getTime();
+                    return dateB - dateA; // Descending order (newest first)
+                  });
+                  customerAddress = addresses[0]?.address || '';
+                }
+              } catch (addrErr) {
+                console.error(`Error fetching addresses for customer ${customer?.id || user.id}:`, addrErr);
+              }
+            }
 
             return {
               ...user,
               customer: customer || null,
               contact: customer?.contact ? String(customer.contact) : (user.mob_num ? String(user.mob_num) : ''),
-              address: customer?.address || '',
+              address: customerAddress,
               email: customer?.email || user.email || '',
               location: customer?.location || '',
               state: customer?.state || '',
@@ -3517,6 +3779,13 @@ class AdminPanelController {
             };
           }
         }));
+
+        // Sort enriched users by app_version (v2 first, then v1), without sorting by date
+        enrichedUsers.sort((a, b) => {
+          const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+          const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+          return bIsV2 - aIsV2; // v2 users come first
+        });
 
         total = result.total;
       }
@@ -3738,6 +4007,69 @@ class AdminPanelController {
       res.status(500).json({
         status: 'error',
         msg: 'Error updating approval status',
+        data: null
+      });
+    }
+  }
+
+  // Update contacted status for B2C users
+  static async updateB2CContactedStatus(req, res) {
+    try {
+      console.log('✅ AdminPanelController.updateB2CContactedStatus called');
+      const userId = req.params.userId;
+      const { is_contacted } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'User ID is required',
+          data: null
+        });
+      }
+
+      if (typeof is_contacted !== 'boolean') {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'is_contacted must be a boolean value',
+          data: null
+        });
+      }
+
+      const Shop = require('../models/Shop');
+
+      // Get shop by user_id
+      const shop = await Shop.findByUserId(userId);
+      if (!shop) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Shop record not found for this user',
+          data: null
+        });
+      }
+
+      // Update the is_contacted field
+      const updateData = {
+        is_contacted: is_contacted
+      };
+
+      await Shop.update(shop.id, updateData);
+
+      console.log(`✅ Updated contacted status for B2C user ${userId}: ${is_contacted}`);
+
+      res.json({
+        status: 'success',
+        msg: `Contacted status updated to ${is_contacted ? 'true' : 'false'}`,
+        data: {
+          userId: userId,
+          shopId: shop.id,
+          is_contacted: is_contacted
+        }
+      });
+    } catch (error) {
+      console.error('updateB2CContactedStatus error:', error);
+      res.status(500).json({
+        status: 'error',
+        msg: 'Error updating contacted status',
         data: null
       });
     }
@@ -4247,6 +4579,1804 @@ class AdminPanelController {
     } catch (error) {
       console.error(`❌ Error clearing cache for ${userType}:`, error);
       return { count: deletedCount, keys: deletedKeys };
+    }
+  }
+
+  // V2 User Types Dashboard (R, S, SR, D, C)
+  // No caching - always fetch fresh data from database
+  static async v2UserTypesDashboard(req, res) {
+    console.log('✅ AdminPanelController.v2UserTypesDashboard called (no cache)');
+
+    try {
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Query timeout')), 30000);
+      });
+
+      // Get counts for each v2 user type (N, R, S, SR, D, C)
+      // Filter: app_version='v2' AND app_type='vendor_app' for N, R, S, SR, D
+      // Filter: app_version='v2' AND app_type='customer_app' for C
+      // No caching - always fetch fresh data
+      const dataPromise = Promise.all([
+        User.countByUserTypeV2('N'), // New User (v2, vendor_app)
+        User.countByUserTypeV2('R'), // Recycler (v2, vendor_app)
+        User.countByUserTypeV2('S'), // Shop (v2, vendor_app)
+        User.countByUserTypeV2('SR'), // Shop Recycler (v2, vendor_app)
+        User.countByUserTypeV2('D'), // Delivery (v2, vendor_app)
+        User.countByUserTypeV2('C'), // Customer (v2, customer_app)
+        // Get monthly counts for each type (v2 with app_type filter)
+        User.getMonthlyCountByUserTypeV2('N'),
+        User.getMonthlyCountByUserTypeV2('R'),
+        User.getMonthlyCountByUserTypeV2('S'),
+        User.getMonthlyCountByUserTypeV2('SR'),
+        User.getMonthlyCountByUserTypeV2('D'),
+        User.getMonthlyCountByUserTypeV2('C'),
+        // Get order counts
+        Order.countCustomerAppOrdersV2(), // Orders from v2 customer_app users
+        Order.countBulkOrders(), // Bulk orders (buy/sell)
+        // Get recent order details
+        Order.getCustomerAppOrdersV2(10), // Recent customer_app orders
+        Order.getBulkOrders(10) // Recent bulk orders
+      ]);
+
+      const [
+        newUserCount,
+        recyclerCount,
+        shopCount,
+        shopRecyclerCount,
+        deliveryCount,
+        customerCount,
+        newUserMonthly,
+        recyclerMonthly,
+        shopMonthly,
+        shopRecyclerMonthly,
+        deliveryMonthly,
+        customerMonthly,
+        customerAppOrdersCount,
+        bulkOrdersCount,
+        recentCustomerAppOrders,
+        recentBulkOrders
+      ] = await Promise.race([dataPromise, timeoutPromise]);
+
+      // Log the counts for debugging
+      console.log('📊 V2 Dashboard Counts (no cache):');
+      console.log(`   N (New User, v2, vendor_app): ${newUserCount}`);
+      console.log(`   R (Recycler, v2, vendor_app): ${recyclerCount}`);
+      console.log(`   S (Shop, v2, vendor_app): ${shopCount}`);
+      console.log(`   SR (Shop Recycler, v2, vendor_app): ${shopRecyclerCount}`);
+      console.log(`   D (Delivery, v2, vendor_app): ${deliveryCount}`);
+      console.log(`   C (Customer, v2, customer_app): ${customerCount}`);
+      console.log(`   Total Users: ${newUserCount + recyclerCount + shopCount + shopRecyclerCount + deliveryCount + customerCount}`);
+      console.log(`   Customer App Orders (v2, excluding bulk): ${customerAppOrdersCount}`);
+      console.log(`   Bulk Orders (all non-customer_app orders): ${bulkOrdersCount}`);
+
+      const result = {
+        userTypes: {
+          N: {
+            name: 'New User',
+            count: newUserCount,
+            monthlyCounts: newUserMonthly || []
+          },
+          R: {
+            name: 'Recycler',
+            count: recyclerCount,
+            monthlyCounts: recyclerMonthly || []
+          },
+          S: {
+            name: 'Shop',
+            count: shopCount,
+            monthlyCounts: shopMonthly || []
+          },
+          SR: {
+            name: 'Shop Recycler',
+            count: shopRecyclerCount,
+            monthlyCounts: shopRecyclerMonthly || []
+          },
+          D: {
+            name: 'Delivery',
+            count: deliveryCount,
+            monthlyCounts: deliveryMonthly || []
+          },
+          C: {
+            name: 'Customer',
+            count: customerCount,
+            monthlyCounts: customerMonthly || []
+          }
+        },
+        orders: {
+          customerAppOrders: customerAppOrdersCount || 0,
+          bulkOrders: bulkOrdersCount || 0,
+          recentCustomerAppOrders: recentCustomerAppOrders || [],
+          recentBulkOrders: recentBulkOrders || []
+        },
+        totalUsers: newUserCount + recyclerCount + shopCount + shopRecyclerCount + deliveryCount + customerCount
+      };
+
+      // No caching - return fresh data directly
+      res.json({
+        status: 'success',
+        msg: 'V2 user types dashboard data retrieved',
+        data: result
+      });
+    } catch (error) {
+      console.error('V2 User Types Dashboard API error:', error);
+      res.status(500).json({
+        status: 'error',
+        msg: 'Error loading v2 user types dashboard data',
+        data: null,
+        error: error.message
+      });
+    }
+  }
+
+  // Add nearby 'N' type users to order's notified_vendor_ids
+  static async addNearbyNUsersToOrder(req, res) {
+    try {
+      const { orderId } = req.params;
+      const { radius = 20 } = req.query; // Default 20 km radius
+      
+      console.log(`🟢 AdminPanelController.addNearbyNUsersToOrder called`, { orderId, radius });
+      
+      // Get order details
+      const order = await Order.getById(orderId);
+      if (!order) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Order not found',
+          data: null
+        });
+      }
+      
+      // Get order location from lat_log or customerdetails
+      let orderLat = null;
+      let orderLng = null;
+      
+      if (order.lat_log) {
+        const [lat, lng] = order.lat_log.split(',').map(Number);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          orderLat = lat;
+          orderLng = lng;
+        }
+      }
+      
+      // If no lat_log, try to get from customer location
+      if (!orderLat || !orderLng) {
+        const Customer = require('../models/Customer');
+        if (order.customer_id) {
+          const customer = await Customer.findById(order.customer_id);
+          if (customer && customer.lat_log) {
+            const [lat, lng] = customer.lat_log.split(',').map(Number);
+            if (!isNaN(lat) && !isNaN(lng)) {
+              orderLat = lat;
+              orderLng = lng;
+            }
+          }
+        }
+      }
+      
+      // If no order location, we'll still proceed to select random 'N' type users
+      if (!orderLat || !orderLng) {
+        console.log(`⚠️  Order location not found. Will select random 'N' type users instead.`);
+      } else {
+        console.log(`📍 Order location: ${orderLat}, ${orderLng}`);
+      }
+      
+      // Find all 'N' type users (new users)
+      const { getDynamoDBClient } = require('../config/dynamodb');
+      const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+      const client = getDynamoDBClient();
+      
+      let lastKey = null;
+      const nUsers = [];
+      
+      do {
+        const params = {
+          TableName: 'users',
+          FilterExpression: 'user_type = :typeN AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+          ExpressionAttributeValues: {
+            ':typeN': 'N',
+            ':deleted': 2
+          }
+        };
+        
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        
+        if (response.Items) {
+          nUsers.push(...response.Items);
+        }
+        
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+      
+      console.log(`📊 Found ${nUsers.length} 'N' type users`);
+      
+      // Batch fetch all customer locations at once (optimization)
+      const Customer = require('../models/Customer');
+      const userIds = nUsers.map(u => u.id);
+      console.log(`🔍 Batch fetching customer locations for ${userIds.length} users...`);
+      const customers = await Customer.findByUserIds(userIds);
+      
+      // Create a map of user_id -> customer for quick lookup
+      const customerMap = {};
+      customers.forEach(customer => {
+        if (customer.user_id) {
+          customerMap[customer.user_id] = customer;
+        }
+      });
+      
+      console.log(`✅ Found ${customers.length} customer records with locations`);
+      
+      // Calculate distance for each user and filter by radius (only if we have order location)
+      const R = 6371; // Earth's radius in km
+      let nearbyUsers = [];
+      
+      if (orderLat && orderLng) {
+        // Only calculate distances if we have order location
+        for (const user of nUsers) {
+          const customer = customerMap[user.id];
+          
+          if (customer && customer.lat_log) {
+            const [userLat, userLng] = customer.lat_log.split(',').map(Number);
+            if (!isNaN(userLat) && !isNaN(userLng)) {
+              // Calculate distance using Haversine formula
+              const dLat = (userLat - orderLat) * Math.PI / 180;
+              const dLng = (userLng - orderLng) * Math.PI / 180;
+              const a =
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(orderLat * Math.PI / 180) * Math.cos(userLat * Math.PI / 180) *
+                Math.sin(dLng / 2) * Math.sin(dLng / 2);
+              const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+              const distance = R * c;
+              
+              if (distance <= parseFloat(radius)) {
+                nearbyUsers.push({
+                  user_id: user.id,
+                  name: user.name || 'N/A',
+                  mobile: user.mob_num || 'N/A',
+                  distance: distance.toFixed(2)
+                });
+              }
+            }
+          }
+        }
+        
+        // Sort by distance
+        nearbyUsers.sort((a, b) => parseFloat(a.distance) - parseFloat(b.distance));
+        console.log(`✅ Found ${nearbyUsers.length} 'N' type users within ${radius} km`);
+      } else {
+        console.log(`⚠️  No order location - will select random 'N' type users`);
+      }
+      
+      // Get current notified_vendor_ids and nearby_n_vendors (need this before random selection)
+      let currentVendorIds = [];
+      if (order.notified_vendor_ids) {
+        try {
+          if (typeof order.notified_vendor_ids === 'string') {
+            currentVendorIds = JSON.parse(order.notified_vendor_ids);
+          } else {
+            currentVendorIds = order.notified_vendor_ids;
+          }
+          if (!Array.isArray(currentVendorIds)) {
+            currentVendorIds = [currentVendorIds];
+          }
+        } catch (e) {
+          console.error('Error parsing notified_vendor_ids:', e);
+          currentVendorIds = [];
+        }
+      }
+      
+      let alreadyNotifiedNUsers = [];
+      if (order.nearby_n_vendors) {
+        try {
+          if (typeof order.nearby_n_vendors === 'string') {
+            alreadyNotifiedNUsers = JSON.parse(order.nearby_n_vendors);
+          } else {
+            alreadyNotifiedNUsers = order.nearby_n_vendors;
+          }
+          if (!Array.isArray(alreadyNotifiedNUsers)) {
+            alreadyNotifiedNUsers = [alreadyNotifiedNUsers];
+          }
+        } catch (e) {
+          console.error('Error parsing nearby_n_vendors:', e);
+          alreadyNotifiedNUsers = [];
+        }
+      }
+      
+      // Get already notified IDs set
+      const alreadyNotifiedIds = new Set(alreadyNotifiedNUsers.map(id => String(id)));
+      
+      // If no nearby users found within 20 km, select 5 random 'N' type users (excluding already notified)
+      if (nearbyUsers.length === 0) {
+        console.log(`⚠️  No 'N' type users found within ${radius} km. Selecting 5 random 'N' type users instead...`);
+        
+        // Select 5 random 'N' type users (exclude already notified, NO location check required)
+        console.log(`🔍 Debug: nUsers.length = ${nUsers.length}, alreadyNotifiedIds.size = ${alreadyNotifiedIds.size}`);
+        console.log(`🔍 Debug: Sample nUsers IDs: ${nUsers.slice(0, 3).map(u => u.id).join(', ')}`);
+        console.log(`🔍 Debug: Already notified IDs: ${Array.from(alreadyNotifiedIds).slice(0, 5).join(', ')}`);
+        
+        const availableUsers = nUsers.filter(user => {
+          const userIdStr = String(user.id);
+          const isNotAlreadyNotified = !alreadyNotifiedIds.has(userIdStr);
+          return isNotAlreadyNotified;
+        });
+        
+        console.log(`📊 Total 'N' type users: ${nUsers.length}, Already notified: ${alreadyNotifiedNUsers.length}, Available for random: ${availableUsers.length}`);
+        
+        if (availableUsers.length === 0) {
+          console.log(`⚠️  WARNING: No available users after filtering! This should not happen if nUsers.length > 0`);
+        }
+        
+        // Shuffle array and take first 5 (random selection) - no location requirement
+        const shuffled = [...availableUsers].sort(() => Math.random() - 0.5);
+        const randomUsers = shuffled.slice(0, Math.min(5, availableUsers.length));
+        
+        console.log(`🎲 Randomly selected ${randomUsers.length} users from ${availableUsers.length} available`);
+        
+        nearbyUsers = randomUsers.map(user => {
+          const customer = customerMap[user.id];
+          let distance = 'N/A';
+          
+          // Calculate distance if we have order location and customer location (optional, for display only)
+          if (orderLat && orderLng && customer && customer.lat_log) {
+            const [userLat, userLng] = customer.lat_log.split(',').map(Number);
+            if (!isNaN(userLat) && !isNaN(userLng)) {
+              const R = 6371; // Earth's radius in km
+              const dLat = (userLat - orderLat) * Math.PI / 180;
+              const dLng = (userLng - orderLng) * Math.PI / 180;
+              const a =
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(orderLat * Math.PI / 180) * Math.cos(userLat * Math.PI / 180) *
+                Math.sin(dLng / 2) * Math.sin(dLng / 2);
+              const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+              distance = (R * c).toFixed(2);
+            }
+          }
+          
+          return {
+            user_id: user.id,
+            name: user.name || 'N/A',
+            mobile: user.mob_num || 'N/A',
+            distance: distance,
+            is_random: true // Flag to indicate this is a random selection
+          };
+        });
+        
+        console.log(`✅ Selected ${nearbyUsers.length} random 'N' type users (from ${availableUsers.length} available, ${alreadyNotifiedNUsers.length} already notified)`);
+      }
+      
+      // Filter out already notified users (for nearby users that were found within radius)
+      let newNearbyUsers = nearbyUsers.filter(u => !alreadyNotifiedIds.has(String(u.user_id)));
+      
+      console.log(`🔍 After filtering: ${newNearbyUsers.length} new users from ${nearbyUsers.length} nearby users (${alreadyNotifiedIds.size} already notified)`);
+      
+      // If random selection was used and we have less than 5 new users, select more random users
+      if (nearbyUsers.length > 0 && nearbyUsers[0] && nearbyUsers[0].is_random && newNearbyUsers.length < 5) {
+        // Get already selected random user IDs (from nearbyUsers)
+        const alreadySelectedIds = new Set(nearbyUsers.map(u => String(u.user_id)));
+        
+        // Select additional random users to reach 5 total (NO location requirement)
+        const additionalUsersNeeded = 5 - newNearbyUsers.length;
+        const additionalAvailableUsers = nUsers.filter(user => {
+          const userIdStr = String(user.id);
+          const isNotAlreadyNotified = !alreadyNotifiedIds.has(userIdStr);
+          const isNotAlreadySelected = !alreadySelectedIds.has(userIdStr);
+          return isNotAlreadyNotified && isNotAlreadySelected;
+        });
+        
+        console.log(`📊 Need ${additionalUsersNeeded} more users, ${additionalAvailableUsers.length} available`);
+        
+        const additionalUsers = additionalAvailableUsers
+          .sort(() => Math.random() - 0.5)
+          .slice(0, additionalUsersNeeded);
+        
+        // Add additional random users to nearbyUsers array
+        additionalUsers.forEach(user => {
+          const customer = customerMap[user.id];
+          let distance = 'N/A';
+          
+          // Calculate distance if we have order location and customer location (optional, for display only)
+          if (orderLat && orderLng && customer && customer.lat_log) {
+            const [userLat, userLng] = customer.lat_log.split(',').map(Number);
+            if (!isNaN(userLat) && !isNaN(userLng)) {
+              const R = 6371;
+              const dLat = (userLat - orderLat) * Math.PI / 180;
+              const dLng = (userLng - orderLng) * Math.PI / 180;
+              const a =
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(orderLat * Math.PI / 180) * Math.cos(userLat * Math.PI / 180) *
+                Math.sin(dLng / 2) * Math.sin(dLng / 2);
+              const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+              distance = (R * c).toFixed(2);
+            }
+          }
+          
+          nearbyUsers.push({
+            user_id: user.id,
+            name: user.name || 'N/A',
+            mobile: user.mob_num || 'N/A',
+            distance: distance,
+            is_random: true
+          });
+        });
+        
+        // Re-filter to get final list of new users
+        newNearbyUsers = nearbyUsers.filter(u => !alreadyNotifiedIds.has(String(u.user_id)));
+        
+        if (additionalUsers.length > 0) {
+          console.log(`✅ Added ${additionalUsers.length} additional random users to reach ${newNearbyUsers.length} total`);
+        }
+      }
+      
+      console.log(`📋 Final newNearbyUsers count: ${newNearbyUsers.length}, User IDs: ${newNearbyUsers.map(u => u.user_id).join(', ')}`);
+      
+      const newUserIds = newNearbyUsers.map(u => u.user_id);
+      
+      console.log(`📝 Preparing to update order ${orderId}:`);
+      console.log(`   Current notified_vendor_ids: ${currentVendorIds.length} (${currentVendorIds.slice(0, 5).join(', ')}...)`);
+      console.log(`   New user IDs to add: ${newUserIds.length} (${newUserIds.join(', ')})`);
+      console.log(`   Already notified N users: ${alreadyNotifiedNUsers.length}`);
+      
+      // Add new user IDs to both notified_vendor_ids and nearby_n_vendors (avoid duplicates)
+      const allVendorIds = [...new Set([...currentVendorIds, ...newUserIds])];
+      const allNearbyNVendorIds = [...new Set([...alreadyNotifiedNUsers, ...newUserIds])];
+      
+      console.log(`   Final notified_vendor_ids count: ${allVendorIds.length}`);
+      console.log(`   Final nearby_n_vendors count: ${allNearbyNVendorIds.length}`);
+      console.log(`   Final notified_vendor_ids: ${allVendorIds.join(', ')}`);
+      
+      // Update order
+      const updateResult = await Order.updateById(orderId, {
+        notified_vendor_ids: JSON.stringify(allVendorIds),
+        nearby_n_vendors: JSON.stringify(allNearbyNVendorIds)
+      });
+      
+      console.log(`✅ Order ${orderId} updated in database with ${newUserIds.length} new 'N' type users`);
+      console.log(`   Update result:`, updateResult);
+      
+      // Verify the update by fetching the order again
+      try {
+        const updatedOrder = await Order.getById(orderId);
+        if (updatedOrder && updatedOrder.notified_vendor_ids) {
+          let verifiedIds = updatedOrder.notified_vendor_ids;
+          if (typeof verifiedIds === 'string') {
+            verifiedIds = JSON.parse(verifiedIds);
+          }
+          console.log(`✅ Verified: Order ${orderId} now has ${Array.isArray(verifiedIds) ? verifiedIds.length : 0} notified_vendor_ids in database`);
+          console.log(`   Verified IDs: ${Array.isArray(verifiedIds) ? verifiedIds.join(', ') : 'N/A'}`);
+        } else {
+          console.warn(`⚠️  Warning: Could not verify update - order.notified_vendor_ids is missing or null`);
+        }
+      } catch (verifyErr) {
+        console.error('Error verifying order update:', verifyErr);
+      }
+      
+      // Clear order cache to ensure fresh data is fetched
+      try {
+        const RedisCache = require('../utils/redisCache');
+        const cacheKey = RedisCache.orderKey(orderId);
+        await RedisCache.delete(cacheKey);
+        console.log(`🗑️  Cleared order cache for ${orderId}`);
+      } catch (cacheErr) {
+        console.error('Error clearing order cache:', cacheErr);
+      }
+      
+      console.log(`✅ Updated order ${orderId} with ${newUserIds.length} new 'N' type users (${alreadyNotifiedNUsers.length} already notified)`);
+      
+      // Send SMS notifications to newly added vendors
+      if (newNearbyUsers.length > 0) {
+        try {
+          console.log(`📱 [SMS] Sending SMS notifications to ${newNearbyUsers.length} newly added vendor(s)...`);
+          
+          // Extract material name from order details for SMS
+          let materialName = 'scrap';
+          try {
+            const orderDetailsObj = typeof order.orderdetails === 'string'
+              ? JSON.parse(order.orderdetails)
+              : order.orderdetails;
+            
+            if (orderDetailsObj && Array.isArray(orderDetailsObj) && orderDetailsObj.length > 0) {
+              const firstItem = orderDetailsObj[0];
+              materialName = firstItem.material_name || firstItem.name || firstItem.category_name || 'scrap';
+            } else if (orderDetailsObj && typeof orderDetailsObj === 'object') {
+              const firstKey = Object.keys(orderDetailsObj)[0];
+              if (firstKey) {
+                materialName = firstKey;
+              }
+            }
+          } catch (parseErr) {
+            console.warn('⚠️  Could not parse order details for SMS material name:', parseErr.message);
+          }
+          
+          // Build SMS message
+          const orderNumber = order.order_number || order.order_no || 'N/A';
+          const payableAmount = Math.round(order.estim_price || order.estimated_price || 0);
+          const firstVar = `${orderNumber} of ${materialName}`;
+          const secondVar = `${payableAmount}`;
+          const smsMessage = `Scrapmate pickup request ${firstVar}. Payable amount Rs${secondVar}. Open B2C dashboard to accept.`;
+          
+          console.log(`📱 [SMS] Message: ${smsMessage}`);
+          
+          // SMS configuration
+          const BulkMessageNotification = require('../models/BulkMessageNotification');
+          const http = require('http');
+          const querystring = require('querystring');
+          const User = require('../models/User');
+          
+          const SMS_CONFIG = {
+            username: 'scrapmate',
+            sendername: 'SCRPMT',
+            smstype: 'TRANS',
+            apikey: '1bf0131f-d1f2-49ed-9c57-19f1b4400f32',
+            peid: '1701173389563945545',
+            templateid: '1707176812500484578'
+          };
+          
+          // Helper function to send SMS
+          const sendSMS = (phoneNumber, message) => {
+            return new Promise((resolve, reject) => {
+              const params = querystring.stringify({
+                username: SMS_CONFIG.username,
+                message: message,
+                sendername: SMS_CONFIG.sendername,
+                smstype: SMS_CONFIG.smstype,
+                numbers: phoneNumber,
+                apikey: SMS_CONFIG.apikey,
+                peid: SMS_CONFIG.peid,
+                templateid: SMS_CONFIG.templateid,
+              });
+              
+              const options = {
+                hostname: 'sms.bulksmsind.in',
+                path: `/v2/sendSMS?${params}`,
+                method: 'GET',
+              };
+              
+              const req = http.request(options, (res) => {
+                let data = '';
+                res.on('data', (chunk) => { data += chunk; });
+                res.on('end', () => {
+                  try {
+                    const response = JSON.parse(data);
+                    resolve(response);
+                  } catch (e) {
+                    resolve({ raw: data });
+                  }
+                });
+              });
+              
+              req.on('error', (error) => reject(error));
+              req.end();
+            });
+          };
+          
+          // Helper function to extract phone number
+          const extractPhoneNumber = (phone) => {
+            if (!phone) return null;
+            let phoneStr = String(phone);
+            let cleaned = phoneStr.replace(/\s+/g, '').replace(/[^\d+]/g, '');
+            if (cleaned.startsWith('+91')) {
+              cleaned = cleaned.substring(3);
+            } else if (cleaned.startsWith('91') && cleaned.length === 12) {
+              cleaned = cleaned.substring(2);
+            }
+            if (cleaned.length === 10 && /^[6-9]\d{9}$/.test(cleaned)) {
+              return cleaned;
+            }
+            return null;
+          };
+          
+          // Send SMS to each newly added vendor
+          const smsPromises = newNearbyUsers.map(async (vendorInfo) => {
+            try {
+              const vendorUserId = vendorInfo.user_id;
+              console.log(`📱 [SMS] Processing SMS for vendor user_id: ${vendorUserId}`);
+              
+              // Get vendor user details to get phone number
+              const vendorUser = await User.findById(vendorUserId);
+              if (!vendorUser) {
+                console.warn(`⚠️  [SMS] Vendor user (user_id: ${vendorUserId}) not found in database`);
+                return { success: false, user_id: vendorUserId, reason: 'user_not_found' };
+              }
+              
+              const phoneNumber = extractPhoneNumber(vendorUser.mob_num || vendorInfo.mobile);
+              
+              if (phoneNumber) {
+                console.log(`📱 [SMS] Sending SMS to ${phoneNumber} (vendor ${vendorUserId})...`);
+                let smsResult = null;
+                try {
+                  smsResult = await sendSMS(phoneNumber, smsMessage);
+                  console.log(`📱 [SMS] API response for ${phoneNumber}:`, JSON.stringify(smsResult));
+                } catch (smsApiError) {
+                  console.error(`❌ [SMS ERROR] SMS API error for ${phoneNumber}:`, smsApiError.message);
+                  smsResult = { error: smsApiError.message, status: 'error' };
+                }
+                
+                // Save to bulk_message_notifications table
+                try {
+                  const notificationRecord = await BulkMessageNotification.save({
+                    phone_number: phoneNumber,
+                    business_data: {
+                      order_id: order.id,
+                      order_number: orderNumber,
+                      vendor_user_id: vendorUserId,
+                      material_name: materialName,
+                      amount: payableAmount
+                    },
+                    message: smsMessage,
+                    status: (() => {
+                      if (Array.isArray(smsResult) && smsResult.length > 0) {
+                        return smsResult[0].status === 'success' ? 'sent' : 'failed';
+                      } else if (smsResult && typeof smsResult === 'object') {
+                        return (smsResult.status === 'success' || smsResult.success === true) ? 'sent' : 'failed';
+                      }
+                      return 'failed';
+                    })(),
+                    language: 'en'
+                  });
+                  console.log(`📱 [SMS] ✅ Saved SMS record to database: ${notificationRecord.id}`);
+                } catch (dbErr) {
+                  console.error(`❌ [SMS ERROR] Error saving SMS to database:`, dbErr.message);
+                }
+                
+                // Check if SMS was successful
+                let isSuccess = false;
+                if (Array.isArray(smsResult) && smsResult.length > 0) {
+                  isSuccess = smsResult[0].status === 'success';
+                } else if (smsResult && typeof smsResult === 'object') {
+                  isSuccess = smsResult.status === 'success' || smsResult.success === true;
+                }
+                
+                if (isSuccess) {
+                  console.log(`✅ [SMS] SMS sent successfully to vendor (user_id: ${vendorUserId}, phone: ${phoneNumber})`);
+                } else {
+                  console.warn(`⚠️  [SMS] SMS may have failed for vendor (user_id: ${vendorUserId}, phone: ${phoneNumber})`);
+                }
+                
+                return { success: isSuccess, user_id: vendorUserId, phone: phoneNumber, smsResult };
+              } else {
+                console.warn(`⚠️  [SMS] Invalid phone number for vendor (user_id: ${vendorUserId}): ${vendorUser.mob_num || vendorInfo.mobile}`);
+                return { success: false, user_id: vendorUserId, reason: 'invalid_phone' };
+              }
+            } catch (err) {
+              console.error(`❌ [SMS ERROR] Error sending SMS to vendor (user_id: ${vendorInfo.user_id}):`, err.message);
+              return { success: false, user_id: vendorInfo.user_id, error: err.message };
+            }
+          });
+          
+          // Wait for all SMS to be sent
+          console.log(`📱 [SMS] Waiting for all SMS promises to complete for ${newNearbyUsers.length} vendors...`);
+          const smsResults = await Promise.allSettled(smsPromises);
+          console.log(`📱 [SMS] All SMS promises completed. Total results: ${smsResults.length}`);
+          
+          const smsSuccessCount = smsResults.filter(r => r.status === 'fulfilled' && r.value?.success).length;
+          const smsFailedResults = smsResults.filter(r => r.status === 'fulfilled' && !r.value?.success);
+          const smsRejectedResults = smsResults.filter(r => r.status === 'rejected');
+          
+          console.log(`📱 [SMS] Summary: ${smsSuccessCount} successful, ${smsFailedResults.length} failed, ${smsRejectedResults.length} rejected`);
+          console.log(`📱 [SMS] Sent SMS notifications to ${smsSuccessCount}/${newNearbyUsers.length} newly added vendors`);
+          
+          // Detailed logging for each vendor
+          console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+          console.log(`📱 [SMS] Detailed SMS Status for ${newNearbyUsers.length} Vendors:`);
+          console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+          
+          smsResults.forEach((result, index) => {
+            const vendorInfo = newNearbyUsers[index];
+            if (result.status === 'fulfilled') {
+              const smsResult = result.value;
+              if (smsResult.success) {
+                console.log(`✅ [SMS] Vendor ${index + 1}/${newNearbyUsers.length}:`);
+                console.log(`   User ID: ${smsResult.user_id}`);
+                console.log(`   Phone: ${smsResult.phone}`);
+                console.log(`   Status: ✅ SMS SENT SUCCESSFULLY`);
+                if (smsResult.smsResult && Array.isArray(smsResult.smsResult) && smsResult.smsResult[0] && smsResult.smsResult[0].msgid) {
+                  console.log(`   Message ID: ${smsResult.smsResult[0].msgid}`);
+                }
+              } else {
+                console.log(`❌ [SMS] Vendor ${index + 1}/${newNearbyUsers.length}:`);
+                console.log(`   User ID: ${smsResult.user_id || vendorInfo?.user_id || 'N/A'}`);
+                console.log(`   Phone: ${smsResult.phone || vendorInfo?.mobile || 'N/A'}`);
+                console.log(`   Status: ❌ SMS FAILED`);
+                console.log(`   Reason: ${smsResult.reason || smsResult.error || 'Unknown error'}`);
+                if (smsResult.smsResult) {
+                  console.log(`   API Response: ${JSON.stringify(smsResult.smsResult)}`);
+                }
+              }
+            } else {
+              console.log(`❌ [SMS] Vendor ${index + 1}/${newNearbyUsers.length}:`);
+              console.log(`   User ID: ${vendorInfo?.user_id || 'N/A'}`);
+              console.log(`   Status: ❌ SMS PROMISE REJECTED`);
+              console.log(`   Error: ${result.reason?.message || result.reason || 'Unknown error'}`);
+              if (result.reason?.stack) {
+                console.log(`   Stack: ${result.reason.stack.split('\n')[0]}`);
+              }
+            }
+          });
+          
+          console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+          console.log(`📊 [SMS] Final Summary:`);
+          console.log(`   ✅ Successfully sent: ${smsSuccessCount}/${newNearbyUsers.length}`);
+          console.log(`   ❌ Failed: ${smsFailedResults.length}/${newNearbyUsers.length}`);
+          console.log(`   ⚠️  Rejected: ${smsRejectedResults.length}/${newNearbyUsers.length}`);
+          console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+        } catch (smsError) {
+          console.error('❌ [SMS ERROR] Error sending SMS notifications:', smsError.message);
+          // Don't fail the entire operation if SMS fails
+        }
+      }
+      
+      // Determine message based on whether random users were selected
+      let msg = '';
+      if (nearbyUsers.length > 0 && nearbyUsers[0].is_random) {
+        msg = `No 'N' type users found within ${radius} km. Selected ${newUserIds.length} random 'N' type users and added to order.`;
+      } else if (nearbyUsers.length === 0) {
+        msg = '0 users found within 20 km range. Not notified - No \'N\' type users are within 20 km of this order location.';
+      } else if (newUserIds.length === 0) {
+        msg = `All ${nearbyUsers.length} 'N' type users within 20 km were already notified.`;
+      } else {
+        msg = `Added ${newUserIds.length} nearby 'N' type users to order`;
+      }
+      
+      return res.json({
+        status: 'success',
+        msg: msg,
+        data: {
+          order_id: orderId,
+          added_users: newNearbyUsers,
+          total_notified_vendors: allVendorIds.length,
+          previous_count: currentVendorIds.length,
+          new_count: newUserIds.length,
+          already_notified_count: alreadyNotifiedNUsers.length,
+          total_found: nearbyUsers.length,
+          is_random_selection: nearbyUsers.length > 0 && nearbyUsers[0].is_random || false
+        }
+      });
+      
+    } catch (error) {
+      console.error('❌ Error adding nearby N users to order:', error);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Failed to add nearby users',
+        data: null
+      });
+    }
+  }
+
+  // Add nearby 'D' type users to order's notified_vendor_ids
+  static async addNearbyDUsersToOrder(req, res) {
+    try {
+      const { orderId } = req.params;
+      const { radius = 20 } = req.query; // Default 20 km radius
+      
+      console.log(`🟢 AdminPanelController.addNearbyDUsersToOrder called`, { orderId, radius });
+      
+      // Get order details
+      const order = await Order.getById(orderId);
+      if (!order) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Order not found',
+          data: null
+        });
+      }
+      
+      // Get order location from lat_log or customerdetails
+      let orderLat = null;
+      let orderLng = null;
+      
+      if (order.lat_log) {
+        const [lat, lng] = order.lat_log.split(',').map(Number);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          orderLat = lat;
+          orderLng = lng;
+        }
+      }
+      
+      // If no lat_log, try to get from customer location
+      if (!orderLat || !orderLng) {
+        const Customer = require('../models/Customer');
+        if (order.customer_id) {
+          const customer = await Customer.findById(order.customer_id);
+          if (customer && customer.lat_log) {
+            const [lat, lng] = customer.lat_log.split(',').map(Number);
+            if (!isNaN(lat) && !isNaN(lng)) {
+              orderLat = lat;
+              orderLng = lng;
+            }
+          }
+        }
+      }
+      
+      if (!orderLat || !orderLng) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Order location not found. Cannot find nearby users without location data.',
+          data: null
+        });
+      }
+      
+      console.log(`📍 Order location: ${orderLat}, ${orderLng}`);
+      
+      // Find all 'D' type users (delivery users)
+      const { getDynamoDBClient } = require('../config/dynamodb');
+      const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+      const client = getDynamoDBClient();
+      
+      let lastKey = null;
+      const dUsers = [];
+      
+      do {
+        const params = {
+          TableName: 'users',
+          FilterExpression: 'user_type = :typeD AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+          ExpressionAttributeValues: {
+            ':typeD': 'D',
+            ':deleted': 2
+          }
+        };
+        
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        
+        if (response.Items) {
+          dUsers.push(...response.Items);
+        }
+        
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+      
+      console.log(`📊 Found ${dUsers.length} 'D' type users`);
+      
+      // Batch fetch all delivery boy locations at once (optimization)
+      const DeliveryBoy = require('../models/DeliveryBoy');
+      const userIds = dUsers.map(u => u.id);
+      console.log(`🔍 Batch fetching delivery boy locations for ${userIds.length} users...`);
+      
+      // Fetch delivery boys in parallel batches
+      const deliveryBoys = [];
+      const batchSize = 10;
+      
+      for (let i = 0; i < userIds.length; i += batchSize) {
+        const batch = userIds.slice(i, i + batchSize);
+        const batchDeliveryBoys = await Promise.all(
+          batch.map(async (userId) => {
+            try {
+              return await DeliveryBoy.findByUserId(userId);
+            } catch (err) {
+              console.error(`Error fetching delivery boy for user ${userId}:`, err);
+              return null;
+            }
+          })
+        );
+        deliveryBoys.push(...batchDeliveryBoys.filter(db => db !== null));
+      }
+      
+      // Create a map of user_id -> delivery boy for quick lookup
+      const deliveryBoyMap = {};
+      deliveryBoys.forEach(db => {
+        if (db && db.user_id) {
+          deliveryBoyMap[db.user_id] = db;
+        }
+      });
+      
+      console.log(`✅ Found ${deliveryBoys.length} delivery boy records with locations`);
+      
+      // Calculate distance for each user and filter by radius
+      const R = 6371; // Earth's radius in km
+      const nearbyUsers = [];
+      
+      for (const user of dUsers) {
+        const deliveryBoy = deliveryBoyMap[user.id];
+        
+        if (deliveryBoy && deliveryBoy.lat_log) {
+          const [userLat, userLng] = deliveryBoy.lat_log.split(',').map(Number);
+          if (!isNaN(userLat) && !isNaN(userLng)) {
+            // Calculate distance using Haversine formula
+            const dLat = (userLat - orderLat) * Math.PI / 180;
+            const dLng = (userLng - orderLng) * Math.PI / 180;
+            const a =
+              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(orderLat * Math.PI / 180) * Math.cos(userLat * Math.PI / 180) *
+              Math.sin(dLng / 2) * Math.sin(dLng / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            const distance = R * c;
+            
+            if (distance <= parseFloat(radius)) {
+              nearbyUsers.push({
+                user_id: user.id,
+                name: user.name || 'N/A',
+                mobile: user.mob_num || 'N/A',
+                distance: distance.toFixed(2)
+              });
+            }
+          }
+        }
+      }
+      
+      // Sort by distance
+      nearbyUsers.sort((a, b) => parseFloat(a.distance) - parseFloat(b.distance));
+      
+      console.log(`✅ Found ${nearbyUsers.length} 'D' type users within ${radius} km`);
+      
+      // Get current notified_vendor_ids and nearby_d_vendors
+      let currentVendorIds = [];
+      if (order.notified_vendor_ids) {
+        try {
+          if (typeof order.notified_vendor_ids === 'string') {
+            currentVendorIds = JSON.parse(order.notified_vendor_ids);
+          } else {
+            currentVendorIds = order.notified_vendor_ids;
+          }
+          if (!Array.isArray(currentVendorIds)) {
+            currentVendorIds = [currentVendorIds];
+          }
+        } catch (e) {
+          console.error('Error parsing notified_vendor_ids:', e);
+          currentVendorIds = [];
+        }
+      }
+      
+      let alreadyNotifiedDUsers = [];
+      if (order.nearby_d_vendors) {
+        try {
+          if (typeof order.nearby_d_vendors === 'string') {
+            alreadyNotifiedDUsers = JSON.parse(order.nearby_d_vendors);
+          } else {
+            alreadyNotifiedDUsers = order.nearby_d_vendors;
+          }
+          if (!Array.isArray(alreadyNotifiedDUsers)) {
+            alreadyNotifiedDUsers = [alreadyNotifiedDUsers];
+          }
+        } catch (e) {
+          console.error('Error parsing nearby_d_vendors:', e);
+          alreadyNotifiedDUsers = [];
+        }
+      }
+      
+      // Filter out already notified users
+      const alreadyNotifiedIds = new Set(alreadyNotifiedDUsers.map(id => String(id)));
+      const newNearbyUsers = nearbyUsers.filter(u => !alreadyNotifiedIds.has(String(u.user_id)));
+      const newUserIds = newNearbyUsers.map(u => u.user_id);
+      
+      // Add new user IDs to both notified_vendor_ids and nearby_d_vendors (avoid duplicates)
+      const allVendorIds = [...new Set([...currentVendorIds, ...newUserIds])];
+      const allNearbyDVendorIds = [...new Set([...alreadyNotifiedDUsers, ...newUserIds])];
+      
+      // Update order
+      await Order.updateById(orderId, {
+        notified_vendor_ids: JSON.stringify(allVendorIds),
+        nearby_d_vendors: JSON.stringify(allNearbyDVendorIds)
+      });
+      
+      // Clear order cache to ensure fresh data is fetched
+      try {
+        const cacheKey = RedisCache.orderKey(orderId);
+        await RedisCache.delete(cacheKey);
+        console.log(`🗑️  Cleared order cache for ${orderId}`);
+      } catch (cacheErr) {
+        console.error('Error clearing order cache:', cacheErr);
+      }
+      
+      console.log(`✅ Updated order ${orderId} with ${newUserIds.length} new 'D' type users (${alreadyNotifiedDUsers.length} already notified)`);
+      
+      // Send SMS notifications to newly added vendors
+      if (newNearbyUsers.length > 0) {
+        try {
+          console.log(`📱 [SMS] Sending SMS notifications to ${newNearbyUsers.length} newly added 'D' type vendor(s)...`);
+          
+          // Extract material name from order details for SMS
+          let materialName = 'scrap';
+          try {
+            const orderDetailsObj = typeof order.orderdetails === 'string'
+              ? JSON.parse(order.orderdetails)
+              : order.orderdetails;
+            
+            if (orderDetailsObj && Array.isArray(orderDetailsObj) && orderDetailsObj.length > 0) {
+              const firstItem = orderDetailsObj[0];
+              materialName = firstItem.material_name || firstItem.name || firstItem.category_name || 'scrap';
+            } else if (orderDetailsObj && typeof orderDetailsObj === 'object') {
+              const firstKey = Object.keys(orderDetailsObj)[0];
+              if (firstKey) {
+                materialName = firstKey;
+              }
+            }
+          } catch (parseErr) {
+            console.warn('⚠️  Could not parse order details for SMS material name:', parseErr.message);
+          }
+          
+          // Build SMS message
+          const orderNumber = order.order_number || order.order_no || 'N/A';
+          const payableAmount = Math.round(order.estim_price || order.estimated_price || 0);
+          const firstVar = `${orderNumber} of ${materialName}`;
+          const secondVar = `${payableAmount}`;
+          const smsMessage = `Scrapmate pickup request ${firstVar}. Payable amount Rs${secondVar}. Open B2C dashboard to accept.`;
+          
+          console.log(`📱 [SMS] Message: ${smsMessage}`);
+          
+          // SMS configuration
+          const BulkMessageNotification = require('../models/BulkMessageNotification');
+          const http = require('http');
+          const querystring = require('querystring');
+          const User = require('../models/User');
+          
+          const SMS_CONFIG = {
+            username: 'scrapmate',
+            sendername: 'SCRPMT',
+            smstype: 'TRANS',
+            apikey: '1bf0131f-d1f2-49ed-9c57-19f1b4400f32',
+            peid: '1701173389563945545',
+            templateid: '1707176812500484578'
+          };
+          
+          // Helper function to send SMS
+          const sendSMS = (phoneNumber, message) => {
+            return new Promise((resolve, reject) => {
+              const params = querystring.stringify({
+                username: SMS_CONFIG.username,
+                message: message,
+                sendername: SMS_CONFIG.sendername,
+                smstype: SMS_CONFIG.smstype,
+                numbers: phoneNumber,
+                apikey: SMS_CONFIG.apikey,
+                peid: SMS_CONFIG.peid,
+                templateid: SMS_CONFIG.templateid,
+              });
+              
+              const options = {
+                hostname: 'sms.bulksmsind.in',
+                path: `/v2/sendSMS?${params}`,
+                method: 'GET',
+              };
+              
+              const req = http.request(options, (res) => {
+                let data = '';
+                res.on('data', (chunk) => { data += chunk; });
+                res.on('end', () => {
+                  try {
+                    const response = JSON.parse(data);
+                    resolve(response);
+                  } catch (e) {
+                    resolve({ raw: data });
+                  }
+                });
+              });
+              
+              req.on('error', (error) => reject(error));
+              req.end();
+            });
+          };
+          
+          // Helper function to extract phone number
+          const extractPhoneNumber = (phone) => {
+            if (!phone) return null;
+            let phoneStr = String(phone);
+            let cleaned = phoneStr.replace(/\s+/g, '').replace(/[^\d+]/g, '');
+            if (cleaned.startsWith('+91')) {
+              cleaned = cleaned.substring(3);
+            } else if (cleaned.startsWith('91') && cleaned.length === 12) {
+              cleaned = cleaned.substring(2);
+            }
+            if (cleaned.length === 10 && /^[6-9]\d{9}$/.test(cleaned)) {
+              return cleaned;
+            }
+            return null;
+          };
+          
+          // Send SMS to each newly added vendor
+          const smsPromises = newNearbyUsers.map(async (vendorInfo) => {
+            try {
+              const vendorUserId = vendorInfo.user_id;
+              console.log(`📱 [SMS] Processing SMS for vendor user_id: ${vendorUserId}`);
+              
+              // Get vendor user details to get phone number
+              const vendorUser = await User.findById(vendorUserId);
+              if (!vendorUser) {
+                console.warn(`⚠️  [SMS] Vendor user (user_id: ${vendorUserId}) not found in database`);
+                return { success: false, user_id: vendorUserId, reason: 'user_not_found' };
+              }
+              
+              const phoneNumber = extractPhoneNumber(vendorUser.mob_num || vendorInfo.mobile);
+              
+              if (phoneNumber) {
+                console.log(`📱 [SMS] Sending SMS to ${phoneNumber} (vendor ${vendorUserId})...`);
+                let smsResult = null;
+                try {
+                  smsResult = await sendSMS(phoneNumber, smsMessage);
+                  console.log(`📱 [SMS] API response for ${phoneNumber}:`, JSON.stringify(smsResult));
+                } catch (smsApiError) {
+                  console.error(`❌ [SMS ERROR] SMS API error for ${phoneNumber}:`, smsApiError.message);
+                  smsResult = { error: smsApiError.message, status: 'error' };
+                }
+                
+                // Save to bulk_message_notifications table
+                try {
+                  const notificationRecord = await BulkMessageNotification.save({
+                    phone_number: phoneNumber,
+                    business_data: {
+                      order_id: order.id,
+                      order_number: orderNumber,
+                      vendor_user_id: vendorUserId,
+                      material_name: materialName,
+                      amount: payableAmount
+                    },
+                    message: smsMessage,
+                    status: (() => {
+                      if (Array.isArray(smsResult) && smsResult.length > 0) {
+                        return smsResult[0].status === 'success' ? 'sent' : 'failed';
+                      } else if (smsResult && typeof smsResult === 'object') {
+                        return (smsResult.status === 'success' || smsResult.success === true) ? 'sent' : 'failed';
+                      }
+                      return 'failed';
+                    })(),
+                    language: 'en'
+                  });
+                  console.log(`📱 [SMS] ✅ Saved SMS record to database: ${notificationRecord.id}`);
+                } catch (dbErr) {
+                  console.error(`❌ [SMS ERROR] Error saving SMS to database:`, dbErr.message);
+                }
+                
+                // Check if SMS was successful
+                let isSuccess = false;
+                if (Array.isArray(smsResult) && smsResult.length > 0) {
+                  isSuccess = smsResult[0].status === 'success';
+                } else if (smsResult && typeof smsResult === 'object') {
+                  isSuccess = smsResult.status === 'success' || smsResult.success === true;
+                }
+                
+                if (isSuccess) {
+                  console.log(`✅ [SMS] SMS sent successfully to vendor (user_id: ${vendorUserId}, phone: ${phoneNumber})`);
+                } else {
+                  console.warn(`⚠️  [SMS] SMS may have failed for vendor (user_id: ${vendorUserId}, phone: ${phoneNumber})`);
+                }
+                
+                return { success: isSuccess, user_id: vendorUserId, phone: phoneNumber, smsResult };
+              } else {
+                console.warn(`⚠️  [SMS] Invalid phone number for vendor (user_id: ${vendorUserId}): ${vendorUser.mob_num || vendorInfo.mobile}`);
+                return { success: false, user_id: vendorUserId, reason: 'invalid_phone' };
+              }
+            } catch (err) {
+              console.error(`❌ [SMS ERROR] Error sending SMS to vendor (user_id: ${vendorInfo.user_id}):`, err.message);
+              return { success: false, user_id: vendorInfo.user_id, error: err.message };
+            }
+          });
+          
+          // Wait for all SMS to be sent
+          console.log(`📱 [SMS] Waiting for all SMS promises to complete for ${newNearbyUsers.length} vendors...`);
+          const smsResults = await Promise.allSettled(smsPromises);
+          console.log(`📱 [SMS] All SMS promises completed. Total results: ${smsResults.length}`);
+          
+          const smsSuccessCount = smsResults.filter(r => r.status === 'fulfilled' && r.value?.success).length;
+          const smsFailedResults = smsResults.filter(r => r.status === 'fulfilled' && !r.value?.success);
+          const smsRejectedResults = smsResults.filter(r => r.status === 'rejected');
+          
+          console.log(`📱 [SMS] Summary: ${smsSuccessCount} successful, ${smsFailedResults.length} failed, ${smsRejectedResults.length} rejected`);
+          console.log(`📱 [SMS] Sent SMS notifications to ${smsSuccessCount}/${newNearbyUsers.length} newly added vendors`);
+          
+          // Detailed logging for each vendor
+          console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+          console.log(`📱 [SMS] Detailed SMS Status for ${newNearbyUsers.length} 'D' Type Vendors:`);
+          console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+          
+          smsResults.forEach((result, index) => {
+            const vendorInfo = newNearbyUsers[index];
+            if (result.status === 'fulfilled') {
+              const smsResult = result.value;
+              if (smsResult.success) {
+                console.log(`✅ [SMS] Vendor ${index + 1}/${newNearbyUsers.length}:`);
+                console.log(`   User ID: ${smsResult.user_id}`);
+                console.log(`   Phone: ${smsResult.phone}`);
+                console.log(`   Status: ✅ SMS SENT SUCCESSFULLY`);
+                if (smsResult.smsResult && Array.isArray(smsResult.smsResult) && smsResult.smsResult[0] && smsResult.smsResult[0].msgid) {
+                  console.log(`   Message ID: ${smsResult.smsResult[0].msgid}`);
+                }
+              } else {
+                console.log(`❌ [SMS] Vendor ${index + 1}/${newNearbyUsers.length}:`);
+                console.log(`   User ID: ${smsResult.user_id || vendorInfo?.user_id || 'N/A'}`);
+                console.log(`   Phone: ${smsResult.phone || vendorInfo?.mobile || 'N/A'}`);
+                console.log(`   Status: ❌ SMS FAILED`);
+                console.log(`   Reason: ${smsResult.reason || smsResult.error || 'Unknown error'}`);
+                if (smsResult.smsResult) {
+                  console.log(`   API Response: ${JSON.stringify(smsResult.smsResult)}`);
+                }
+              }
+            } else {
+              console.log(`❌ [SMS] Vendor ${index + 1}/${newNearbyUsers.length}:`);
+              console.log(`   User ID: ${vendorInfo?.user_id || 'N/A'}`);
+              console.log(`   Status: ❌ SMS PROMISE REJECTED`);
+              console.log(`   Error: ${result.reason?.message || result.reason || 'Unknown error'}`);
+              if (result.reason?.stack) {
+                console.log(`   Stack: ${result.reason.stack.split('\n')[0]}`);
+              }
+            }
+          });
+          
+          console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+          console.log(`📊 [SMS] Final Summary for 'D' Type Vendors:`);
+          console.log(`   ✅ Successfully sent: ${smsSuccessCount}/${newNearbyUsers.length}`);
+          console.log(`   ❌ Failed: ${smsFailedResults.length}/${newNearbyUsers.length}`);
+          console.log(`   ⚠️  Rejected: ${smsRejectedResults.length}/${newNearbyUsers.length}`);
+          console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+        } catch (smsError) {
+          console.error('❌ [SMS ERROR] Error sending SMS notifications:', smsError.message);
+          // Don't fail the entire operation if SMS fails
+        }
+      }
+      
+      return res.json({
+        status: 'success',
+        msg: nearbyUsers.length === 0 
+          ? '0 users found within 20 km range. Not notified - No \'D\' type users are within 20 km of this order location.'
+          : newUserIds.length === 0
+          ? `All ${nearbyUsers.length} 'D' type users within 20 km were already notified.`
+          : `Added ${newUserIds.length} nearby 'D' type users to order`,
+        data: {
+          order_id: orderId,
+          added_users: newNearbyUsers,
+          total_notified_vendors: allVendorIds.length,
+          previous_count: currentVendorIds.length,
+          new_count: newUserIds.length,
+          already_notified_count: alreadyNotifiedDUsers.length,
+          total_found: nearbyUsers.length
+        }
+      });
+      
+    } catch (error) {
+      console.error('❌ Error adding nearby D users to order:', error);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Failed to add nearby users',
+        data: null
+      });
+    }
+  }
+
+  // Add nearby bulk vendors from bulk_message_notifications and send SMS notifications
+  static async addBulkNotifiedVendors(req, res) {
+    try {
+      const { orderId } = req.params;
+      const http = require('http');
+      const querystring = require('querystring');
+      
+      console.log(`🟢 AdminPanelController.addBulkNotifiedVendors called`, { orderId });
+      
+      // Get order details
+      const order = await Order.getById(orderId);
+      if (!order) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Order not found',
+          data: null
+        });
+      }
+      
+      // Extract customer city and state from address
+      const customerAddress = order.customerdetails || order.customer_address || '';
+      let customerCity = '';
+      let customerState = '';
+      
+      const addressParts = customerAddress.split(',');
+      if (addressParts.length >= 4) {
+        customerCity = addressParts[addressParts.length - 3].trim();
+        customerState = addressParts[addressParts.length - 2].trim();
+      }
+      
+      if (!customerCity || !customerState) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Cannot extract city/state from customer address',
+          data: null
+        });
+      }
+      
+      console.log(`📍 Customer location: ${customerCity}, ${customerState}`);
+      
+      // Helper function to normalize city name
+      const normalizeCityName = (city) => {
+        if (!city) return '';
+        return city.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
+      };
+      
+      // Helper function to check if cities match
+      const isSimilarCity = (city1, city2) => {
+        if (!city1 || !city2) return false;
+        const norm1 = normalizeCityName(city1);
+        const norm2 = normalizeCityName(city2);
+        if (norm1 === norm2) return true;
+        if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
+        const aliases = {
+          'thiruvananthapuram': ['trivandrum', 'tvm'],
+          'trivandrum': ['thiruvananthapuram', 'tvm'],
+          'tvm': ['thiruvananthapuram', 'trivandrum']
+        };
+        for (const [key, values] of Object.entries(aliases)) {
+          if ((norm1 === key && values.includes(norm2)) || (norm2 === key && values.includes(norm1))) {
+            return true;
+          }
+        }
+        return false;
+      };
+      
+      // Scan bulk_message_notifications for matching vendors
+      const BulkMessageNotification = require('../models/BulkMessageNotification');
+      const { getDynamoDBClient } = require('../config/dynamodb');
+      const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+      const client = getDynamoDBClient();
+      
+      let allNotifications = [];
+      let lastKey = null;
+      
+      do {
+        const params = {
+          TableName: 'bulk_message_notifications',
+          FilterExpression: '#status = :status',
+          ExpressionAttributeNames: { '#status': 'status' },
+          ExpressionAttributeValues: { ':status': 'sent' }
+        };
+        if (lastKey) params.ExclusiveStartKey = lastKey;
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        if (response.Items) allNotifications.push(...response.Items);
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+      
+      console.log(`📊 Scanned ${allNotifications.length} bulk message notifications`);
+      
+      // Filter vendors with matching city/state
+      const matchingVendors = [];
+      for (const notification of allNotifications) {
+        const businessData = notification.business_data || {};
+        const vendorCity = businessData.city || '';
+        const vendorState = businessData.state || '';
+        
+        const cityMatch = customerCity && vendorCity && isSimilarCity(customerCity, vendorCity);
+        const stateMatch = customerState && vendorState && normalizeCityName(customerState) === normalizeCityName(vendorState);
+        
+        if (cityMatch && stateMatch) {
+          matchingVendors.push({
+            phone_number: notification.phone_number,
+            title: businessData.title || 'Vendor',
+            city: vendorCity,
+            street: businessData.street || '',
+            business_data: businessData
+          });
+        }
+      }
+      
+      // Get already notified bulk vendors (phone numbers)
+      let alreadyNotifiedBulkVendors = [];
+      if (order.bulk_notified_vendors) {
+        try {
+          if (typeof order.bulk_notified_vendors === 'string') {
+            alreadyNotifiedBulkVendors = JSON.parse(order.bulk_notified_vendors);
+          } else {
+            alreadyNotifiedBulkVendors = order.bulk_notified_vendors;
+          }
+          if (!Array.isArray(alreadyNotifiedBulkVendors)) {
+            alreadyNotifiedBulkVendors = [alreadyNotifiedBulkVendors];
+          }
+        } catch (e) {
+          console.error('Error parsing bulk_notified_vendors:', e);
+          alreadyNotifiedBulkVendors = [];
+        }
+      }
+      
+      // Filter out already notified vendors (by phone number)
+      const alreadyNotifiedPhones = new Set(alreadyNotifiedBulkVendors.map(p => String(p).trim()));
+      const newMatchingVendors = matchingVendors.filter(v => !alreadyNotifiedPhones.has(String(v.phone_number).trim()));
+      
+      // Limit to 5 vendors (excluding already notified)
+      const selectedVendors = newMatchingVendors.slice(0, 5);
+      console.log(`✅ Found ${selectedVendors.length} new matching vendors (${alreadyNotifiedBulkVendors.length} already notified, ${matchingVendors.length} total, limited to 5)`);
+      
+      if (matchingVendors.length === 0) {
+        return res.json({
+          status: 'success',
+          msg: '0 vendors available - No matching vendors found in bulk_message_notifications',
+          data: {
+            order_id: orderId,
+            vendors_notified: 0,
+            total_found: 0,
+            already_notified_count: alreadyNotifiedBulkVendors.length,
+            vendors: []
+          }
+        });
+      }
+      
+      if (selectedVendors.length === 0) {
+        return res.json({
+          status: 'success',
+          msg: `All ${matchingVendors.length} matching vendors were already notified.`,
+          data: {
+            order_id: orderId,
+            vendors_notified: 0,
+            total_found: matchingVendors.length,
+            already_notified_count: alreadyNotifiedBulkVendors.length,
+            vendors: []
+          }
+        });
+      }
+      
+      // Get customer details (name, phone, address)
+      let customerName = 'Customer';
+      let customerPhone = '';
+      let customerLocation = customerAddress; // Default to full address
+      
+      try {
+        // Try to get from order.customerdetails first
+        if (order.customerdetails) {
+          if (typeof order.customerdetails === 'object') {
+            customerName = order.customerdetails.name || order.customerdetails.customer_name || order.customerdetails.full_name || 'Customer';
+            customerPhone = order.customerdetails.phone || order.customerdetails.mobile || order.customerdetails.contact || order.customerdetails.mob_num || order.customerdetails.phone_number || '';
+            customerLocation = order.customerdetails.address || order.customerdetails.full_address || customerAddress;
+          } else if (typeof order.customerdetails === 'string') {
+            customerLocation = order.customerdetails;
+          }
+        }
+        
+        // If name/phone not found, try Customer table
+        if ((customerName === 'Customer' || !customerPhone) && order.customer_id) {
+          const Customer = require('../models/Customer');
+          const customer = await Customer.findById(order.customer_id);
+          if (customer) {
+            if (customerName === 'Customer' && customer.name) customerName = customer.name;
+            if (!customerPhone && customer.contact) customerPhone = customer.contact;
+            if (!customerLocation && customer.address) customerLocation = customer.address;
+          }
+        }
+        
+        // Fallback: try User table if customer_id is actually user_id
+        if ((customerName === 'Customer' || !customerPhone) && order.customer_id) {
+          const User = require('../models/User');
+          const user = await User.findById(order.customer_id);
+          if (user && user.user_type === 'C') {
+            if (customerName === 'Customer' && user.name) customerName = user.name;
+            if (!customerPhone && user.mob_num) customerPhone = user.mob_num;
+            // Try to find customer record by user_id
+            if ((customerName === 'Customer' || !customerPhone) && user.id) {
+              const Customer = require('../models/Customer');
+              const customerByUserId = await Customer.findByUserId(user.id);
+              if (customerByUserId) {
+                if (customerName === 'Customer' && customerByUserId.name) customerName = customerByUserId.name;
+                if (!customerPhone && customerByUserId.contact) customerPhone = customerByUserId.contact;
+                if (!customerLocation && customerByUserId.address) customerLocation = customerByUserId.address;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Could not fetch customer details:', e.message);
+      }
+      
+      // Clean phone number (remove spaces, +, etc.)
+      if (customerPhone) {
+        customerPhone = customerPhone.replace(/[\s+\-()]/g, '');
+        if (customerPhone.startsWith('91') && customerPhone.length === 12) {
+          customerPhone = customerPhone.substring(2);
+        } else if (customerPhone.startsWith('+91')) {
+          customerPhone = customerPhone.substring(3);
+        }
+      }
+      
+      console.log(`📋 Customer details: Name: ${customerName}, Phone: ${customerPhone}, Location: ${customerLocation}`);
+      
+      // Build SMS message - template: "Scrap pickup available near you. Name: {name} | Customer: {phone} | Location:{location} Download Scrapmate Partner app."
+      // No URL - message is complete without it
+      const baseTemplate = 'Scrap pickup available near you. Name: {name} | Customer: {phone} | Location:{location} Download Scrapmate Partner app.';
+      const fixedParts = 'Scrap pickup available near you. Name:  | Customer:  | Location: Download Scrapmate Partner app.';
+      const fixedLength = fixedParts.length; // 96 characters
+      const maxMessageLength = 160;
+      const availableSpace = maxMessageLength - fixedLength; // 64 characters for variables
+      
+      // Helper to trim text
+      const trimText = (text, maxLength) => {
+        if (!text || text.length <= maxLength) return text || '';
+        // Try to cut at word boundary if close to maxLength
+        const trimmed = text.substring(0, maxLength);
+        const lastSpace = trimmed.lastIndexOf(' ');
+        if (lastSpace > maxLength - 5) {
+          return trimmed.substring(0, lastSpace);
+        }
+        return text.substring(0, maxLength);
+      };
+      
+      // Helper to build message (maximize usage of available space - 64 chars for name, phone, location)
+      const buildMessage = () => {
+        // Allocate space: name gets ~40%, phone gets ~20% (phone is usually 10 digits), location gets ~40%
+        const nameMax = Math.floor(availableSpace * 0.4); // ~25 chars
+        const phoneMax = 10; // Phone numbers are typically 10 digits
+        const locationMax = availableSpace - nameMax - phoneMax; // ~29 chars
+        
+        let trimmedName = trimText(customerName, nameMax);
+        let trimmedPhone = customerPhone.substring(0, Math.min(phoneMax, customerPhone.length));
+        let trimmedLocation = trimText(customerLocation, locationMax);
+        
+        // Build message using template replacement
+        let message = baseTemplate
+          .replace('{name}', trimmedName)
+          .replace('{phone}', trimmedPhone)
+          .replace('{location}', trimmedLocation);
+        
+        // If under limit, try to maximize by adding more characters
+        if (message.length < maxMessageLength) {
+          const remaining = maxMessageLength - message.length;
+          // Try to add more to location first (usually has most content)
+          if (trimmedLocation.length < customerLocation.length) {
+            const addChars = Math.min(remaining, customerLocation.length - trimmedLocation.length);
+            trimmedLocation = customerLocation.substring(0, trimmedLocation.length + addChars);
+            message = baseTemplate
+              .replace('{name}', trimmedName)
+              .replace('{phone}', trimmedPhone)
+              .replace('{location}', trimmedLocation);
+          }
+          // Then try to add more to name
+          const newRemaining = maxMessageLength - message.length;
+          if (newRemaining > 0 && trimmedName.length < customerName.length) {
+            const addChars = Math.min(newRemaining, customerName.length - trimmedName.length);
+            trimmedName = customerName.substring(0, trimmedName.length + addChars);
+            message = baseTemplate
+              .replace('{name}', trimmedName)
+              .replace('{phone}', trimmedPhone)
+              .replace('{location}', trimmedLocation);
+          }
+        }
+        
+        // Ensure message is exactly at or under 160
+        if (message.length > maxMessageLength) {
+          // Trim from location first
+          const excess = message.length - maxMessageLength;
+          trimmedLocation = trimText(customerLocation, trimmedLocation.length - excess);
+          message = baseTemplate
+            .replace('{name}', trimmedName)
+            .replace('{phone}', trimmedPhone)
+            .replace('{location}', trimmedLocation);
+          
+          // Final safety check
+          if (message.length > maxMessageLength) {
+            message = message.substring(0, maxMessageLength);
+          }
+        }
+        
+        return message;
+      };
+      
+      // SMS API configuration
+      const SMS_CONFIG = {
+        username: 'scrapmate',
+        sendername: 'SCRPMT',
+        smstype: 'TRANS',
+        apikey: '1bf0131f-d1f2-49ed-9c57-19f1b4400f32',
+        peid: '1701173389563945545',
+        templateid: '1707176810855754593'
+      };
+      
+      // Helper to send SMS
+      const sendSMS = (phoneNumber, message) => {
+        return new Promise((resolve, reject) => {
+          const params = querystring.stringify({
+            username: SMS_CONFIG.username,
+            message: message,
+            sendername: SMS_CONFIG.sendername,
+            smstype: SMS_CONFIG.smstype,
+            numbers: phoneNumber,
+            apikey: SMS_CONFIG.apikey,
+            peid: SMS_CONFIG.peid,
+            templateid: SMS_CONFIG.templateid
+          });
+          
+          const options = {
+            hostname: 'sms.bulksmsind.in',
+            path: `/v2/sendSMS?${params}`,
+            method: 'GET'
+          };
+          
+          const req = http.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+              try {
+                resolve(JSON.parse(data));
+              } catch (e) {
+                resolve({ raw: data });
+              }
+            });
+          });
+          
+          req.on('error', reject);
+          req.end();
+        });
+      };
+      
+      // Get current notified_vendor_ids (to add found user IDs)
+      let currentVendorIds = [];
+      if (order.notified_vendor_ids) {
+        try {
+          if (typeof order.notified_vendor_ids === 'string') {
+            currentVendorIds = JSON.parse(order.notified_vendor_ids);
+          } else {
+            currentVendorIds = order.notified_vendor_ids;
+          }
+          if (!Array.isArray(currentVendorIds)) {
+            currentVendorIds = [currentVendorIds];
+          }
+        } catch (e) {
+          console.error('Error parsing notified_vendor_ids:', e);
+          currentVendorIds = [];
+        }
+      }
+      
+      // Send SMS to each vendor (using same customer details message for all)
+      const message = buildMessage();
+      console.log(`📤 [BULK SMS] Built SMS message (${message.length} chars): ${message}`);
+      console.log(`📤 [BULK SMS] Template ID: ${SMS_CONFIG.templateid}`);
+      
+      // Try to find user IDs from phone numbers for adding to notified_vendor_ids
+      const User = require('../models/User');
+      const vendorUserIds = [];
+      
+      // Find user IDs for successfully notified vendors
+      const results = [];
+      const successfullyNotifiedPhones = [];
+      
+      console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      console.log(`📱 [BULK SMS] Sending SMS to ${selectedVendors.length} vendors`);
+      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+      
+      for (let i = 0; i < selectedVendors.length; i++) {
+        const vendor = selectedVendors[i];
+        try {
+          console.log(`📱 [BULK SMS] Vendor ${i + 1}/${selectedVendors.length}:`);
+          console.log(`   Phone: ${vendor.phone_number}`);
+          console.log(`   Name: ${vendor.title}`);
+          console.log(`   City: ${vendor.city || 'N/A'}`);
+          console.log(`   Street: ${vendor.street || 'N/A'}`);
+          console.log(`   Sending SMS...`);
+          
+          const smsResult = await sendSMS(vendor.phone_number, message);
+          
+          console.log(`📱 [BULK SMS] API Response for ${vendor.phone_number}:`, JSON.stringify(smsResult, null, 2));
+          
+          // Check if SMS was successful
+          let isSuccess = false;
+          let messageId = null;
+          if (Array.isArray(smsResult) && smsResult.length > 0) {
+            isSuccess = smsResult[0].status === 'success';
+            messageId = smsResult[0].msgid || null;
+          } else if (smsResult && typeof smsResult === 'object') {
+            isSuccess = smsResult.status === 'success' || smsResult.success === true;
+            messageId = smsResult.msgid || null;
+          }
+          
+          if (isSuccess) {
+            console.log(`✅ [BULK SMS] SMS sent successfully to ${vendor.phone_number}`);
+            if (messageId) {
+              console.log(`   Message ID: ${messageId}`);
+            }
+          } else {
+            console.warn(`⚠️  [BULK SMS] SMS may have failed for ${vendor.phone_number}`);
+          }
+          
+          results.push({
+            phone_number: vendor.phone_number,
+            vendor_name: vendor.title,
+            city: vendor.city || '',
+            street: vendor.street || '',
+            success: isSuccess,
+            message: message,
+            message_id: messageId,
+            sms_response: smsResult
+          });
+          
+          if (isSuccess) {
+            successfullyNotifiedPhones.push(vendor.phone_number);
+          }
+          
+          // Try to find user ID by phone number to add to notified_vendor_ids
+          try {
+            // Clean phone number for search
+            let cleanPhone = vendor.phone_number.replace(/[\s+\-()]/g, '');
+            if (cleanPhone.startsWith('91') && cleanPhone.length === 12) {
+              cleanPhone = cleanPhone.substring(2);
+            } else if (cleanPhone.startsWith('+91')) {
+              cleanPhone = cleanPhone.substring(3);
+            }
+            
+            // Try to find user by mobile number
+            const user = await User.findByMobile(cleanPhone);
+            if (user && (user.user_type === 'S' || user.user_type === 'SR' || user.user_type === 'N' || user.user_type === 'D')) {
+              vendorUserIds.push(user.id);
+              console.log(`✅ Found user ID ${user.id} for phone ${vendor.phone_number}`);
+            }
+          } catch (userErr) {
+            console.warn(`⚠️  Could not find user ID for phone ${vendor.phone_number}:`, userErr.message);
+          }
+          
+          // Delay between SMS to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (error) {
+          console.error(`❌ [BULK SMS ERROR] Error sending SMS to ${vendor.phone_number}:`, error.message);
+          console.error(`   Stack:`, error.stack);
+          results.push({
+            phone_number: vendor.phone_number,
+            vendor_name: vendor.title,
+            city: vendor.city || '',
+            street: vendor.street || '',
+            success: false,
+            error: error.message
+          });
+        }
+      }
+      
+      const successCount = results.filter(r => r.success).length;
+      const failedCount = results.filter(r => !r.success).length;
+      
+      console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      console.log(`📊 [BULK SMS] Final Summary:`);
+      console.log(`   ✅ Successfully sent: ${successCount}/${selectedVendors.length}`);
+      console.log(`   ❌ Failed: ${failedCount}/${selectedVendors.length}`);
+      console.log(`   📱 User IDs found: ${vendorUserIds.length}`);
+      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+      
+      // Update bulk_notified_vendors with successfully notified phone numbers
+      const allBulkNotifiedVendors = [...new Set([...alreadyNotifiedBulkVendors, ...successfullyNotifiedPhones])];
+      
+      // Update notified_vendor_ids with found user IDs (if any)
+      let updatedNotifiedVendorIds = currentVendorIds;
+      if (vendorUserIds.length > 0) {
+        updatedNotifiedVendorIds = [...new Set([...currentVendorIds, ...vendorUserIds])];
+        console.log(`✅ Adding ${vendorUserIds.length} vendor user IDs to notified_vendor_ids`);
+      }
+      
+      await Order.updateById(orderId, {
+        bulk_notified_vendors: JSON.stringify(allBulkNotifiedVendors),
+        notified_vendor_ids: JSON.stringify(updatedNotifiedVendorIds)
+      });
+      
+      // Clear order cache to ensure fresh data is fetched
+      try {
+        const cacheKey = RedisCache.orderKey(orderId);
+        await RedisCache.delete(cacheKey);
+        console.log(`🗑️  Cleared order cache for ${orderId}`);
+      } catch (cacheErr) {
+        console.error('Error clearing order cache:', cacheErr);
+      }
+      
+      return res.json({
+        status: 'success',
+        msg: successCount === 0 
+          ? 'SMS sending failed for all vendors'
+          : `Sent SMS notifications to ${successCount} new bulk vendors (can add more by clicking again)`,
+        data: {
+          order_id: orderId,
+          vendors_notified: successCount,
+          total_selected: selectedVendors.length,
+          total_found: matchingVendors.length,
+          already_notified_count: alreadyNotifiedBulkVendors.length,
+          new_notified_count: successfullyNotifiedPhones.length,
+          vendor_user_ids_added: vendorUserIds.length,
+          vendors: results,
+          sms_message: message,
+          success_vendors: results.filter(r => r.success),
+          failed_vendors: results.filter(r => !r.success)
+        }
+      });
+      
+    } catch (error) {
+      console.error('❌ Error adding bulk notified vendors:', error);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Failed to add bulk notified vendors',
+        data: null,
+        error: error.message
+      });
     }
   }
 }
