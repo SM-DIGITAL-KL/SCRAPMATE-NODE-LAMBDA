@@ -3284,6 +3284,239 @@ class AdminPanelController {
     }
   }
 
+  // Get New users (user_type 'N') list
+  static async newUsers(req, res) {
+    try {
+      console.log('✅ AdminPanelController.newUsers called');
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 10;
+      const search = req.query.search || null;
+      const appVersion = req.query.app_version || null;
+
+      const User = require('../models/User');
+      const Shop = require('../models/Shop');
+
+      let enrichedUsers;
+      let total;
+      const pageNumber = parseInt(page) || 1;
+      const pageSize = parseInt(limit) || 10;
+
+      // If searching, get all users first (no pagination), then filter, then paginate
+      // If not searching, get paginated users directly
+      if (search && search.trim()) {
+        // Get all New users (no pagination) to search across entire database
+        const allResult = await User.getNewUsers(1, 999999, null);
+
+        console.log(`📊 Total New users fetched: ${allResult.total}, users in result: ${allResult.users.length}`);
+
+        // Enrich all users with shop data
+        enrichedUsers = await Promise.all(allResult.users.map(async (user) => {
+          try {
+            const shop = await Shop.findByUserId(user.id);
+
+            return {
+              ...user,
+              shop: shop || null,
+              shopname: shop?.shopname || '',
+              contact: shop?.contact || user.mob_num || '',
+              address: shop?.address || '',
+              aadhar_card: shop?.aadhar_card || '',
+              driving_license: shop?.driving_license || ''
+            };
+          } catch (err) {
+            console.error(`Error fetching shop for user ${user.id}:`, err);
+            return {
+              ...user,
+              shop: null,
+              shopname: '',
+              contact: user.mob_num || '',
+              address: '',
+              aadhar_card: '',
+              driving_license: ''
+            };
+          }
+        }));
+
+        // Apply search filter after enriching with shop data
+        const searchTerm = search.trim();
+        const searchTermLower = searchTerm.toLowerCase();
+        const searchAsNumber = !isNaN(searchTerm) && searchTerm.length > 0 ? parseInt(searchTerm) : null;
+
+        console.log(`🔍 Searching for: "${searchTerm}" (as number: ${searchAsNumber})`);
+
+        enrichedUsers = enrichedUsers.filter(user => {
+          // Search by phone number (mob_num from user)
+          let userPhoneMatch = false;
+          if (user.mob_num !== null && user.mob_num !== undefined) {
+            const userPhoneStr = user.mob_num.toString();
+            if (userPhoneStr.toLowerCase().includes(searchTermLower)) {
+              userPhoneMatch = true;
+            }
+            if (searchAsNumber !== null && user.mob_num === searchAsNumber) {
+              userPhoneMatch = true;
+            }
+          }
+
+          // Search by contact number (contact from shop)
+          let shopContactMatch = false;
+          if (user.contact !== null && user.contact !== undefined && user.contact !== '') {
+            const shopContactStr = user.contact.toString();
+            if (shopContactStr.toLowerCase().includes(searchTermLower)) {
+              shopContactMatch = true;
+            }
+            if (searchAsNumber !== null && user.contact === searchAsNumber) {
+              shopContactMatch = true;
+            }
+          }
+
+          // Search by name
+          const nameMatch = user.name && typeof user.name === 'string' &&
+            user.name.toLowerCase().includes(searchTermLower);
+
+          return userPhoneMatch || shopContactMatch || nameMatch;
+        });
+
+        console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} users found after filtering`);
+
+        // Filter by app_version if specified
+        if (appVersion && (appVersion === 'v1' || appVersion === 'v2')) {
+          enrichedUsers = enrichedUsers.filter(user => {
+            const userAppVersion = user.app_version || 'v1';
+            return userAppVersion === appVersion;
+          });
+          console.log(`🔍 Filtered by app_version=${appVersion}: ${enrichedUsers.length} users found`);
+        }
+
+        // Re-sort enriched users: v2 users first, then v1 users
+        enrichedUsers.sort((a, b) => {
+          // Prioritize v2 users over v1 users
+          const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+          const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+          return bIsV2 - aIsV2; // v2 users come first
+        });
+
+        // Apply pagination after filtering
+        total = enrichedUsers.length;
+        const skip = (pageNumber - 1) * pageSize;
+        const paginatedUsers = enrichedUsers.slice(skip, skip + pageSize);
+        enrichedUsers = paginatedUsers;
+
+        console.log(`🔍 Paginated search results: Showing ${paginatedUsers.length} of ${total} users`);
+      } else if (appVersion && (appVersion === 'v1' || appVersion === 'v2')) {
+        // If app_version filter is specified, get all users first, then filter and paginate
+        console.log(`🔍 Filtering by app_version=${appVersion}, fetching all users first`);
+        const allResult = await User.getNewUsers(1, 999999, null);
+
+        // Enrich all users with shop data
+        enrichedUsers = await Promise.all(allResult.users.map(async (user) => {
+          try {
+            const shop = await Shop.findByUserId(user.id);
+
+            return {
+              ...user,
+              shop: shop || null,
+              shopname: shop?.shopname || '',
+              contact: shop?.contact || user.mob_num || '',
+              address: shop?.address || '',
+              aadhar_card: shop?.aadhar_card || '',
+              driving_license: shop?.driving_license || ''
+            };
+          } catch (err) {
+            console.error(`Error fetching shop for user ${user.id}:`, err);
+            return {
+              ...user,
+              shop: null,
+              shopname: '',
+              contact: user.mob_num || '',
+              address: '',
+              aadhar_card: '',
+              driving_license: ''
+            };
+          }
+        }));
+
+        // Filter by app_version
+        enrichedUsers = enrichedUsers.filter(user => {
+          const userAppVersion = user.app_version || 'v1';
+          return userAppVersion === appVersion;
+        });
+        console.log(`✅ Filtered by app_version=${appVersion}: ${enrichedUsers.length} users found out of ${allResult.users.length} total`);
+
+        // Sort enriched users: v2 users first, then v1 users
+        enrichedUsers.sort((a, b) => {
+          const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+          const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+          return bIsV2 - aIsV2;
+        });
+
+        // Apply pagination after filtering
+        total = enrichedUsers.length;
+        const skip = (pageNumber - 1) * pageSize;
+        const paginatedUsers = enrichedUsers.slice(skip, skip + pageSize);
+        enrichedUsers = paginatedUsers;
+
+        console.log(`🔍 Paginated filtered results: Showing ${paginatedUsers.length} of ${total} users`);
+      } else {
+        // No search and no app_version filter - use normal pagination
+        const result = await User.getNewUsers(page, limit, null);
+
+        // Enrich paginated users with shop data
+        enrichedUsers = await Promise.all(result.users.map(async (user) => {
+          try {
+            const shop = await Shop.findByUserId(user.id);
+
+            return {
+              ...user,
+              shop: shop || null,
+              shopname: shop?.shopname || '',
+              contact: shop?.contact || user.mob_num || '',
+              address: shop?.address || '',
+              aadhar_card: shop?.aadhar_card || '',
+              driving_license: shop?.driving_license || ''
+            };
+          } catch (err) {
+            console.error(`Error fetching shop for user ${user.id}:`, err);
+            return {
+              ...user,
+              shop: null,
+              shopname: '',
+              contact: user.mob_num || '',
+              address: '',
+              aadhar_card: '',
+              driving_license: ''
+            };
+          }
+        }));
+
+        total = result.total;
+      }
+
+      const totalPages = Math.ceil(total / pageSize);
+      const hasMore = pageNumber * pageSize < total;
+
+      res.json({
+        status: 'success',
+        msg: 'New users retrieved',
+        data: {
+          users: enrichedUsers,
+          total: total,
+          page: pageNumber,
+          limit: pageSize,
+          totalPages: totalPages,
+          hasMore: hasMore
+        }
+      });
+    } catch (error) {
+      console.error('❌ newUsers error:', error);
+      console.error('   Error stack:', error.stack);
+      res.status(500).json({
+        status: 'error',
+        msg: 'Error fetching new users',
+        data: []
+      });
+    }
+  }
+
   // Get Delivery users (door buyers) list
   static async deliveryUsers(req, res) {
     try {
@@ -4704,6 +4937,42 @@ class AdminPanelController {
         msg: 'Error loading v2 user types dashboard data',
         data: null,
         error: error.message
+      });
+    }
+  }
+
+  // Get customer app orders v2 with pagination
+  static async getCustomerAppOrdersPaginated(req, res) {
+    try {
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 10;
+      const search = req.query.search || '';
+      
+      console.log(`🟢 AdminPanelController.getCustomerAppOrdersPaginated called`, { page, limit, search });
+      
+      const Order = require('../models/Order');
+      const result = await Order.getCustomerAppOrdersV2Paginated(page, limit, search);
+      
+      // Return orders as array (not nested in data.orders)
+      res.json({
+        status: 'success',
+        msg: 'Customer app orders retrieved',
+        data: result.orders || [],
+        total: result.total || 0,
+        page: result.page || page,
+        limit: result.limit || limit,
+        totalPages: result.totalPages || 0
+      });
+    } catch (error) {
+      console.error('❌ getCustomerAppOrdersPaginated error:', error);
+      res.status(500).json({
+        status: 'error',
+        msg: 'Error fetching customer app orders',
+        data: [],
+        total: 0,
+        page: 1,
+        limit: 10,
+        totalPages: 0
       });
     }
   }
@@ -6374,6 +6643,319 @@ class AdminPanelController {
       return res.status(500).json({
         status: 'error',
         msg: 'Failed to add bulk notified vendors',
+        data: null,
+        error: error.message
+      });
+    }
+  }
+
+  // Add a single vendor to order's notified_vendor_ids
+  static async addVendorToOrder(req, res) {
+    try {
+      const { orderId, vendorId } = req.params;
+      console.log(`🟢 AdminPanelController.addVendorToOrder called`, { orderId, vendorId });
+      
+      // Get order details
+      const order = await Order.getById(orderId);
+      if (!order) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Order not found',
+          data: null
+        });
+      }
+      
+      // Verify vendor exists
+      const User = require('../models/User');
+      const vendor = await User.findById(parseInt(vendorId));
+      if (!vendor) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Vendor not found',
+          data: null
+        });
+      }
+      
+      // Get current notified_vendor_ids
+      let currentVendorIds = [];
+      if (order.notified_vendor_ids) {
+        try {
+          if (typeof order.notified_vendor_ids === 'string') {
+            currentVendorIds = JSON.parse(order.notified_vendor_ids);
+          } else {
+            currentVendorIds = order.notified_vendor_ids;
+          }
+          if (!Array.isArray(currentVendorIds)) {
+            currentVendorIds = [currentVendorIds];
+          }
+        } catch (e) {
+          console.error('Error parsing notified_vendor_ids:', e);
+          currentVendorIds = [];
+        }
+      }
+      
+      // Check if vendor is already in the list
+      const vendorIdNum = parseInt(vendorId);
+      const isAlreadyNotified = currentVendorIds.some(id => parseInt(id) === vendorIdNum);
+      
+      if (isAlreadyNotified) {
+        return res.json({
+          status: 'success',
+          msg: 'Vendor is already in the notified vendors list',
+          data: {
+            vendor_id: vendorIdNum,
+            already_notified: true,
+            total_notified_vendors: currentVendorIds.length
+          }
+        });
+      }
+      
+      // Add vendor to the list
+      currentVendorIds.push(vendorIdNum);
+      
+      // Update order in database
+      const { getDynamoDBClient } = require('../config/dynamodb');
+      const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+      const client = getDynamoDBClient();
+      
+      const updateCommand = new UpdateCommand({
+        TableName: 'orders',
+        Key: { id: parseInt(orderId) },
+        UpdateExpression: 'SET notified_vendor_ids = :notifiedIds, updated_at = :updatedAt',
+        ExpressionAttributeValues: {
+          ':notifiedIds': JSON.stringify(currentVendorIds),
+          ':updatedAt': new Date().toISOString()
+        }
+      });
+      
+      await client.send(updateCommand);
+      
+      // Invalidate order cache
+      const RedisCache = require('../utils/redisCache');
+      await RedisCache.delete(RedisCache.orderKey(orderId));
+      await RedisCache.invalidateTableCache('orders');
+      
+      console.log(`✅ Added vendor ${vendorIdNum} to order ${orderId}'s notified vendors`);
+      console.log(`   Total notified vendors: ${currentVendorIds.length}`);
+      
+      // Send FCM notification to vendor
+      let notificationSent = false;
+      let smsSent = false;
+      
+      try {
+        const { sendVendorNotification } = require('../utils/fcmNotification');
+        
+        // Prepare notification content
+        const orderNumber = order.order_number || order.order_no || order.id;
+        const addressPreview = order.customerdetails 
+          ? (typeof order.customerdetails === 'string' 
+              ? (order.customerdetails.length > 50 ? order.customerdetails.substring(0, 50) + '...' : order.customerdetails)
+              : (order.customerdetails.address || order.customerdetails.customerdetails || 'Address not provided'))
+          : 'Address not provided';
+        
+        // Extract order details text
+        let orderDetailsText = 'New pickup request';
+        try {
+          const orderDetailsObj = typeof order.orderdetails === 'string'
+            ? JSON.parse(order.orderdetails)
+            : order.orderdetails;
+          
+          if (orderDetailsObj && Array.isArray(orderDetailsObj) && orderDetailsObj.length > 0) {
+            const firstItem = orderDetailsObj[0];
+            orderDetailsText = firstItem.material_name || firstItem.name || firstItem.category_name || 'New pickup request';
+          }
+        } catch (parseErr) {
+          console.warn('⚠️  Could not parse order details for notification:', parseErr.message);
+        }
+        
+        const notificationTitle = `📦 New Pickup Request #${orderNumber}`;
+        const notificationBody = `${orderDetailsText} | Weight: ${order.estim_weight || 0} kg | Price: ₹${order.estim_price || 0} | ${addressPreview}`;
+        
+        // Send FCM notification if vendor has FCM token
+        if (vendor.fcm_token) {
+          console.log(`📤 Sending FCM notification to vendor ${vendorIdNum}...`);
+          try {
+            await sendVendorNotification(
+              vendor.fcm_token,
+              notificationTitle,
+              notificationBody,
+              {
+                type: 'pickup_request',
+                order_id: order.id.toString(),
+                order_number: orderNumber.toString(),
+                customer_id: order.customer_id ? order.customer_id.toString() : '',
+                status: '1', // pending - available for acceptance
+                timestamp: new Date().toISOString()
+              }
+            );
+            notificationSent = true;
+            console.log(`✅ FCM notification sent successfully to vendor ${vendorIdNum}`);
+          } catch (fcmError) {
+            console.error(`❌ Error sending FCM notification to vendor ${vendorIdNum}:`, fcmError.message);
+          }
+        } else {
+          console.warn(`⚠️  Vendor ${vendorIdNum} has no FCM token, skipping FCM notification`);
+        }
+        
+        // Send SMS notification
+        if (vendor.mob_num) {
+          console.log(`📱 Sending SMS notification to vendor ${vendorIdNum}...`);
+          try {
+            const http = require('http');
+            const querystring = require('querystring');
+            
+            // Extract phone number
+            const extractPhoneNumber = (phone) => {
+              if (!phone) return null;
+              let phoneStr = String(phone);
+              let cleaned = phoneStr.replace(/\s+/g, '').replace(/[^\d+]/g, '');
+              if (cleaned.startsWith('+91')) {
+                cleaned = cleaned.substring(3);
+              } else if (cleaned.startsWith('91') && cleaned.length === 12) {
+                cleaned = cleaned.substring(2);
+              }
+              if (cleaned.length === 10 && /^[6-9]\d{9}$/.test(cleaned)) {
+                return cleaned;
+              }
+              return null;
+            };
+            
+            const phoneNumber = extractPhoneNumber(vendor.mob_num);
+            
+            if (phoneNumber) {
+              // Extract material name for SMS
+              let materialName = 'scrap';
+              try {
+                const orderDetailsObj = typeof order.orderdetails === 'string'
+                  ? JSON.parse(order.orderdetails)
+                  : order.orderdetails;
+                
+                if (orderDetailsObj && Array.isArray(orderDetailsObj) && orderDetailsObj.length > 0) {
+                  const firstItem = orderDetailsObj[0];
+                  materialName = firstItem.material_name || firstItem.name || firstItem.category_name || 'scrap';
+                }
+              } catch (parseErr) {
+                console.warn('⚠️  Could not parse order details for SMS material name:', parseErr.message);
+              }
+              
+              const payableAmount = Math.round(order.estim_price || order.estimated_price || 0);
+              const firstVar = `${orderNumber} of ${materialName}`;
+              const secondVar = `${payableAmount}`;
+              const smsMessage = `Scrapmate pickup request ${firstVar}. Payable amount Rs${secondVar}. Open B2C dashboard to accept.`;
+              
+              const SMS_CONFIG = {
+                username: 'scrapmate',
+                sendername: 'SCRPMT',
+                smstype: 'TRANS',
+                apikey: '1bf0131f-d1f2-49ed-9c57-19f1b4400f32',
+                peid: '1701173389563945545',
+                templateid: '1707176812500484578' // Template ID for pickup request SMS
+              };
+              
+              const sendSMS = (phoneNumber, message) => {
+                return new Promise((resolve, reject) => {
+                  const params = querystring.stringify({
+                    username: SMS_CONFIG.username,
+                    message: message,
+                    sendername: SMS_CONFIG.sendername,
+                    smstype: SMS_CONFIG.smstype,
+                    numbers: phoneNumber,
+                    apikey: SMS_CONFIG.apikey,
+                    peid: SMS_CONFIG.peid,
+                    templateid: SMS_CONFIG.templateid,
+                  });
+                  
+                  const options = {
+                    hostname: 'sms.bulksmsind.in',
+                    path: `/v2/sendSMS?${params}`,
+                    method: 'GET',
+                  };
+                  
+                  const req = http.request(options, (res) => {
+                    let data = '';
+                    res.on('data', (chunk) => { data += chunk; });
+                    res.on('end', () => {
+                      try {
+                        const response = JSON.parse(data);
+                        resolve(response);
+                      } catch (e) {
+                        resolve({ raw: data });
+                      }
+                    });
+                  });
+                  
+                  req.on('error', (error) => reject(error));
+                  req.end();
+                });
+              };
+              
+              const smsResult = await sendSMS(phoneNumber, smsMessage);
+              
+              // Check if SMS was successful
+              let isSuccess = false;
+              if (Array.isArray(smsResult) && smsResult.length > 0) {
+                isSuccess = smsResult[0].status === 'success';
+              } else if (smsResult && typeof smsResult === 'object') {
+                isSuccess = smsResult.status === 'success' || smsResult.success === true;
+              }
+              
+              if (isSuccess) {
+                smsSent = true;
+                console.log(`✅ SMS sent successfully to vendor ${vendorIdNum} (phone: ${phoneNumber})`);
+              } else {
+                console.warn(`⚠️  SMS may have failed for vendor ${vendorIdNum} (phone: ${phoneNumber}):`, smsResult);
+              }
+              
+              // Save to bulk_message_notifications table
+              try {
+                const BulkMessageNotification = require('../models/BulkMessageNotification');
+                await BulkMessageNotification.save({
+                  phone_number: phoneNumber,
+                  business_data: {
+                    order_id: order.id,
+                    order_number: orderNumber,
+                    vendor_user_id: vendorIdNum,
+                    material_name: materialName,
+                    amount: payableAmount
+                  },
+                  message: smsMessage,
+                  status: isSuccess ? 'sent' : 'failed',
+                  language: 'en'
+                });
+                console.log(`📱 Saved SMS record to database for vendor ${vendorIdNum}`);
+              } catch (dbErr) {
+                console.error(`❌ Error saving SMS to database for vendor ${vendorIdNum}:`, dbErr.message);
+              }
+            } else {
+              console.warn(`⚠️  Invalid phone number for vendor ${vendorIdNum}: ${vendor.mob_num}`);
+            }
+          } catch (smsError) {
+            console.error(`❌ Error sending SMS to vendor ${vendorIdNum}:`, smsError.message);
+          }
+        } else {
+          console.warn(`⚠️  Vendor ${vendorIdNum} has no phone number, skipping SMS notification`);
+        }
+      } catch (notifError) {
+        console.error(`❌ Error sending notifications to vendor ${vendorIdNum}:`, notifError.message);
+      }
+      
+      return res.json({
+        status: 'success',
+        msg: 'Vendor added to notified vendors successfully',
+        data: {
+          vendor_id: vendorIdNum,
+          vendor_name: vendor.name || 'N/A',
+          total_notified_vendors: currentVendorIds.length,
+          notification_sent: notificationSent,
+          sms_sent: smsSent
+        }
+      });
+      
+    } catch (error) {
+      console.error('❌ Error adding vendor to order:', error);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Failed to add vendor to order',
         data: null,
         error: error.message
       });

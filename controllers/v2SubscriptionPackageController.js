@@ -424,9 +424,12 @@ exports.saveUserSubscription = async (req, res) => {
 
     // Forward transaction to PHP admin panel (fire and forget)
     // This is done server-side to avoid mobile device connectivity issues
-    // The Node.js backend can reach localhost, so this will work even if mobile app can't
+    // Use production admin panel URL by default, fallback to localhost for development
     try {
-      const adminPanelUrl = process.env.ADMIN_PANEL_URL || 'http://127.0.0.1:8000/paidSubscriptions';
+      const adminPanelUrl = process.env.ADMIN_PANEL_URL || 
+        (process.env.NODE_ENV === 'production' 
+          ? 'https://mono.scrapmate.co.in/paidSubscriptions'
+          : 'http://127.0.0.1:8000/paidSubscriptions');
       
       // Forward if admin panel URL is configured
       if (adminPanelUrl && adminPanelUrl.trim() !== '') {

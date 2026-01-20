@@ -46,6 +46,7 @@ router.get('/admin/dashboard/charts', AdminController.dashboardCharts);
 router.get('/admin/dashboard/recent-orders', AdminController.dashboardRecentOrders);
 router.get('/admin/dashboard/call-logs', AdminController.dashboardCallLogs);
 router.get('/admin/dashboard/v2-user-types', AdminController.v2UserTypesDashboard);
+router.get('/admin/dashboard/customer-app-orders', AdminController.getCustomerAppOrdersPaginated);
 // Legacy dashboard endpoint (kept for backward compatibility)
 router.get('/admin/dashboard', AdminController.dashboard);
 router.get('/admin/b2b-users', AdminController.b2bUsers);
@@ -56,6 +57,8 @@ router.get('/admin/b2c-users', AdminController.b2cUsers);
 router.get('/admin/b2c-users/:userId', AdminController.getB2CUserDetails);
 router.post('/admin/b2c-users/:userId/approval-status', AdminController.updateB2CApprovalStatus);
 router.post('/admin/b2c-users/:userId/contacted-status', AdminController.updateB2CContactedStatus);
+
+router.get('/admin/new-users', AdminController.newUsers);
 router.get('/admin/sr-users', AdminController.srUsers);
 router.get('/admin/sr-users/:userId', AdminController.getSRUserDetails);
 router.post('/admin/sr-users/:userId/approval-status', AdminController.updateSRApprovalStatus);
@@ -149,6 +152,8 @@ router.post('/admin/order/:orderId/add-nearby-n-users', AdminController.addNearb
 router.post('/admin/order/:orderId/add-nearby-d-users', AdminController.addNearbyDUsersToOrder);
 // Add bulk notified vendors from bulk_message_notifications and send SMS
 router.post('/admin/order/:orderId/add-bulk-notified-vendors', AdminController.addBulkNotifiedVendors);
+// Add a single vendor to order's notified_vendor_ids
+router.post('/admin/order/:orderId/add-vendor/:vendorId', AdminController.addVendorToOrder);
 
 // Parameterized routes (:id) must come LAST
 router.get('/customer/:id', CustomerController.getCustomerById);

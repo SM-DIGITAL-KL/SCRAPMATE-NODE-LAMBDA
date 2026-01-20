@@ -210,11 +210,11 @@ class V2AuthService {
     }
 
     // Phone: 9074135121, OTP: 123456 (permanent, no SMS - works in all environments)
+    
     if (cleanedPhone === '9074135121') {
       otp = '123456';
       console.log('🔧 [generateOtp] Using static OTP 123456 for number: 9074135121 (SMS will be skipped)');
     }
-
     // Determine target app type: if appType is provided, use it; otherwise default to vendor_app
     const targetAppType = appType || 'vendor_app';
     console.log(`📱 generateOtp: targetAppType=${targetAppType}`);
@@ -341,7 +341,7 @@ class V2AuthService {
     }
 
     // Send OTP via SMS (skip for numbers that should not receive SMS)
-    const skipSmsNumbers = ['7356468251', '8056744395'];
+    const skipSmsNumbers = ['9074135121'];
     if (skipSmsNumbers.includes(cleanedPhone)) {
       console.log(`🚫 [generateOtp] Skipping SMS for ${cleanedPhone} (permanent no-SMS number)`);
     } else {

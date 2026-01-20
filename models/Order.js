@@ -925,6 +925,137 @@ class Order {
     }
   }
 
+  // Get customer app orders v2 with pagination support
+  static async getCustomerAppOrdersV2Paginated(page = 1, limit = 10, search = '') {
+    try {
+      const client = getDynamoDBClient();
+      const User = require('./User');
+      
+      // Get all v2 customer_app user IDs
+      const v2CustomerAppUsers = [];
+      let userLastKey = null;
+      
+      do {
+        const userParams = {
+          TableName: 'users',
+          FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+          ExpressionAttributeValues: {
+            ':appVersion': 'v2',
+            ':appType': 'customer_app',
+            ':deleted': 2
+          },
+          ProjectionExpression: 'id'
+        };
+
+        if (userLastKey) {
+          userParams.ExclusiveStartKey = userLastKey;
+        }
+
+        const userCommand = new ScanCommand(userParams);
+        const userResponse = await client.send(userCommand);
+
+        if (userResponse.Items) {
+          v2CustomerAppUsers.push(...userResponse.Items.map(u => u.id));
+        }
+
+        userLastKey = userResponse.LastEvaluatedKey;
+      } while (userLastKey);
+
+      console.log(`📊 [getCustomerAppOrdersV2Paginated] Found ${v2CustomerAppUsers.length} v2 customer_app users`);
+
+      if (v2CustomerAppUsers.length === 0) {
+        console.log(`⚠️ [getCustomerAppOrdersV2Paginated] No v2 customer_app users found, returning empty array`);
+        return {
+          orders: [],
+          total: 0,
+          page: page,
+          limit: limit,
+          totalPages: 0
+        };
+      }
+
+      // Get orders for these users
+      const allOrders = [];
+      const batchSize = 25; // Limit to avoid expression size limits
+      
+      for (let i = 0; i < v2CustomerAppUsers.length; i += batchSize) {
+        const batch = v2CustomerAppUsers.slice(i, i + batchSize);
+        const batchUserIds = batch.map(id => typeof id === 'string' && !isNaN(id) ? parseInt(id) : id);
+
+        if (batchUserIds.length === 0) continue;
+
+        let batchLastKey = null;
+        do {
+          const filterParts = batchUserIds.map((_, idx) => `customer_id = :customerId${idx}`);
+          const filterExpression = `(${filterParts.join(' OR ')})`;
+          const expressionAttributeValues = batchUserIds.reduce((acc, id, idx) => {
+            acc[`:customerId${idx}`] = id;
+            return acc;
+          }, {});
+
+          const params = {
+            TableName: TABLE_NAME,
+            FilterExpression: filterExpression,
+            ExpressionAttributeValues: expressionAttributeValues
+          };
+
+          if (batchLastKey) {
+            params.ExclusiveStartKey = batchLastKey;
+          }
+
+          const command = new ScanCommand(params);
+          const response = await client.send(command);
+
+          if (response.Items) {
+            allOrders.push(...response.Items);
+          }
+
+          batchLastKey = response.LastEvaluatedKey;
+        } while (batchLastKey);
+      }
+
+      // Filter out orders with bulk_request_id
+      let filteredOrders = allOrders.filter(order => !order.bulk_request_id);
+      
+      // Apply search filter if provided
+      if (search && search.trim()) {
+        const searchLower = search.toLowerCase().trim();
+        filteredOrders = filteredOrders.filter(order => {
+          const orderNo = String(order.order_no || order.order_number || '').toLowerCase();
+          const orderId = String(order.id || '').toLowerCase();
+          const customerId = String(order.customer_id || '').toLowerCase();
+          const shopId = String(order.shop_id || '').toLowerCase();
+          return orderNo.includes(searchLower) || 
+                 orderId.includes(searchLower) || 
+                 customerId.includes(searchLower) || 
+                 shopId.includes(searchLower);
+        });
+      }
+
+      // Sort by id DESC (newest first)
+      filteredOrders.sort((a, b) => (b.id || 0) - (a.id || 0));
+      
+      // Calculate pagination
+      const total = filteredOrders.length;
+      const totalPages = Math.ceil(total / limit);
+      const offset = (page - 1) * limit;
+      const paginatedOrders = filteredOrders.slice(offset, offset + limit);
+      
+      console.log(`✅ [getCustomerAppOrdersV2Paginated] Returning ${paginatedOrders.length} orders (page ${page}/${totalPages}, total: ${total})`);
+      
+      return {
+        orders: paginatedOrders,
+        total: total,
+        page: page,
+        limit: limit,
+        totalPages: totalPages
+      };
+    } catch (err) {
+      console.error('❌ [getCustomerAppOrdersV2Paginated] Error:', err);
+      throw err;
+    }
+  }
+
   // Get recent orders that are NOT from customer_app users (includes vendor orders, bulk orders, etc.)
   // This shows all "other" orders that should appear in bulk orders section
   static async getBulkOrders(limit = 10) {

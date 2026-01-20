@@ -1488,6 +1488,97 @@ class User {
     }
   }
 
+  // Get New users with pagination (user_type = 'N')
+  static async getNewUsers(page = 1, limit = 10, search = null) {
+    try {
+      const client = getDynamoDBClient();
+      const pageNumber = parseInt(page) || 1;
+      const pageSize = parseInt(limit) || 20;
+      const skip = (pageNumber - 1) * pageSize;
+
+      let lastKey = null;
+      const allUsers = [];
+
+      // Collect all New users (user_type = 'N')
+      console.log('🔍 Scanning users for user_type = "N" (New Users)...');
+      do {
+        const params = {
+          TableName: TABLE_NAME
+        };
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+
+        if (response.Items) {
+          // Filter for New users: user_type = 'N' and not deleted
+          const newUsers = response.Items.filter(user => {
+            return user.user_type === 'N' && 
+                   (user.del_status === undefined || user.del_status === null || user.del_status !== 2);
+          });
+
+          allUsers.push(...newUsers);
+        }
+
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      // Sort by app_version first (v2 users first), then by created_at descending (newest first)
+      allUsers.sort((a, b) => {
+        // First, prioritize v2 users over v1 users
+        const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+        const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+        if (aIsV2 !== bIsV2) {
+          return bIsV2 - aIsV2; // v2 users come first
+        }
+
+        // If same version, sort by created_at descending (newest first)
+        let dateA = a.created_at ? new Date(a.created_at) : null;
+        let dateB = b.created_at ? new Date(b.created_at) : null;
+
+        // If dates are invalid or missing, use updated_at as fallback
+        if (!dateA || isNaN(dateA.getTime())) {
+          dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
+        }
+        if (!dateB || isNaN(dateB.getTime())) {
+          dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
+        }
+
+        // Sort descending (newest first)
+        return dateB.getTime() - dateA.getTime();
+      });
+
+      console.log(`✅ Sorted ${allUsers.length} New users by v2 first, then newest first`);
+
+      // Get total count
+      const total = allUsers.length;
+
+      // Apply pagination (if limit is very large, return all users)
+      const paginatedUsers = pageSize >= 999999 ? allUsers : allUsers.slice(skip, skip + pageSize);
+
+      // Remove password from results
+      const usersWithoutPassword = paginatedUsers.map(user => {
+        const { password: _, ...userWithoutPassword } = user;
+        return userWithoutPassword;
+      });
+
+      return {
+        users: usersWithoutPassword,
+        total: total,
+        page: pageNumber,
+        limit: pageSize,
+        totalPages: Math.ceil(total / pageSize),
+        hasMore: skip + pageSize < total
+      };
+    } catch (err) {
+      console.error('User.getNewUsers error:', err);
+      throw err;
+    }
+  }
+
   // Get Delivery users with pagination (user_type = 'D')
   static async getDeliveryUsers(page = 1, limit = 10, search = null) {
     try {

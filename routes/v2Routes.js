@@ -9,6 +9,7 @@ const V2SubscriptionPackageController = require('../controllers/v2SubscriptionPa
 const V2CategoryController = require('../controllers/v2CategoryController');
 const V2RecyclingController = require('../controllers/v2RecyclingController');
 const V2EarningsController = require('../controllers/v2EarningsController');
+const V2StatsController = require('../controllers/v2StatsController');
 const V2OrderController = require('../controllers/v2OrderController');
 const V2NotificationController = require('../controllers/v2NotificationController');
 const V2BulkScrapController = require('../controllers/v2BulkScrapController');
@@ -16,6 +17,7 @@ const V2BulkSellController = require('../controllers/v2BulkSellController');
 const V2FoodWasteController = require('../controllers/v2FoodWasteController');
 const V2InstamojoOrderController = require('../controllers/v2InstamojoOrderController');
 const V2BulkMessageController = require('../controllers/v2BulkMessageController');
+const V2LivePriceController = require('../controllers/v2LivePriceController');
 const SubcategoryController = require('../controllers/subcategoryController');
 const UtilityController = require('../controllers/utilityController');
 const SitePanelController = require('../controllers/sitePanelController');
@@ -549,6 +551,42 @@ router.get('/recycling/vendor-stats/:userId', V2RecyclingController.getVendorRec
  * - period: Description of the period (e.g., "Last 6 months")
  */
 router.get('/earnings/monthly-breakdown/:userId', V2EarningsController.getMonthlyBreakdown);
+
+// ==================== DASHBOARD STATISTICS ROUTES ====================
+/**
+ * GET /api/v2/stats/dashboard?userType=customer|b2c|b2b|delivery&userId=123
+ * Get dashboard statistics (total recycled, carbon offset, total order value, operating categories)
+ * Query params:
+ *   - userType (required): 'customer', 'b2c', 'b2b', or 'delivery'
+ *   - userId (required): User ID
+ * 
+ * Returns:
+ * - totalRecycled: Total weight recycled in kg
+ * - carbonOffset: Total carbon offset in kg CO2
+ * - totalOrderValue: Total order value for last 6 months in rupees
+ * - operatingCategories: Number of scrap categories operating
+ * - lastUpdatedOn: Timestamp of last update
+ * 
+ * Note: Data is cached for 365 days in Redis
+ */
+router.get('/stats/dashboard', V2StatsController.getDashboardStats);
+
+/**
+ * GET /api/v2/stats/incremental-updates?userType=customer|b2c|b2b|delivery&userId=123&lastUpdatedOn=ISO_TIMESTAMP
+ * Get incremental stats updates since lastUpdatedOn
+ * Query params:
+ *   - userType (required): 'customer', 'b2c', 'b2b', or 'delivery'
+ *   - userId (required): User ID
+ *   - lastUpdatedOn (required): ISO timestamp string
+ * 
+ * Returns:
+ * - Only fields that have changed since lastUpdatedOn
+ * - lastUpdatedOn: Current timestamp
+ * - meta.hasUpdates: true if any updates found, false otherwise
+ * 
+ * Note: Only returns fields that have changed to minimize payload size
+ */
+router.get('/stats/incremental-updates', V2StatsController.getIncrementalStatsUpdates);
 
 // ==================== ORDER/PICKUP REQUEST ROUTES ====================
 /**
@@ -1223,6 +1261,29 @@ router.post('/bulk-message/check-batch', V2BulkMessageController.checkNotificati
  *   }
  */
 router.get('/bulk-message/notifications', V2BulkMessageController.getAllNotifications);
+
+// ==================== LIVE PRICES ROUTES ====================
+/**
+ * GET /api/v2/live-prices
+ * Get all live prices from DynamoDB
+ * Query params:
+ *   - location: filter by location (optional)
+ *   - category: filter by category (optional)
+ */
+router.get('/live-prices', V2LivePriceController.getLivePrices);
+
+/**
+ * POST /api/v2/live-prices/sync
+ * Sync live prices from admin panel to DynamoDB
+ * This fetches data from PHP admin panel and stores it in DynamoDB
+ */
+router.post('/live-prices/sync', V2LivePriceController.syncLivePrices);
+
+/**
+ * POST /api/v2/live-prices/invalidate-cache
+ * Invalidate Redis cache for live prices (without re-scraping)
+ */
+router.post('/live-prices/invalidate-cache', V2LivePriceController.invalidateCache);
 
 // PayU routes are now defined at the top of the file (before API key middleware)
 // This ensures they are accessible without API key for WebView requests

@@ -1647,11 +1647,12 @@ class V2ProfileController {
         categories: updatedUser?.operating_categories || [],
         subcategories: updatedUser?.operating_subcategories?.map(s => ({
           id: s.subcategory_id || s.subcategoryId,
-          category_id: s.main_category_id
+          category_id: s.main_category_id,
+          custom_price: s.custom_price
         })) || []
       });
 
-      // Invalidate v2 API caches
+      // Invalidate v2 API caches to ensure fresh data is fetched
       try {
         await RedisCache.invalidateV2ApiCache('user_subcategories', userId);
         await RedisCache.invalidateV2ApiCache('user_categories', userId);
@@ -1660,6 +1661,10 @@ class V2ProfileController {
       } catch (err) {
         console.error('Cache invalidation error:', err);
       }
+      
+      // Small delay to ensure DynamoDB eventual consistency (if using eventually consistent reads)
+      // This helps ensure that when acceptPickupRequest fetches the User record, it gets the updated prices
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       return res.json({
         status: 'success',
@@ -1737,7 +1742,7 @@ class V2ProfileController {
       console.log(`📊 [removeUserCategory] Before: ${currentOperatingSubcategories.length} subcategories, ${currentOperatingCategories.length} categories`);
 
       // Filter out subcategories that belong to this category
-      // We need to fetch subcategory details to check main_category_id
+      // OPTIMIZED: Fetch subcategory details once and reuse results
       const Subcategory = require('../models/Subcategory');
       const subcategoryPromises = currentOperatingSubcategories.map(item => 
         Subcategory.findById(item.subcategory_id || item.subcategoryId)
@@ -1745,28 +1750,20 @@ class V2ProfileController {
       const subcategoryResults = await Promise.all(subcategoryPromises);
 
       // Filter subcategories - keep only those that don't belong to the removed category
+      // OPTIMIZED: Build category ID set directly from first query results (no second query needed)
       const subcategoriesToKeep = [];
+      const remainingCategoryIdsSet = new Set();
+      
       currentOperatingSubcategories.forEach((userSubcat, index) => {
         const subcatDetails = subcategoryResults[index];
         if (subcatDetails && Number(subcatDetails.main_category_id) !== categoryIdNum) {
           subcategoriesToKeep.push(userSubcat);
+          // OPTIMIZED: Add category ID directly from already-fetched subcategory details
+          if (subcatDetails.main_category_id) {
+            remainingCategoryIdsSet.add(Number(subcatDetails.main_category_id));
+          }
         }
       });
-
-      // Get unique category IDs from remaining subcategories
-      const remainingCategoryIdsSet = new Set();
-      if (subcategoriesToKeep.length > 0) {
-        const remainingSubcatPromises = subcategoriesToKeep.map(item => 
-          Subcategory.findById(item.subcategory_id || item.subcategoryId)
-        );
-        const remainingSubcatResults = await Promise.all(remainingSubcatPromises);
-        
-        remainingSubcatResults.forEach((subcat) => {
-          if (subcat && subcat.main_category_id) {
-            remainingCategoryIdsSet.add(Number(subcat.main_category_id));
-          }
-        });
-      }
 
       const updatedCategoryIds = Array.from(remainingCategoryIdsSet);
       const removedSubcategoriesCount = currentOperatingSubcategories.length - subcategoriesToKeep.length;

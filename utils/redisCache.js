@@ -644,6 +644,29 @@ class RedisCache {
           );
           break;
 
+        case 'live_prices':
+          // Invalidate all live prices cache patterns
+          keysToDelete.push(
+            this.listKey('live_prices', { location: 'all', category: 'all' }),
+            this.listKey('live_prices', { location: 'all', category: null }),
+            this.listKey('live_prices', { location: null, category: 'all' }),
+            this.listKey('live_prices', { location: null, category: null })
+          );
+          // Also invalidate any location-specific or category-specific caches
+          if (options.location) {
+            keysToDelete.push(
+              this.listKey('live_prices', { location: options.location, category: 'all' }),
+              this.listKey('live_prices', { location: options.location, category: null })
+            );
+          }
+          if (options.category) {
+            keysToDelete.push(
+              this.listKey('live_prices', { location: 'all', category: options.category }),
+              this.listKey('live_prices', { location: null, category: options.category })
+            );
+          }
+          break;
+
         case 'order':
           // When order is created or updated, invalidate related caches
           if (options.order_id) {

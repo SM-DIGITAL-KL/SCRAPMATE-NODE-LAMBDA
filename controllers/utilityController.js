@@ -783,6 +783,14 @@ class UtilityController {
       const toDateStr = toDate.toISOString().split('T')[0];
       const subscriptionEndsAt = toDate.toISOString(); // ISO format for subscription_ends_at
 
+      // Determine invoice type: if payment IDs exist, it's a Paid subscription
+      // Otherwise, use package type (which might be 'Free' for free packages)
+      let invoiceType = packageData.type || 'Paid';
+      if (payment_moj_id || payment_req_id) {
+        // If payment IDs are provided, this is definitely a Paid subscription
+        invoiceType = 'Paid';
+      }
+      
       // Create new invoice with payment details
       // This creates a new record for each payment attempt, preserving history
       const newInvoice = await Invoice.create({
@@ -791,7 +799,7 @@ class UtilityController {
         to_date: toDateStr,
         name: packageData.name,
         displayname: packageData.displayname,
-        type: packageData.type || 'Paid',
+        type: invoiceType,
         price: packageData.price,
         duration: packageData.duration,
         payment_moj_id: payment_moj_id || null,

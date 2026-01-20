@@ -489,6 +489,347 @@ class CustomerPanelController {
         return order;
       };
       
+      // Helper function to enrich accepted vendor details
+      const enrichAcceptedVendorDetails = async (order) => {
+        try {
+          const User = require('../models/User');
+          const Shop = require('../models/Shop');
+          
+          order.accepted_vendor = null;
+          
+          // Check if order was accepted by a shop (shop_id)
+          if (order.shop_id) {
+            console.log(`📋 Order accepted by shop_id: ${order.shop_id}`);
+            
+            // Get shop details
+            let shop = null;
+            try {
+              shop = await Shop.findById(order.shop_id);
+              console.log(`   Shop lookup by id result: ${shop ? 'Found' : 'Not found'}`);
+              
+              // If shop not found by id, it might be that shop_id is actually a user_id
+              // Try to find shop by user_id
+              if (!shop) {
+                console.log(`   Shop not found by id, trying to find shop by user_id (${order.shop_id})...`);
+                try {
+                  shop = await Shop.findByUserId(order.shop_id);
+                  if (shop) {
+                    console.log(`   ✅ Found shop by user_id! Shop ID: ${shop.id}, User ID: ${shop.user_id}`);
+                  }
+                } catch (userShopErr) {
+                  console.log(`   Shop not found by user_id either: ${userShopErr.message}`);
+                }
+              }
+              
+              if (shop) {
+                console.log(`   Shop fields: id=${shop.id}, shopname=${shop.shopname || 'N/A'}, shop_name=${shop.shop_name || 'N/A'}, name=${shop.name || 'N/A'}, user_id=${shop.user_id || 'N/A'}`);
+                console.log(`   Shop all keys: ${Object.keys(shop).join(', ')}`);
+              } else {
+                console.warn(`   ⚠️ Shop with id ${order.shop_id} not found in database (tried both id and user_id lookup)`);
+              }
+            } catch (shopErr) {
+              console.error(`   ❌ Error fetching shop ${order.shop_id}:`, shopErr.message);
+              console.error(`   Error stack:`, shopErr.stack);
+            }
+            
+            if (shop) {
+              // Get vendor user details from shop.user_id
+              let vendorUser = null;
+              if (shop.user_id) {
+                try {
+                  vendorUser = await User.findById(shop.user_id);
+                  console.log(`   Vendor user lookup by shop.user_id (${shop.user_id}): ${vendorUser ? 'Found' : 'Not found'}`);
+                  if (vendorUser) {
+                    console.log(`   User details: name=${vendorUser.name}, user_type=${vendorUser.user_type}, mobile=${vendorUser.mob_num || vendorUser.mobile}`);
+                  }
+                } catch (userErr) {
+                  console.error(`   Error fetching vendor user ${shop.user_id}:`, userErr.message);
+                }
+              }
+              
+              // If user not found by shop.user_id, try to find user by checking if shop.user_id exists but user lookup failed
+              // Or if shop.user_id is missing, try to find users with type 'R' or 'SR' that might own this shop
+              if (!vendorUser) {
+                console.log(`   User not found via shop.user_id (${shop.user_id || 'missing'}), trying alternative lookup...`);
+                
+                // If shop.user_id exists but user lookup failed, try again with different type conversion
+                if (shop.user_id) {
+                  try {
+                    // Try as number if it was a string, or vice versa
+                    const userIdNum = typeof shop.user_id === 'string' && !isNaN(shop.user_id) ? parseInt(shop.user_id) : shop.user_id;
+                    const userIdStr = String(shop.user_id);
+                    
+                    // Try number first
+                    if (typeof shop.user_id !== 'number') {
+                      vendorUser = await User.findById(userIdNum);
+                      if (vendorUser) {
+                        console.log(`   Found vendor user with numeric ID conversion: ${vendorUser.id}`);
+                      }
+                    }
+                    
+                    // If still not found, the user might not exist or shop.user_id is incorrect
+                    // In that case, we'll leave vendorUser as null and use shop details only
+                  } catch (retryErr) {
+                    console.error(`   Retry user lookup failed:`, retryErr.message);
+                  }
+                }
+                
+                // If still no user found and we want to be thorough, we could scan users
+                // But that's expensive, so we'll just use shop details for now
+                if (!vendorUser) {
+                  console.log(`   No vendor user found, will use shop details only`);
+                }
+              }
+              
+              // Get shop name from all possible fields
+              const shopName = shop.shopname || shop.shop_name || shop.name || shop.shopName || shop.ShopName || 'N/A';
+              
+              order.accepted_vendor = {
+                type: 'shop',
+                shop_id: shop.id,
+                shop_name: shopName,
+                user_id: vendorUser?.id || shop.user_id || null,
+                user_name: vendorUser?.name || vendorUser?.user_name || 'N/A',
+                user_mobile: vendorUser?.mob_num || vendorUser?.mobile || vendorUser?.phone || vendorUser?.phone_number || 'N/A',
+                user_email: vendorUser?.email || vendorUser?.email_id || 'N/A',
+                user_type: vendorUser?.user_type || vendorUser?.userType || 'N/A',
+                app_version: vendorUser?.app_version || vendorUser?.appVersion || vendorUser?.app_version || 'N/A',
+                shop_contact: shop.contact || shop.phone || shop.mob_num || shop.mobile || shop.phone_number || 'N/A',
+                shop_address: shop.address || shop.location || shop.full_address || 'N/A',
+                shop_place: shop.place || shop.city || shop.district || 'N/A',
+                shop_state: shop.state || shop.State || 'N/A',
+                shop_pincode: shop.pincode || shop.pin_code || shop.pin || 'N/A'
+              };
+              
+              console.log(`✅ Enriched accepted vendor (shop): shop_name=${order.accepted_vendor.shop_name}, user_id=${order.accepted_vendor.user_id}, user_name=${order.accepted_vendor.user_name}, user_type=${order.accepted_vendor.user_type}`);
+            } else {
+              // Shop not found - try to use shopdetails from order if available
+              console.warn(`⚠️  Shop not found for shop_id: ${order.shop_id}, trying to use shopdetails from order`);
+              
+              let shopName = 'N/A';
+              let shopDetails = null;
+              
+              if (order.shopdetails) {
+                try {
+                  shopDetails = typeof order.shopdetails === 'string' 
+                    ? JSON.parse(order.shopdetails) 
+                    : order.shopdetails;
+                  shopName = shopDetails.shopname || shopDetails.shop_name || shopDetails.name || 'N/A';
+                } catch (e) {
+                  if (typeof order.shopdetails === 'string') {
+                    shopName = order.shopdetails;
+                  }
+                }
+              }
+              
+              // If shop not found and no shopdetails, create accepted_vendor with shop_id only
+              // This at least shows that the order was accepted by a shop (even if shop record is missing)
+              order.accepted_vendor = {
+                type: 'shop',
+                shop_id: order.shop_id,
+                shop_name: shopName !== 'N/A' ? shopName : `Shop ID ${order.shop_id} (Not found in database)`,
+                user_id: shopDetails?.user_id || shopDetails?.shop_id || null,
+                user_name: shopDetails?.ownername || shopDetails?.owner_name || 'N/A',
+                user_mobile: shopDetails?.contact || shopDetails?.phone || 'N/A',
+                user_email: shopDetails?.email || 'N/A',
+                user_type: 'N/A',
+                app_version: 'N/A',
+                shop_contact: shopDetails?.contact || shopDetails?.phone || 'N/A',
+                shop_address: shopDetails?.address || shopDetails?.location || 'N/A',
+                shop_place: shopDetails?.place || 'N/A',
+                shop_state: shopDetails?.state || 'N/A',
+                shop_pincode: shopDetails?.pincode || 'N/A',
+                shop_not_found: true // Flag to indicate shop was not found
+              };
+              
+              console.log(`⚠️  Created accepted_vendor from shopdetails or with shop_id only: ${order.accepted_vendor.shop_name}`);
+            }
+          }
+          // Check if order was accepted by a delivery boy (delv_id)
+          else if (order.delv_id || order.delv_boy_id) {
+            const delvId = order.delv_id || order.delv_boy_id;
+            console.log(`📋 Order accepted by delivery boy (delv_id): ${delvId}`);
+            
+            // Get delivery boy user details
+            let deliveryUser = null;
+            try {
+              deliveryUser = await User.findById(delvId);
+              console.log(`   Delivery user lookup result: ${deliveryUser ? 'Found' : 'Not found'}`);
+            } catch (userErr) {
+              console.error(`   Error fetching delivery user ${delvId}:`, userErr.message);
+            }
+            
+            if (deliveryUser) {
+              order.accepted_vendor = {
+                type: 'delivery',
+                user_id: deliveryUser.id,
+                user_name: deliveryUser.name || 'N/A',
+                user_mobile: deliveryUser.mob_num || deliveryUser.mobile || deliveryUser.phone || 'N/A',
+                user_email: deliveryUser.email || 'N/A',
+                user_type: deliveryUser.user_type || 'N/A',
+                app_version: deliveryUser.app_version || 'N/A'
+              };
+              
+              console.log(`✅ Enriched accepted vendor (delivery): ${order.accepted_vendor.user_name}`);
+            } else {
+              console.warn(`⚠️  Delivery user not found for delv_id: ${delvId}`);
+            }
+          } else {
+            console.log(`ℹ️  Order has not been accepted yet (no shop_id or delv_id)`);
+          }
+          
+          return order;
+        } catch (err) {
+          console.error('Error enriching accepted vendor details:', err);
+          console.error('Error stack:', err.stack);
+          // Don't fail the request if vendor enrichment fails
+          // Try to create basic accepted_vendor from order data if shop_id exists
+          if (order.shop_id && !order.accepted_vendor) {
+            let shopName = 'N/A';
+            if (order.shopdetails) {
+              try {
+                const shopDetails = typeof order.shopdetails === 'string' 
+                  ? JSON.parse(order.shopdetails) 
+                  : order.shopdetails;
+                shopName = shopDetails.shopname || shopDetails.shop_name || shopDetails.name || 'N/A';
+              } catch (e) {
+                if (typeof order.shopdetails === 'string') {
+                  shopName = order.shopdetails;
+                }
+              }
+            }
+            order.accepted_vendor = {
+              type: 'shop',
+              shop_id: order.shop_id,
+              shop_name: shopName,
+              user_id: null,
+              user_name: 'N/A',
+              user_mobile: 'N/A',
+              user_email: 'N/A',
+              user_type: 'N/A',
+              app_version: 'N/A',
+              shop_contact: 'N/A',
+              shop_address: 'N/A',
+              shop_place: 'N/A',
+              shop_state: 'N/A',
+              shop_pincode: 'N/A'
+            };
+          }
+          return order;
+        }
+      };
+      
+      // Helper function to fetch monthly subscribed vendors
+      // Matches the logic from /accounts/paid-subscriptions endpoint
+      const fetchMonthlySubscribedVendors = async () => {
+        try {
+          const Shop = require('../models/Shop');
+          const User = require('../models/User');
+          const Invoice = require('../models/Invoice');
+          
+          console.log('📋 Fetching monthly subscribed vendors (matching paid subscriptions logic)...');
+          
+          // Get all invoices (same as paid subscriptions endpoint)
+          const allInvoices = await Invoice.getAll();
+          console.log(`📊 Found ${allInvoices.length} total invoices`);
+          
+          // Filter for paid invoices (same as paid subscriptions page)
+          const paidInvoices = allInvoices.filter(inv => inv.type === 'Paid' || inv.type === 'paid');
+          console.log(`✅ Found ${paidInvoices.length} paid invoices`);
+          
+          // Filter for active subscriptions (to_date > now) and approved status
+          const now = new Date();
+          const activePaidInvoices = paidInvoices.filter(invoice => {
+            // Must have user_id
+            if (!invoice.user_id) {
+              return false;
+            }
+            
+            // Check if approved (or pending - include both for now)
+            const approvalStatus = invoice.approval_status || 'pending';
+            if (approvalStatus === 'rejected') {
+              return false; // Exclude rejected subscriptions
+            }
+            
+            // Check if subscription is still active (to_date > now)
+            if (!invoice.to_date) {
+              return false; // No end date means not active
+            }
+            
+            try {
+              const toDate = new Date(invoice.to_date);
+              return toDate > now;
+            } catch (e) {
+              console.warn(`⚠️  Invalid to_date for invoice ${invoice.id}:`, invoice.to_date);
+              return false;
+            }
+          });
+          
+          console.log(`✅ Found ${activePaidInvoices.length} active paid subscriptions (approved/pending, to_date > now)`);
+          
+          // Get unique user IDs from active paid invoices
+          const userIds = [...new Set(activePaidInvoices.map(inv => inv.user_id).filter(id => id != null))];
+          
+          if (userIds.length === 0) {
+            return [];
+          }
+          
+          console.log(`📋 Fetching users for ${userIds.length} subscribed vendors...`);
+          
+          // Fetch users
+          const users = await User.findByIds(userIds);
+          
+          // Fetch shops for these users
+          const shops = await Shop.findByUserIds(userIds);
+          const shopMap = {};
+          shops.forEach(shop => {
+            if (shop && shop.user_id) {
+              if (!shopMap[shop.user_id]) {
+                shopMap[shop.user_id] = shop;
+              }
+            }
+          });
+          
+          // Map users to include shop info and subscription details
+          const monthlySubscribedVendors = users.map(user => {
+            const shop = shopMap[user.id];
+            const userInvoices = activePaidInvoices.filter(inv => inv.user_id === user.id);
+            // Get the latest invoice (by to_date)
+            const latestInvoice = userInvoices.sort((a, b) => {
+              const dateA = new Date(a.to_date);
+              const dateB = new Date(b.to_date);
+              return dateB - dateA; // Sort descending (latest first)
+            })[0];
+            
+            return {
+              id: user.id,
+              name: user.name || 'N/A',
+              mobile: user.mob_num || user.mobile || user.phone || 'N/A',
+              email: user.email || 'N/A',
+              user_type: user.user_type || 'N/A',
+              app_version: user.app_version || 'N/A',
+              shop_id: shop?.id || null,
+              shop_name: shop?.shopname || 'N/A',
+              subscription_ends_at: latestInvoice?.to_date || null,
+              approval_status: latestInvoice?.approval_status || 'pending'
+            };
+          });
+          
+          console.log(`✅ Fetched ${monthlySubscribedVendors.length} monthly subscribed vendors`);
+          
+          // Log shop names for debugging
+          if (monthlySubscribedVendors.length > 0) {
+            const shopNames = monthlySubscribedVendors.map(v => v.shop_name).filter(Boolean);
+            console.log(`   Shop names: ${shopNames.slice(0, 10).join(', ')}${shopNames.length > 10 ? '...' : ''}`);
+          }
+          
+          return monthlySubscribedVendors;
+        } catch (err) {
+          console.error('Error fetching monthly subscribed vendors:', err);
+          return [];
+        }
+      };
+      
       // Check Redis cache first
       const cacheKey = RedisCache.orderKey(id);
       try {
@@ -496,9 +837,12 @@ class CustomerPanelController {
         if (cached) {
           console.log('⚡ Order details cache hit:', cacheKey);
           console.log(`   Cached notified_vendor_ids: ${cached.notified_vendor_ids ? (typeof cached.notified_vendor_ids === 'string' ? cached.notified_vendor_ids.substring(0, 100) : JSON.stringify(cached.notified_vendor_ids).substring(0, 100)) : 'N/A'}`);
-          // Still enrich customer details and notified vendors even if cached
+          // Still enrich customer details, notified vendors, and accepted vendor even if cached
           const enrichedOrder = await enrichOrderCustomerDetails(cached);
           await enrichNotifiedVendors(enrichedOrder);
+          await enrichAcceptedVendorDetails(enrichedOrder);
+          // Fetch monthly subscribed vendors (not cached, always fresh)
+          enrichedOrder.monthly_subscribed_vendors = await fetchMonthlySubscribedVendors();
           console.log(`   Enriched notified_vendors count: ${enrichedOrder.notified_vendors ? enrichedOrder.notified_vendors.length : 0}`);
           return res.json({ status: 'success', msg: 'Order retrieved', data: enrichedOrder });
         }
@@ -518,6 +862,10 @@ class CustomerPanelController {
       if (orderData) {
         enrichedOrder = await enrichOrderCustomerDetails(orderData);
         await enrichNotifiedVendors(enrichedOrder);
+        await enrichAcceptedVendorDetails(enrichedOrder);
+        
+        // Fetch monthly subscribed vendors
+        enrichedOrder.monthly_subscribed_vendors = await fetchMonthlySubscribedVendors();
         
         // Cache enriched order data
         try {

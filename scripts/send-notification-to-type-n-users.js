@@ -60,7 +60,7 @@ async function sendNotificationsToTypeNUsers() {
         TableName: USER_TABLE,
         FilterExpression: 'user_type = :typeN AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
         ExpressionAttributeValues: {
-          ':typeN': 'N',
+          ':typeN': 'S',
           ':deleted': 2
         }
       };

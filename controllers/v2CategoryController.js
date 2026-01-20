@@ -43,29 +43,10 @@ class V2CategoryController {
       const categories = await CategoryImgKeywords.getAll();
       console.log(`✅ [V2 Categories API] Found ${categories.length} categories`);
       
-      // Get all shops to determine B2B/B2C availability
-      console.log('🔍 [V2 Categories API] Fetching shops from DynamoDB...');
-      const shops = await V2CategoryController._getAllShops();
-      console.log(`✅ [V2 Categories API] Found ${shops.length} shops`);
-      
-      // Determine B2B/B2C availability for each category
-      // B2B shops: shop_type = 1 (Industrial) or 4 (Wholesaler)
-      // B2C shops: shop_type = 3 (Retailer)
-      const b2bShopTypes = [1, 4];
-      const b2cShopTypes = [3];
-      
-      // Count shops by type
-      const b2bShops = shops.filter(shop => 
-        shop.del_status === 1 && b2bShopTypes.includes(shop.shop_type)
-      );
-      const b2cShops = shops.filter(shop => 
-        shop.del_status === 1 && b2cShopTypes.includes(shop.shop_type)
-      );
-      
-      // For now, mark categories as available for both if shops exist
-      // In future, this can be enhanced to check actual category usage
-      const hasB2B = b2bShops.length > 0;
-      const hasB2C = b2cShops.length > 0;
+      // Get B2B/B2C availability from cache (optimized - no full table scan)
+      console.log('🔍 [V2 Categories API] Getting shop availability from cache...');
+      const { hasB2B, hasB2C } = await V2CategoryController._getShopAvailability();
+      console.log(`✅ [V2 Categories API] Shop availability - B2B: ${hasB2B}, B2C: ${hasB2C}`);
       
       // Format categories with B2B/B2C info and fresh presigned URLs
       const { getS3Url } = require('../utils/s3Upload');
@@ -220,40 +201,8 @@ class V2CategoryController {
         };
       });
       
-      // Get shops to determine B2B/B2C availability
-      // Scan shops table to get all shops
-      const { getDynamoDBClient } = require('../config/dynamodb');
-      const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
-      const client = getDynamoDBClient();
-      let lastKey = null;
-      const shops = [];
-      
-      do {
-        const params = {
-          TableName: 'shops'
-        };
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-        }
-        const command = new ScanCommand(params);
-        const response = await client.send(command);
-        if (response.Items) {
-          shops.push(...response.Items);
-        }
-        lastKey = response.LastEvaluatedKey;
-      } while (lastKey);
-      const b2bShopTypes = [1, 4];
-      const b2cShopTypes = [3];
-      
-      const b2bShops = shops.filter(shop => 
-        shop.del_status === 1 && b2bShopTypes.includes(shop.shop_type)
-      );
-      const b2cShops = shops.filter(shop => 
-        shop.del_status === 1 && b2cShopTypes.includes(shop.shop_type)
-      );
-      
-      const hasB2B = b2bShops.length > 0;
-      const hasB2C = b2cShops.length > 0;
+      // Get B2B/B2C availability from cache (optimized - no full table scan)
+      const { hasB2B, hasB2C } = await V2CategoryController._getShopAvailability();
       
       // Format subcategories with B2B/B2C info
       const formattedSubcategories = subcategories.map(sub => {
@@ -347,40 +296,8 @@ class V2CategoryController {
       const categories = await CategoryImgKeywords.getAll();
       const subcategories = await Subcategory.getAll();
       
-      // Get shops to determine B2B/B2C availability
-      // Scan shops table to get all shops
-      const { getDynamoDBClient } = require('../config/dynamodb');
-      const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
-      const client = getDynamoDBClient();
-      let lastKey = null;
-      const shops = [];
-      
-      do {
-        const params = {
-          TableName: 'shops'
-        };
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-        }
-        const command = new ScanCommand(params);
-        const response = await client.send(command);
-        if (response.Items) {
-          shops.push(...response.Items);
-        }
-        lastKey = response.LastEvaluatedKey;
-      } while (lastKey);
-      const b2bShopTypes = [1, 4];
-      const b2cShopTypes = [3];
-      
-      const b2bShops = shops.filter(shop => 
-        shop.del_status === 1 && b2bShopTypes.includes(shop.shop_type)
-      );
-      const b2cShops = shops.filter(shop => 
-        shop.del_status === 1 && b2cShopTypes.includes(shop.shop_type)
-      );
-      
-      const hasB2B = b2bShops.length > 0;
-      const hasB2C = b2cShops.length > 0;
+      // Get B2B/B2C availability from cache (optimized - no full table scan)
+      const { hasB2B, hasB2C } = await V2CategoryController._getShopAvailability();
       
       // Group subcategories by main category
       const subcategoriesByCategory = {};
@@ -540,40 +457,8 @@ class V2CategoryController {
         }
       }
       
-      // Get shops to determine B2B/B2C availability (only if needed)
-      const { getDynamoDBClient } = require('../config/dynamodb');
-      const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
-      const client = getDynamoDBClient();
-      let lastKey = null;
-      const shops = [];
-      
-      do {
-        const params = {
-          TableName: 'shops'
-        };
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-        }
-        const command = new ScanCommand(params);
-        const response = await client.send(command);
-        if (response.Items) {
-          shops.push(...response.Items);
-        }
-        lastKey = response.LastEvaluatedKey;
-      } while (lastKey);
-      
-      const b2bShopTypes = [1, 4];
-      const b2cShopTypes = [3];
-      
-      const b2bShops = shops.filter(shop => 
-        shop.del_status === 1 && b2bShopTypes.includes(shop.shop_type)
-      );
-      const b2cShops = shops.filter(shop => 
-        shop.del_status === 1 && b2cShopTypes.includes(shop.shop_type)
-      );
-      
-      const hasB2B = b2bShops.length > 0;
-      const hasB2C = b2cShops.length > 0;
+      // Get B2B/B2C availability from cache (optimized - no full table scan)
+      const { hasB2B, hasB2C } = await V2CategoryController._getShopAvailability();
       
       // Format updated categories with fresh presigned URLs
       const { getS3Url } = require('../utils/s3Upload');
@@ -888,49 +773,110 @@ class V2CategoryController {
    * Helper method to get all shops
    * @private
    */
-  static async _getAllShops() {
+  /**
+   * Get shop availability (B2B/B2C) from cache
+   * OPTIMIZED: Uses cached shop type counts instead of scanning entire table
+   * Cache is refreshed every 5 minutes or when shops are updated
+   * @returns {Promise<{hasB2B: boolean, hasB2C: boolean}>}
+   */
+  static async _getShopAvailability() {
+    const cacheKey = 'shop_availability:b2b_b2c';
+    
     try {
-      console.log('🔍 [V2 Categories API] _getAllShops: Initializing DynamoDB client...');
+      // Check Redis cache first
+      const cached = await RedisCache.get(cacheKey);
+      if (cached !== null && cached !== undefined) {
+        console.log('⚡ [Shop Availability] Cache hit - returning cached availability');
+        return cached;
+      }
+    } catch (err) {
+      console.warn('⚠️  [Shop Availability] Redis cache get error:', err.message);
+    }
+    
+    // Cache miss - scan shops table ONCE and cache the result
+    console.log('🔍 [Shop Availability] Cache miss - scanning shops table...');
+    try {
       const { getDynamoDBClient } = require('../config/dynamodb');
       const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
       const client = getDynamoDBClient();
+      
       let lastKey = null;
-      const shops = [];
-      const maxIterations = 100; // Prevent infinite loops
+      let b2bCount = 0;
+      let b2cCount = 0;
+      const b2bShopTypes = [1, 4]; // Industrial, Wholesaler
+      const b2cShopTypes = [3]; // Retailer
+      const maxIterations = 100;
       let iterations = 0;
       
-      console.log('🔍 [V2 Categories API] _getAllShops: Starting scan of shops table...');
+      // Only scan for shop_type and del_status to minimize read capacity
       do {
         const params = {
-          TableName: 'shops'
+          TableName: 'shops',
+          ProjectionExpression: 'shop_type, del_status' // Only fetch needed attributes
         };
+        
         if (lastKey) {
           params.ExclusiveStartKey = lastKey;
         }
+        
         const command = new ScanCommand(params);
         const response = await client.send(command);
+        
         if (response.Items) {
-          shops.push(...response.Items);
-          console.log(`   📦 [V2 Categories API] _getAllShops: Scanned ${shops.length} shops so far...`);
+          // Count shops by type (only active shops: del_status = 1)
+          response.Items.forEach(shop => {
+            if (shop.del_status === 1) {
+              if (b2bShopTypes.includes(shop.shop_type)) {
+                b2bCount++;
+              }
+              if (b2cShopTypes.includes(shop.shop_type)) {
+                b2cCount++;
+              }
+            }
+          });
         }
+        
         lastKey = response.LastEvaluatedKey;
         iterations++;
         
-        // Safety check to prevent infinite loops
         if (iterations >= maxIterations) {
-          console.warn('⚠️  [V2 Categories API] _getAllShops: Reached max iterations while scanning shops table');
+          console.warn('⚠️  [Shop Availability] Reached max iterations');
           break;
         }
       } while (lastKey);
       
-      console.log(`✅ [V2 Categories API] _getAllShops: Completed scan, found ${shops.length} total shops`);
-      return shops;
+      const result = {
+        hasB2B: b2bCount > 0,
+        hasB2C: b2cCount > 0
+      };
+      
+      console.log(`✅ [Shop Availability] Scanned shops - B2B: ${b2bCount}, B2C: ${b2cCount}`);
+      
+      // Cache the result for 5 minutes (300 seconds)
+      // This balances freshness with performance - shop availability doesn't change frequently
+      try {
+        await RedisCache.set(cacheKey, result, 300); // 5 minutes
+        console.log('💾 [Shop Availability] Cached availability for 5 minutes');
+      } catch (cacheErr) {
+        console.warn('⚠️  [Shop Availability] Failed to cache result:', cacheErr.message);
+      }
+      
+      return result;
     } catch (err) {
-      console.error('❌ [V2 Categories API] _getAllShops: Error fetching shops:', err);
-      console.error('   Error message:', err.message);
-      console.error('   Error stack:', err.stack);
-      return []; // Return empty array on error to prevent 502
+      console.error('❌ [Shop Availability] Error scanning shops:', err);
+      // Return default values on error (assume both available to prevent breaking the API)
+      return { hasB2B: true, hasB2C: true };
     }
+  }
+
+  /**
+   * @deprecated Use _getShopAvailability() instead - this method scans entire table
+   * Kept for backward compatibility but should not be used
+   */
+  static async _getAllShops() {
+    console.warn('⚠️  [V2 Categories API] _getAllShops() is deprecated - use _getShopAvailability() instead');
+    // Return empty array to prevent errors, but log warning
+    return [];
   }
 
   /**

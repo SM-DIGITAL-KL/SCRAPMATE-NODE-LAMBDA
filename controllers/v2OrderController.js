@@ -174,159 +174,202 @@ class V2OrderController {
       // Format lat/lng for storage
       const latLog = latitude && longitude ? `${latitude},${longitude}` : '';
 
-      // Find top 5 nearest B2C vendors if location is provided
+      // Find all B2C vendors with progressive radius expansion (15km -> 30km -> 45km...) until at least one vendor is found
       let notifiedVendorIds = []; // Array to store notified vendor user IDs
       let notifiedShopIds = []; // Array to store notified shop IDs
       let orderStatus = 1; // Default: pending (available for pickup)
 
       if (latitude && longitude && !isNaN(parseFloat(latitude)) && !isNaN(parseFloat(longitude))) {
         try {
-          console.log(`🔍 Finding top 5 nearest B2C vendors for pickup request at ${latitude}, ${longitude}`);
+          const orderLat = parseFloat(latitude);
+          const orderLng = parseFloat(longitude);
+          const maxRadius = 150; // Maximum radius to search (150km) to prevent infinite expansion
+          const radiusIncrement = 15; // Expand by 15km each iteration
+          
+          let allVendors = [];
+          let currentRadius = 15; // Start with 15km
+          let finalSearchRadius = 15;
+          
+          console.log(`🔍 Finding B2C vendors with progressive radius expansion starting at ${currentRadius}km for pickup request at ${latitude}, ${longitude}`);
 
-          // Search within 15km radius for B2C vendors
-          const searchRadius = 15; // km
-          const nearbyShops = await Shop.getShopsByLocation(
-            parseFloat(latitude),
-            parseFloat(longitude),
-            searchRadius
-          );
-
-          // Filter for B2C vendors (shop_type 2 = Retailer/Door Step Buyer, shop_type 3 = Retailer B2C)
-          const b2cShops = nearbyShops.filter(shop => {
-            const shopType = typeof shop.shop_type === 'string' ? parseInt(shop.shop_type) : shop.shop_type;
-            return shopType === 2 || shopType === 3; // B2C vendors
-          });
-
-          // Get top 5 nearest B2C vendors from shop-based search (already sorted by distance)
-          const shopBasedVendors = b2cShops.slice(0, 5).map(v => ({
-            user_id: v.user_id,
-            shop_id: v.id,
-            distance: v.distance
-          }));
-
-          // Also find B2C vendors directly by user_type (R or SR) and app_type (vendor_app)
-          // This ensures vendors without active shops or with del_status = 2 shops are still included
-          console.log(`🔍 Also finding B2C vendors directly by user_type (R, SR) and app_type (vendor_app)...`);
-          const userBasedVendors = [];
-
-          try {
-            const { getDynamoDBClient } = require('../config/dynamodb');
-            const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
-            const client = getDynamoDBClient();
-
-            // Find all vendor_app users with user_type R or SR
-            let allVendorUsers = [];
-            let lastKey = null;
-
-            do {
-              const userParams = {
-                TableName: 'users',
-                FilterExpression: 'app_type = :appType AND (user_type = :typeR OR user_type = :typeSR) AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
-                ExpressionAttributeValues: {
-                  ':appType': 'vendor_app',
-                  ':typeR': 'R',
-                  ':typeSR': 'SR',
-                  ':deleted': 2
-                }
-              };
-
-              if (lastKey) {
-                userParams.ExclusiveStartKey = lastKey;
+          // Pre-fetch all vendor users and shops once (outside loop for efficiency)
+          const { getDynamoDBClient } = require('../config/dynamodb');
+          const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+          const client = getDynamoDBClient();
+          
+          // Find all vendor_app users with user_type R or SR (fetch once)
+          let allVendorUsers = [];
+          let lastKey = null;
+          do {
+            const userParams = {
+              TableName: 'users',
+              FilterExpression: 'app_type = :appType AND (user_type = :typeR OR user_type = :typeSR) AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+              ExpressionAttributeValues: {
+                ':appType': 'vendor_app',
+                ':typeR': 'R',
+                ':typeSR': 'SR',
+                ':deleted': 2
               }
+            };
+            if (lastKey) {
+              userParams.ExclusiveStartKey = lastKey;
+            }
+            const userCommand = new ScanCommand(userParams);
+            const userResponse = await client.send(userCommand);
+            if (userResponse.Items) {
+              allVendorUsers.push(...userResponse.Items);
+            }
+            lastKey = userResponse.LastEvaluatedKey;
+          } while (lastKey);
 
-              const userCommand = new ScanCommand(userParams);
-              const userResponse = await client.send(userCommand);
-
-              if (userResponse.Items) {
-                allVendorUsers.push(...userResponse.Items);
-              }
-
-              lastKey = userResponse.LastEvaluatedKey;
-            } while (lastKey);
-
-            console.log(`   Found ${allVendorUsers.length} vendor_app users with type R or SR`);
-
-            // For each vendor user, check if they have a shop (including deleted shops) and calculate distance
-            for (const vendorUser of allVendorUsers) {
-              try {
-                // Try to find shop for this vendor (including shops with del_status = 2)
-                const shopScanCommand = new ScanCommand({
-                  TableName: 'shops',
-                  FilterExpression: 'user_id = :userId',
-                  ExpressionAttributeValues: {
-                    ':userId': parseInt(vendorUser.id)
+          // Fetch all shops in one scan and create a map by user_id (fetch once)
+          const userIdsSet = new Set(allVendorUsers.map(u => parseInt(u.id)));
+          const shopsMap = new Map(); // Map<user_id, shop>
+          let shopLastKey = null;
+          do {
+            const shopScanParams = {
+              TableName: 'shops',
+              ProjectionExpression: 'id, user_id, lat_log, shop_type, del_status'
+            };
+            if (shopLastKey) {
+              shopScanParams.ExclusiveStartKey = shopLastKey;
+            }
+            const shopScanCommand = new ScanCommand(shopScanParams);
+            const shopResponse = await client.send(shopScanCommand);
+            if (shopResponse.Items) {
+              shopResponse.Items.forEach(shop => {
+                const shopUserId = parseInt(shop.user_id);
+                if (userIdsSet.has(shopUserId)) {
+                  if (!shopsMap.has(shopUserId) || shop.del_status === 1) {
+                    shopsMap.set(shopUserId, shop);
                   }
-                });
+                }
+              });
+            }
+            shopLastKey = shopResponse.LastEvaluatedKey;
+          } while (shopLastKey);
 
-                const shopResponse = await client.send(shopScanCommand);
-                const vendorShops = shopResponse.Items || [];
-                const vendorShop = vendorShops.length > 0 ? vendorShops[0] : null; // Take first shop if multiple
+          console.log(`   Pre-fetched ${allVendorUsers.length} vendor users and ${shopsMap.size} shops for radius filtering`);
 
-                if (vendorShop && vendorShop.lat_log) {
-                  // Calculate distance (include shops even if del_status = 2, as long as vendor user is active)
-                  const [shopLat, shopLng] = vendorShop.lat_log.split(',').map(Number);
-                  if (shopLat && shopLng) {
-                    const R = 6371; // Earth's radius in km
-                    const dLat = (shopLat - parseFloat(latitude)) * Math.PI / 180;
-                    const dLng = (shopLng - parseFloat(longitude)) * Math.PI / 180;
-                    const a =
-                      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                      Math.cos(parseFloat(latitude) * Math.PI / 180) * Math.cos(shopLat * Math.PI / 180) *
-                      Math.sin(dLng / 2) * Math.sin(dLng / 2);
-                    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-                    const distance = R * c;
+          // Progressive radius expansion: ONLY expand if NO vendors found in current radius
+          // If at least one vendor is found, STOP and use only those vendors (don't expand to 30km, 45km, etc.)
+          while (currentRadius <= maxRadius) {
+            console.log(`\n🔍 Searching within ${currentRadius}km radius...`);
+            
+            // Reset allVendors for this radius search
+            allVendors = [];
+            
+            // Shop-based search within current radius
+            const nearbyShops = await Shop.getShopsByLocation(
+              orderLat,
+              orderLng,
+              currentRadius
+            );
 
-                    if (distance <= searchRadius) {
-                      // Check if shop is B2C type (2 or 3), or if no shop type, include vendor anyway
-                      const shopType = vendorShop.shop_type ? (typeof vendorShop.shop_type === 'string' ? parseInt(vendorShop.shop_type) : vendorShop.shop_type) : null;
-                      if (!shopType || shopType === 2 || shopType === 3) {
-                        userBasedVendors.push({
-                          user_id: vendorUser.id,
-                          shop_id: vendorShop.id,
-                          distance: distance,
-                          shop_type: shopType,
-                          del_status: vendorShop.del_status || 1
-                        });
-                        console.log(`   ✅ Found vendor ${vendorUser.id} with shop ${vendorShop.id} (del_status: ${vendorShop.del_status || 1}, shop_type: ${shopType}, distance: ${distance.toFixed(2)} km)`);
+            // Filter for B2C vendors (shop_type 2 = Retailer/Door Step Buyer, shop_type 3 = Retailer B2C)
+            // Also include shop_type 1 (Industrial) for SR users who can access both B2B and B2C
+            const b2cShops = nearbyShops.filter(shop => {
+              const shopType = typeof shop.shop_type === 'string' ? parseInt(shop.shop_type) : shop.shop_type;
+              // Include shop_type 2, 3 (B2C), and shop_type 1 (for SR users who can do B2C)
+              return shopType === 1 || shopType === 2 || shopType === 3;
+            });
+
+            // Get all B2C vendors from shop-based search (already sorted by distance)
+            const shopBasedVendors = b2cShops.map(v => ({
+              user_id: v.user_id,
+              shop_id: v.id,
+              distance: v.distance
+            }));
+
+            console.log(`   Found ${shopBasedVendors.length} vendor(s) from shop-based search within ${currentRadius}km`);
+
+            // Also find B2C vendors directly by user_type (R or SR) and app_type (vendor_app)
+            // This ensures vendors without active shops or with del_status = 2 shops are still included
+            // Use pre-fetched allVendorUsers and shopsMap (already fetched outside loop)
+            console.log(`   🔍 Filtering pre-fetched vendors by distance within ${currentRadius}km...`);
+            const userBasedVendors = [];
+
+            try {
+              // For each vendor user, get shop from pre-fetched map and calculate distance
+              for (const vendorUser of allVendorUsers) {
+                try {
+                  const vendorShop = shopsMap.get(parseInt(vendorUser.id));
+
+                  if (vendorShop && vendorShop.lat_log) {
+                    const [shopLat, shopLng] = vendorShop.lat_log.split(',').map(Number);
+                    if (shopLat && shopLng) {
+                      // Calculate distance using Haversine formula
+                      const R = 6371; // Earth's radius in km
+                      const dLat = (shopLat - orderLat) * Math.PI / 180;
+                      const dLng = (shopLng - orderLng) * Math.PI / 180;
+                      const a =
+                        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                        Math.cos(orderLat * Math.PI / 180) * Math.cos(shopLat * Math.PI / 180) *
+                        Math.sin(dLng / 2) * Math.sin(dLng / 2);
+                      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+                      const distance = R * c;
+
+                      if (distance <= currentRadius) {
+                        // Check if shop is B2C type (1, 2, or 3), or if no shop type, include vendor anyway
+                        // shop_type 1 (Industrial) is included for SR users who can access both B2B and B2C
+                        const shopType = vendorShop.shop_type ? (typeof vendorShop.shop_type === 'string' ? parseInt(vendorShop.shop_type) : vendorShop.shop_type) : null;
+                        if (!shopType || shopType === 1 || shopType === 2 || shopType === 3) {
+                          userBasedVendors.push({
+                            user_id: vendorUser.id,
+                            shop_id: vendorShop.id,
+                            distance: distance,
+                            shop_type: shopType,
+                            del_status: vendorShop.del_status || 1
+                          });
+                        }
                       }
                     }
                   }
+                } catch (vendorError) {
+                  console.error(`   ❌ Error processing vendor ${vendorUser.id}:`, vendorError.message);
                 }
-              } catch (vendorError) {
-                console.error(`   ❌ Error processing vendor ${vendorUser.id}:`, vendorError.message);
-                // Continue with next vendor
+              }
+
+              console.log(`   Found ${userBasedVendors.length} vendor(s) from user-based search within ${currentRadius}km`);
+            } catch (userSearchError) {
+              console.error('❌ Error finding vendors by user_type:', userSearchError);
+            }
+
+            // Combine shop-based and user-based vendors, avoiding duplicates, sort by distance
+            const allVendorsMap = new Map();
+
+            // Add shop-based vendors first
+            for (const vendor of shopBasedVendors) {
+              const userId = parseInt(vendor.user_id);
+              if (!allVendorsMap.has(userId) || allVendorsMap.get(userId).distance > vendor.distance) {
+                allVendorsMap.set(userId, vendor);
               }
             }
 
-            console.log(`   Found ${userBasedVendors.length} vendors from user-based search`);
-          } catch (userSearchError) {
-            console.error('❌ Error finding vendors by user_type:', userSearchError);
-            // Continue with shop-based vendors only
-          }
+            // Add user-based vendors (will overwrite if already exists with better distance)
+            for (const vendor of userBasedVendors) {
+              const userId = parseInt(vendor.user_id);
+              if (!allVendorsMap.has(userId) || allVendorsMap.get(userId).distance > vendor.distance) {
+                allVendorsMap.set(userId, vendor);
+              }
+            }
 
-          // Combine shop-based and user-based vendors, avoiding duplicates, sort by distance, take top 5
-          const allVendorsMap = new Map();
+            // Convert to array, sort by distance
+            allVendors = Array.from(allVendorsMap.values())
+              .sort((a, b) => (a.distance || 999) - (b.distance || 999));
 
-          // Add shop-based vendors first
-          for (const vendor of shopBasedVendors) {
-            const userId = parseInt(vendor.user_id);
-            if (!allVendorsMap.has(userId) || allVendorsMap.get(userId).distance > vendor.distance) {
-              allVendorsMap.set(userId, vendor);
+            // CRITICAL: If at least one vendor found, STOP and use only those vendors
+            // Do NOT expand to 30km, 45km, etc. if vendors are already found
+            if (allVendors.length > 0) {
+              finalSearchRadius = currentRadius;
+              console.log(`   ✅ Found ${allVendors.length} vendor(s) within ${currentRadius}km radius - STOPPING search (will not expand to larger radius)`);
+              break; // Exit loop immediately when vendors are found
+            } else {
+              // Only expand radius if NO vendors found in current radius
+              console.log(`   ⚠️  No vendors found within ${currentRadius}km, expanding search radius to ${currentRadius + radiusIncrement}km...`);
+              currentRadius += radiusIncrement;
             }
           }
-
-          // Add user-based vendors (will overwrite if already exists with better distance)
-          for (const vendor of userBasedVendors) {
-            const userId = parseInt(vendor.user_id);
-            if (!allVendorsMap.has(userId) || allVendorsMap.get(userId).distance > vendor.distance) {
-              allVendorsMap.set(userId, vendor);
-            }
-          }
-
-          // Convert to array, sort by distance, take top 5
-          const allVendors = Array.from(allVendorsMap.values())
-            .sort((a, b) => (a.distance || 999) - (b.distance || 999))
-            .slice(0, 5);
 
           // Update notified lists
           notifiedVendorIds = [];
@@ -342,7 +385,7 @@ class V2OrderController {
           }
 
           if (allVendors.length > 0) {
-            console.log(`✅ Found ${allVendors.length} B2C vendor(s) to notify (including vendors with deleted shops):`);
+            console.log(`\n✅ Found ${allVendors.length} B2C vendor(s) to notify within ${finalSearchRadius}km radius (including vendors with deleted shops):`);
             allVendors.forEach(v => {
               console.log(`   - User ID: ${v.user_id}, Shop ID: ${v.shop_id || 'none'}, Distance: ${v.distance?.toFixed(2) || 'N/A'} km`);
             });
@@ -351,7 +394,7 @@ class V2OrderController {
             // Status 2 (Accepted) is only set when vendor explicitly accepts the order
             orderStatus = 1;
           } else {
-            console.log(`⚠️  No B2C vendors found within ${searchRadius}km radius. Order will remain unassigned.`);
+            console.log(`\n⚠️  No B2C vendors found within ${maxRadius}km radius. Order will remain unassigned.`);
           }
         } catch (error) {
           console.error('❌ Error finding nearest B2C vendors:', error);
@@ -424,7 +467,7 @@ class V2OrderController {
         has_notified_shop_ids: !!order.notified_shop_ids,
       });
 
-      // Send push notifications to all top 5 vendors
+      // Send push notifications to all vendors within 15km radius
       if (notifiedVendorIds.length > 0) {
         try {
           console.log(`📤 Sending notifications to ${notifiedVendorIds.length} vendor(s)...`);
@@ -573,22 +616,45 @@ class V2OrderController {
                   hostname: 'sms.bulksmsind.in',
                   path: `/v2/sendSMS?${params}`,
                   method: 'GET',
+                  timeout: 30000, // 30 second timeout
                 };
                 
                 const req = http.request(options, (res) => {
                   let data = '';
-                  res.on('data', (chunk) => { data += chunk; });
+                  
+                  res.on('data', (chunk) => { 
+                    data += chunk; 
+                  });
+                  
                   res.on('end', () => {
                     try {
                       const response = JSON.parse(data);
+                      console.log(`📱 [SMS] API Response for ${phoneNumber}:`, JSON.stringify(response));
                       resolve(response);
                     } catch (e) {
-                      resolve({ raw: data });
+                      console.warn(`⚠️  [SMS] Failed to parse response for ${phoneNumber}, raw data:`, data);
+                      resolve({ raw: data, parseError: e.message });
                     }
+                  });
+                  
+                  res.on('error', (error) => {
+                    console.error(`❌ [SMS] Response error for ${phoneNumber}:`, error);
+                    reject(error);
                   });
                 });
                 
-                req.on('error', (error) => reject(error));
+                req.on('error', (error) => {
+                  console.error(`❌ [SMS] Request error for ${phoneNumber}:`, error);
+                  reject(error);
+                });
+                
+                req.on('timeout', () => {
+                  console.error(`❌ [SMS] Request timeout for ${phoneNumber} after 30 seconds`);
+                  req.destroy();
+                  reject(new Error('SMS request timeout'));
+                });
+                
+                req.setTimeout(30000); // Set timeout
                 req.end();
               });
             };
@@ -610,12 +676,68 @@ class V2OrderController {
               return null;
             };
             
+            // OPTIMIZED: Batch fetch all users at once instead of one-by-one
+            console.log(`📱 [SMS] Batch fetching ${notifiedVendorIds.length} vendor users...`);
+            const { BatchGetCommand } = require('@aws-sdk/lib-dynamodb');
+            const usersClient = require('../config/dynamodb').getDynamoDBClient();
+            const usersMap = new Map();
+            
+            // Batch get users (DynamoDB allows up to 100 items per batch)
+            const batchSize = 100;
+            for (let i = 0; i < notifiedVendorIds.length; i += batchSize) {
+              const batch = notifiedVendorIds.slice(i, i + batchSize);
+              const keys = batch.map(id => ({ id: parseInt(id) }));
+              
+              try {
+                // Use ExpressionAttributeNames to handle reserved keyword 'name'
+                const batchCommand = new BatchGetCommand({
+                  RequestItems: {
+                    'users': {
+                      Keys: keys,
+                      ProjectionExpression: 'id, #name, mob_num', // Use alias for reserved keyword
+                      ExpressionAttributeNames: {
+                        '#name': 'name' // Alias for reserved keyword 'name'
+                      }
+                    }
+                  }
+                });
+                const batchResponse = await usersClient.send(batchCommand);
+                
+                if (batchResponse.Responses && batchResponse.Responses['users']) {
+                  batchResponse.Responses['users'].forEach(user => {
+                    usersMap.set(parseInt(user.id), user);
+                  });
+                  console.log(`📱 [SMS] Batch ${i}-${i + batch.length}: Fetched ${batchResponse.Responses['users'].length} users`);
+                }
+              } catch (batchErr) {
+                console.error(`❌ [SMS] Batch get error for batch ${i}-${i + batch.length}:`, batchErr.message);
+                console.error(`   [SMS] Error details:`, batchErr);
+                // Fallback: Try fetching users one by one if batch fails
+                console.log(`📱 [SMS] Falling back to individual user fetches for batch ${i}-${i + batch.length}...`);
+                for (const vendorId of batch) {
+                  try {
+                    const User = require('../models/User');
+                    const vendorUser = await User.findById(parseInt(vendorId));
+                    if (vendorUser) {
+                      usersMap.set(parseInt(vendorId), vendorUser);
+                      console.log(`📱 [SMS] Fetched user ${vendorId} via fallback method`);
+                    }
+                  } catch (fallbackErr) {
+                    console.error(`❌ [SMS] Fallback fetch error for user ${vendorId}:`, fallbackErr.message);
+                  }
+                }
+              }
+            }
+            
+            console.log(`📱 [SMS] Fetched ${usersMap.size} users from ${notifiedVendorIds.length} requested`);
+            
             // Send SMS to each vendor
             console.log(`📱 [SMS] Creating SMS promises for ${notifiedVendorIds.length} vendors...`);
             const smsPromises = notifiedVendorIds.map(async (vendorUserId) => {
               try {
                 console.log(`📱 [SMS] Processing SMS for vendor user_id: ${vendorUserId}`);
-                const vendorUser = await User.findById(vendorUserId);
+                // Get user from pre-fetched map
+                const vendorUser = usersMap.get(parseInt(vendorUserId));
                 
                 if (!vendorUser) {
                   console.warn(`⚠️  [SMS] Vendor user (user_id: ${vendorUserId}) not found in database`);
@@ -781,7 +903,7 @@ class V2OrderController {
               }
             }
           } catch (smsError) {
-            // Don't fail the order placement if SMS fails
+            // Don't fail the order placement if SMS fails, but log extensively
             console.error('❌ [SMS ERROR] CRITICAL: Error in SMS notification block:', smsError);
             console.error('   [SMS ERROR] Error name:', smsError.name);
             console.error('   [SMS ERROR] Error message:', smsError.message);
@@ -789,8 +911,18 @@ class V2OrderController {
             console.error('   [SMS ERROR] Order ID:', order.id);
             console.error('   [SMS ERROR] Order Number:', order.order_number || order.order_no);
             console.error('   [SMS ERROR] Notified Vendor IDs:', notifiedVendorIds);
+            console.error('   [SMS ERROR] Notified Vendor IDs count:', notifiedVendorIds.length);
             console.error('   [SMS ERROR] This error prevented SMS from being sent to any vendors');
             console.error('   [SMS ERROR] Order was still created successfully');
+            
+            // Also log to CloudWatch/console with a clear marker for monitoring
+            console.error('🚨 SMS_SENDING_FAILED 🚨', {
+              order_id: order.id,
+              order_number: order.order_number || order.order_no,
+              vendor_count: notifiedVendorIds.length,
+              error: smsError.message,
+              timestamp: new Date().toISOString()
+            });
           }
         } catch (notifError) {
           // Don't fail the order placement if notification fails
@@ -1193,6 +1325,30 @@ class V2OrderController {
         }
       });
 
+      // Get vendor's custom prices to recalculate order prices
+      let vendorPriceMap = new Map();
+      if (user_type !== 'D') {
+        try {
+          const User = require('../models/User');
+          const vendorUser = await User.findById(parseInt(user_id));
+          if (vendorUser && vendorUser.operating_subcategories && Array.isArray(vendorUser.operating_subcategories)) {
+            vendorUser.operating_subcategories.forEach(userSubcat => {
+              const subcatId = userSubcat.subcategory_id || userSubcat.subcategoryId;
+              const customPrice = userSubcat.custom_price || '';
+              if (subcatId && customPrice && customPrice.trim() !== '') {
+                const priceValue = parseFloat(customPrice);
+                if (!isNaN(priceValue)) {
+                  vendorPriceMap.set(parseInt(subcatId), priceValue);
+                }
+              }
+            });
+            console.log(`💰 [getAvailablePickupRequests] Vendor ${user_id} has ${vendorPriceMap.size} subcategories with custom prices`);
+          }
+        } catch (priceErr) {
+          console.warn('⚠️  [getAvailablePickupRequests] Error fetching vendor prices:', priceErr.message);
+        }
+      }
+
       // Format orders for response
       const formattedOrders = orders.map(order => {
         const [lat, lng] = order.lat_log ? order.lat_log.split(',').map(Number) : [null, null];
@@ -1208,9 +1364,10 @@ class V2OrderController {
         const customer_name = customer?.name || null;
         const customer_phone = customer?.contact ? String(customer.contact) : null;
 
-        // Parse orderdetails to get scrap description
+        // Parse orderdetails to get scrap description and recalculate price with vendor's custom prices
         let scrapDescription = 'Mixed Recyclables';
         let totalWeight = parseFloat(order.estim_weight) || 0;
+        let recalculatedPrice = parseFloat(order.estim_price) || 0;
 
         try {
           const details = typeof order.orderdetails === 'string'
@@ -1235,6 +1392,24 @@ class V2OrderController {
               scrapDescription = categories.length > 0
                 ? categories.join(', ')
                 : 'Mixed Recyclables';
+              
+              // Recalculate price using vendor's custom prices if available
+              if (vendorPriceMap.size > 0) {
+                let totalRecalculatedPrice = 0;
+                items.forEach(item => {
+                  const materialId = item.material_id || item.subcategory_id;
+                  const weight = parseFloat(item.expected_weight_kg || item.weight || 0);
+                  let itemPricePerKg = parseFloat(item.price_per_kg || item.price || 0);
+                  
+                  if (materialId && vendorPriceMap.has(parseInt(materialId))) {
+                    itemPricePerKg = vendorPriceMap.get(parseInt(materialId));
+                  }
+                  
+                  totalRecalculatedPrice += itemPricePerKg * weight;
+                });
+                recalculatedPrice = totalRecalculatedPrice;
+                console.log(`💰 [getAvailablePickupRequests] Recalculated price for order ${order.order_number || order.id}: ${order.estim_price} → ${recalculatedPrice}`);
+              }
             }
           }
         } catch (e) {
@@ -1321,7 +1496,7 @@ class V2OrderController {
           longitude: lng,
           scrap_description: scrapDescription,
           estimated_weight_kg: totalWeight,
-          estimated_price: parseFloat(order.estim_price) || 0,
+          estimated_price: recalculatedPrice, // Use recalculated price based on vendor's custom prices
           status: order.status,
           preferred_pickup_time: order.preferred_pickup_time || null,
           pickup_time_display: pickupTimeDisplay,
@@ -1535,8 +1710,14 @@ class V2OrderController {
       if (user_type !== 'D' && order.orderdetails) {
         try {
           // Get vendor's User record to access operating_subcategories with custom prices
+          // Use findById which directly queries DynamoDB (no cache) to ensure we get the latest prices
           const vendorUser = await User.findById(parseInt(user_id));
-          if (vendorUser && vendorUser.operating_subcategories && Array.isArray(vendorUser.operating_subcategories)) {
+          
+          if (!vendorUser) {
+            console.warn(`⚠️  [acceptPickupRequest] Vendor user ${user_id} not found - using original order prices`);
+          } else if (!vendorUser.operating_subcategories || !Array.isArray(vendorUser.operating_subcategories)) {
+            console.warn(`⚠️  [acceptPickupRequest] Vendor ${user_id} has no operating_subcategories - using original order prices`);
+          } else {
             // Create a map of vendor's custom prices by subcategory_id
             const vendorPriceMap = new Map();
             vendorUser.operating_subcategories.forEach(userSubcat => {
@@ -1544,11 +1725,17 @@ class V2OrderController {
               const customPrice = userSubcat.custom_price || '';
               // Only add to map if custom_price exists and is not empty
               if (subcatId && customPrice && customPrice.trim() !== '') {
-                vendorPriceMap.set(parseInt(subcatId), parseFloat(customPrice));
+                const priceValue = parseFloat(customPrice);
+                if (!isNaN(priceValue)) {
+                  vendorPriceMap.set(parseInt(subcatId), priceValue);
+                  console.log(`💰 [acceptPickupRequest] Found custom price for subcategory ${subcatId}: ₹${priceValue}/kg`);
+                } else {
+                  console.warn(`⚠️  [acceptPickupRequest] Invalid custom_price for subcategory ${subcatId}: "${customPrice}"`);
+                }
               }
             });
 
-            console.log(`💰 [acceptPickupRequest] Vendor has ${vendorPriceMap.size} subcategories with custom prices`);
+            console.log(`💰 [acceptPickupRequest] Vendor ${user_id} has ${vendorPriceMap.size} subcategories with custom prices`);
 
             // Parse orderdetails
             let orderdetailsParsed = order.orderdetails;
@@ -2404,15 +2591,9 @@ class V2OrderController {
             orders = [response.Item];
           }
         } catch (e) {
-          const scanCommand = new ScanCommand({
-            TableName: 'orders',
-            FilterExpression: 'order_no = :orderNo',
-            ExpressionAttributeValues: {
-              ':orderNo': orderId
-            }
-          });
-          const response = await client.send(scanCommand);
-          orders = response.Items || [];
+          // Fallback: Use Order model's findByOrderNo (already handles both order_no and order_number)
+          console.warn('⚠️  [cancelPickupRequest] GetCommand failed, trying findByOrderNo:', e.message);
+          orders = await Order.findByOrderNo(orderId);
         }
       }
 

@@ -276,7 +276,7 @@ class SubcategoryController {
             data: null
           });
         }
-      } else if (subcategory_img !== undefined) {
+      } else if (subcategory_img !== undefined && subcategory_img !== null) {
         // If no file upload but URL provided, use the URL
         updateData.subcategory_img = subcategory_img.trim();
       }
@@ -301,22 +301,30 @@ class SubcategoryController {
 
       const updatedSubcategory = await Subcategory.findById(parseInt(id));
 
-      // Invalidate v2 API caches
+      // Invalidate only the specific subcategory and its category caches
       try {
         const categoryId = updatedSubcategory?.main_category_id;
-        await RedisCache.invalidateV2ApiCache('subcategories', null, { categoryId: categoryId || 'all' });
-        await RedisCache.invalidateV2ApiCache('categories', null, {});
-        // Invalidate all paginated subcategories for this category
+        const subcategoryId = parseInt(id);
+        
+        // Delete specific subcategory cache (if exists)
+        await RedisCache.delete(RedisCache.recordKey('subcategory', subcategoryId));
+        
+        // Delete subcategories for this specific category only
         if (categoryId) {
-          for (let page = 1; page <= 10; page++) {
-            for (const limit of [20, 50, 100]) {
-              await RedisCache.delete(RedisCache.listKey('subcategories_paginated', { page, limit, categoryId, userType: 'all' }));
-              await RedisCache.delete(RedisCache.listKey('subcategories_paginated', { page, limit, categoryId, userType: 'b2b' }));
-              await RedisCache.delete(RedisCache.listKey('subcategories_paginated', { page, limit, categoryId, userType: 'b2c' }));
-            }
-          }
+          await RedisCache.delete(RedisCache.listKey('subcategories', { categoryId, userType: 'all' }));
+          await RedisCache.delete(RedisCache.listKey('subcategories', { categoryId, userType: 'b2b' }));
+          await RedisCache.delete(RedisCache.listKey('subcategories', { categoryId, userType: 'b2c' }));
         }
-        console.log(`🗑️  Invalidated v2 subcategories cache after updating subcategory`);
+        
+        // Delete grouped subcategories cache (since it includes all categories)
+        await RedisCache.delete(RedisCache.listKey('subcategories_grouped', {}));
+        
+        // Delete categories_with_subcategories cache (since it includes subcategories)
+        await RedisCache.delete(RedisCache.listKey('categories_with_subcategories', { userType: 'all' }));
+        await RedisCache.delete(RedisCache.listKey('categories_with_subcategories', { userType: 'b2b' }));
+        await RedisCache.delete(RedisCache.listKey('categories_with_subcategories', { userType: 'b2c' }));
+        
+        console.log(`🗑️  Invalidated cache for subcategory ${subcategoryId} (category ${categoryId})`);
       } catch (err) {
         console.error('Cache invalidation error:', err);
       }

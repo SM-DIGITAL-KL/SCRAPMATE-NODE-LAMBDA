@@ -50,14 +50,18 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   
-  // Allow requests from localhost:8000 (PHP app), HTML admin panel, and Lambda Function URL
+  // Allow requests from localhost (development), PHP admin panel, and Lambda Function URLs (production)
   const allowedOrigins = [
+    // Development URLs
     'http://localhost:8000',
     'http://127.0.0.1:8000',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
+    // Production URLs
     'https://uodttljjzj3nh3e4cjqardxip40btqef.lambda-url.ap-south-1.on.aws',
-    'https://mono.scrapmate.co.in'
+    'https://gpn6vt3mlkm6zq7ibxdtu6bphi0onexr.lambda-url.ap-south-1.on.aws',
+    'https://mono.scrapmate.co.in',
+    'https://app.scrapmate.co.in'
   ];
   
   // IMPORTANT: When using Access-Control-Allow-Credentials: true,
@@ -208,7 +212,7 @@ app.use((req, res, next) => {
   if (req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) && !Array.isArray(req.body)) {
     return express.urlencoded({ extended: true })(req, res, next);
   }
-  express.json()(req, res, next);
+  express.json({ limit: '50mb' })(req, res, next);
 });
 
 app.use((req, res, next) => {

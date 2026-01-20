@@ -58,10 +58,11 @@ app.use((req, res, next) => {
 });
 
 // Only use JSON parser for non-multipart requests
+// Increased limit to 50MB for large data syncs (like live prices with 400+ items)
 app.use((req, res, next) => {
   const contentType = req.headers['content-type'] || req.headers['Content-Type'] || '';
   if (!contentType.includes('multipart/form-data')) {
-    express.json()(req, res, next);
+    express.json({ limit: '50mb' })(req, res, next);
   } else {
     next();
   }

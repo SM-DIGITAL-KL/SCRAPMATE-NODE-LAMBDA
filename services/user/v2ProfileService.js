@@ -768,9 +768,27 @@ class V2ProfileService {
       if (updateData.email !== undefined) {
         // Check email uniqueness if changing
         if (updateData.email !== user.email) {
-          const emailExists = await User.emailExists(updateData.email);
-          if (emailExists) {
+          // Check if email exists and get the user who has it
+          const existingUserWithEmail = await User.findByEmail(updateData.email);
+          
+          if (existingUserWithEmail) {
+            // Allow same email if:
+            // 1. Different app_type (e.g., vendor_app can share email with customer_app)
+            // 2. Current user is customer_app (new customer can use existing email)
+            const isDifferentAppType = existingUserWithEmail.app_type !== user.app_type;
+            const isCustomerApp = user.app_type === 'customer_app' || requestingAppType === 'customer_app';
+            
+            if (existingUserWithEmail.id === userId) {
+              // Same user, allow it
+              console.log(`✅ [updateProfile] Email belongs to same user, allowing update`);
+            } else if (isDifferentAppType || isCustomerApp) {
+              // Different app type or customer_app user - allow sharing email
+              console.log(`✅ [updateProfile] Allowing email reuse - different app_type or customer_app user`);
+              console.log(`   Current user app_type: ${user.app_type}, Existing user app_type: ${existingUserWithEmail.app_type}`);
+            } else {
+              // Same app_type and different user - don't allow
             throw new Error('EMAIL_ALREADY_EXISTS');
+            }
           }
         }
         userUpdateData.email = updateData.email;
@@ -901,16 +919,22 @@ class V2ProfileService {
             }
             if (updateData.shop.latitude !== undefined && updateData.shop.latitude !== null) {
               const lat = typeof updateData.shop.latitude === 'string' ? parseFloat(updateData.shop.latitude) : updateData.shop.latitude;
-              if (!isNaN(lat)) {
+              // Validate: must be a valid finite number (not NaN, not Infinity)
+              if (typeof lat === 'number' && !isNaN(lat) && isFinite(lat)) {
                 shopData.latitude = lat;
                 console.log(`📝 Setting shop latitude:`, lat);
+              } else {
+                console.warn(`⚠️ Invalid latitude value for new shop: ${lat} (type: ${typeof lat}), skipping`);
               }
             }
             if (updateData.shop.longitude !== undefined && updateData.shop.longitude !== null) {
               const lng = typeof updateData.shop.longitude === 'string' ? parseFloat(updateData.shop.longitude) : updateData.shop.longitude;
-              if (!isNaN(lng)) {
+              // Validate: must be a valid finite number (not NaN, not Infinity)
+              if (typeof lng === 'number' && !isNaN(lng) && isFinite(lng)) {
                 shopData.longitude = lng;
                 console.log(`📝 Setting shop longitude:`, lng);
+              } else {
+                console.warn(`⚠️ Invalid longitude value for new shop: ${lng} (type: ${typeof lng}), skipping`);
               }
             }
 
@@ -997,11 +1021,9 @@ class V2ProfileService {
             const shopUpdateData = {};
             if (updateData.shop.shopname !== undefined) shopUpdateData.shopname = updateData.shop.shopname;
             if (updateData.shop.ownername !== undefined) shopUpdateData.ownername = updateData.shop.ownername;
-            if (updateData.shop.address !== undefined && updateData.shop.address !== null && updateData.shop.address.trim() !== '') {
-              shopUpdateData.address = updateData.shop.address.trim();
+            if (updateData.shop.address !== undefined) {
+              shopUpdateData.address = updateData.shop.address || '';
               console.log(`📝 Updating shop ${shop.id} address to:`, shopUpdateData.address);
-            } else if (updateData.shop.address !== undefined) {
-              console.log(`⚠️ Skipping empty address update for shop ${shop.id}`);
             }
             if (updateData.shop.contact !== undefined && updateData.shop.contact !== null && updateData.shop.contact !== '') {
               shopUpdateData.contact = updateData.shop.contact;
@@ -1025,43 +1047,83 @@ class V2ProfileService {
             let parsedLongitude = undefined;
 
             if (updateData.shop.latitude !== undefined && updateData.shop.latitude !== null && updateData.shop.latitude !== '') {
-              parsedLatitude = typeof updateData.shop.latitude === 'string' ? parseFloat(updateData.shop.latitude) : updateData.shop.latitude;
-              if (!isNaN(parsedLatitude)) {
+              let rawLat = updateData.shop.latitude;
+              console.log(`🔍 Processing latitude: raw value = ${rawLat}, type = ${typeof rawLat}`);
+              parsedLatitude = typeof rawLat === 'string' ? parseFloat(rawLat) : rawLat;
+              console.log(`🔍 After parseFloat: ${parsedLatitude}, type = ${typeof parsedLatitude}, isNaN = ${isNaN(parsedLatitude)}, isFinite = ${isFinite(parsedLatitude)}`);
+              
+              // Validate: must be a valid finite number (not NaN, not Infinity)
+              if (typeof parsedLatitude === 'number' && !isNaN(parsedLatitude) && isFinite(parsedLatitude)) {
+                // Ensure precision is limited to prevent precision issues
+                parsedLatitude = Number(parsedLatitude.toFixed(8));
                 shopUpdateData.latitude = parsedLatitude;
-                console.log(`📝 Updating shop ${shop.id} latitude to:`, parsedLatitude);
+                console.log(`📝 Updating shop ${shop.id} latitude to:`, parsedLatitude, `(type: ${typeof parsedLatitude})`);
+              } else {
+                console.warn(`⚠️ Invalid latitude value for shop ${shop.id}: ${parsedLatitude} (type: ${typeof parsedLatitude}), skipping`);
+                console.warn(`   Raw value was: ${rawLat} (type: ${typeof rawLat})`);
               }
             }
 
             if (updateData.shop.longitude !== undefined && updateData.shop.longitude !== null && updateData.shop.longitude !== '') {
-              parsedLongitude = typeof updateData.shop.longitude === 'string' ? parseFloat(updateData.shop.longitude) : updateData.shop.longitude;
-              if (!isNaN(parsedLongitude)) {
+              let rawLng = updateData.shop.longitude;
+              console.log(`🔍 Processing longitude: raw value = ${rawLng}, type = ${typeof rawLng}`);
+              parsedLongitude = typeof rawLng === 'string' ? parseFloat(rawLng) : rawLng;
+              console.log(`🔍 After parseFloat: ${parsedLongitude}, type = ${typeof parsedLongitude}, isNaN = ${isNaN(parsedLongitude)}, isFinite = ${isFinite(parsedLongitude)}`);
+              
+              // Validate: must be a valid finite number (not NaN, not Infinity)
+              if (typeof parsedLongitude === 'number' && !isNaN(parsedLongitude) && isFinite(parsedLongitude)) {
+                // Ensure precision is limited to prevent precision issues
+                parsedLongitude = Number(parsedLongitude.toFixed(8));
                 shopUpdateData.longitude = parsedLongitude;
-                console.log(`📝 Updating shop ${shop.id} longitude to:`, parsedLongitude);
+                console.log(`📝 Updating shop ${shop.id} longitude to:`, parsedLongitude, `(type: ${typeof parsedLongitude})`);
+              } else {
+                console.warn(`⚠️ Invalid longitude value for shop ${shop.id}: ${parsedLongitude} (type: ${typeof parsedLongitude}), skipping`);
+                console.warn(`   Raw value was: ${rawLng} (type: ${typeof rawLng})`);
               }
             }
 
             // Handle lat_log: if provided, use it; otherwise create from latitude/longitude
-            if (updateData.shop.lat_log !== undefined && updateData.shop.lat_log !== null && updateData.shop.lat_log !== '') {
-              if (updateData.shop.lat_log.includes(',')) {
-                shopUpdateData.lat_log = updateData.shop.lat_log.trim();
+            if (updateData.shop.lat_log !== undefined) {
+              const latLogValue = updateData.shop.lat_log || '';
+              if (latLogValue && latLogValue.includes(',')) {
+                shopUpdateData.lat_log = latLogValue.trim();
                 console.log(`📝 Updating shop ${shop.id} lat_log to:`, shopUpdateData.lat_log);
 
                 // If lat_log is provided but latitude/longitude are not, parse from lat_log
                 if (parsedLatitude === undefined && parsedLongitude === undefined) {
-                  const [lat, lng] = updateData.shop.lat_log.split(',').map(Number);
-                  if (!isNaN(lat) && !isNaN(lng)) {
+                  const [latStr, lngStr] = latLogValue.split(',');
+                  const lat = parseFloat(latStr.trim());
+                  const lng = parseFloat(lngStr.trim());
+                  // Validate: must be valid finite numbers (not NaN, not Infinity)
+                  if (typeof lat === 'number' && !isNaN(lat) && isFinite(lat) &&
+                      typeof lng === 'number' && !isNaN(lng) && isFinite(lng)) {
                     shopUpdateData.latitude = lat;
                     shopUpdateData.longitude = lng;
                     console.log(`📝 Parsed latitude/longitude from lat_log: ${lat}, ${lng}`);
+                  } else {
+                    console.warn(`⚠️ Invalid lat_log values parsed for shop ${shop.id}: lat=${lat}, lng=${lng}, skipping`);
                   }
                 }
               } else {
-                console.log(`⚠️ Invalid lat_log format for shop ${shop.id}, skipping`);
+                // Set to empty string if undefined/null/empty, following the same pattern as create
+                shopUpdateData.lat_log = latLogValue;
+                console.log(`📝 Updating shop ${shop.id} lat_log to: "${latLogValue}" (empty or invalid format)`);
               }
             } else if (parsedLatitude !== undefined && parsedLongitude !== undefined) {
-              // If latitude/longitude are provided but lat_log is not, create lat_log from them
-              shopUpdateData.lat_log = `${parsedLatitude},${parsedLongitude}`;
-              console.log(`📝 Created lat_log from latitude/longitude: ${shopUpdateData.lat_log}`);
+              // Validate both are valid finite numbers before creating lat_log
+              // Double-check they're in shopUpdateData and valid
+              const finalLat = shopUpdateData.latitude !== undefined ? shopUpdateData.latitude : parsedLatitude;
+              const finalLng = shopUpdateData.longitude !== undefined ? shopUpdateData.longitude : parsedLongitude;
+              
+              if (typeof finalLat === 'number' && !isNaN(finalLat) && isFinite(finalLat) &&
+                  typeof finalLng === 'number' && !isNaN(finalLng) && isFinite(finalLng)) {
+                shopUpdateData.lat_log = `${finalLat},${finalLng}`;
+                console.log(`📝 Created lat_log from latitude/longitude: ${shopUpdateData.lat_log}`);
+              } else {
+                console.warn(`⚠️ Cannot create lat_log - invalid latitude/longitude values: lat=${finalLat} (type: ${typeof finalLat}, isNaN: ${isNaN(finalLat)}), lng=${finalLng} (type: ${typeof finalLng}, isNaN: ${isNaN(finalLng)})`);
+                console.warn(`   parsedLatitude: ${parsedLatitude}, parsedLongitude: ${parsedLongitude}`);
+                console.warn(`   shopUpdateData.latitude: ${shopUpdateData.latitude}, shopUpdateData.longitude: ${shopUpdateData.longitude}`);
+              }
             }
 
             // Update other location-related fields
@@ -1113,13 +1175,66 @@ class V2ProfileService {
             // Always update shop if del_status needs to be reset (even if no other fields are being updated)
             // OR if there are other fields to update
             if (shouldReactivateShop || Object.keys(shopUpdateData).length > 0) {
-              console.log(`🔄 Updating shop ${shop.id} with data:`, JSON.stringify(shopUpdateData, null, 2));
-              await Shop.update(shop.id, shopUpdateData);
+              // Final validation pass: remove any NaN/Infinity values before sending to DynamoDB
+              const cleanedShopUpdateData = {};
+              Object.keys(shopUpdateData).forEach(key => {
+                const value = shopUpdateData[key];
+                // Skip null/undefined
+                if (value === null || value === undefined) {
+                  console.warn(`⚠️ Skipping null/undefined value for ${key}`);
+                  return;
+                }
+                // Validate numeric values
+                if (typeof value === 'number') {
+                  if (isNaN(value) || !isFinite(value)) {
+                    console.warn(`⚠️ Removing invalid numeric value for ${key}: ${value} (NaN or Infinity)`);
+                    console.warn(`   Full shopUpdateData:`, JSON.stringify(shopUpdateData, null, 2));
+                    return; // Skip this field
+                  }
+                }
+                cleanedShopUpdateData[key] = value;
+              });
+
+              // SAFEGUARD: If shop has approval_status='rejected' and we're updating signup fields (not just address),
+              // reset approval_status to 'pending' immediately (before the main reset logic later)
+              // This ensures rejected users who resubmit get their status reset even if main logic doesn't run
+              const signupFields = ['shopname', 'ownername', 'contact', 'aadhar_card', 'driving_license'];
+              const isUpdatingSignupFields = Object.keys(cleanedShopUpdateData).some(key => signupFields.includes(key));
+              
+              // Also check if user fields (name, email) are being updated as part of signup completion
+              const isUpdatingUserFields = updateData.name !== undefined || updateData.email !== undefined;
+              
+              if ((isUpdatingSignupFields || isUpdatingUserFields) && shop && (shop.approval_status === 'rejected' || shop.approval_status === 'Rejected')) {
+                console.log(`📋 [Safeguard] Shop ${shop.id} has approval_status='rejected' and signup fields are being updated - resetting to 'pending'`);
+                console.log(`   Updating signup fields: ${isUpdatingSignupFields}, Updating user fields: ${isUpdatingUserFields}`);
+                cleanedShopUpdateData.approval_status = 'pending';
+                cleanedShopUpdateData.rejection_reason = null; // Clear rejection reason on resubmission
+                // Set application_submitted_at for resubmission (always update to reflect new submission)
+                cleanedShopUpdateData.application_submitted_at = new Date().toISOString();
+                console.log(`📋 [Safeguard] Added approval_status reset to shop update data for rejected user resubmission`);
+              }
+
+              console.log(`🔄 Updating shop ${shop.id} with data:`, JSON.stringify(cleanedShopUpdateData, null, 2));
+              // Validate cleaned data doesn't have any NaN
+              Object.keys(cleanedShopUpdateData).forEach(key => {
+                const val = cleanedShopUpdateData[key];
+                if (typeof val === 'number' && (isNaN(val) || !isFinite(val))) {
+                  console.error(`❌ CRITICAL: Found invalid numeric value in cleaned data for ${key}: ${val}`);
+                  throw new Error(`Invalid numeric value detected: ${key} = ${val}`);
+                }
+              });
+              await Shop.update(shop.id, cleanedShopUpdateData);
               console.log(`✅ Shop ${shop.id} updated successfully`);
 
               // Verify the update
               const updatedShop = await Shop.findById(shop.id);
               console.log(`✅ Verified shop ${shop.id} address after update:`, updatedShop?.address);
+              
+              // Update shop reference with latest data (including potential approval_status change from safeguard)
+              if (updatedShop) {
+                shop = updatedShop;
+                console.log(`✅ Updated shop reference with approval_status: ${updatedShop.approval_status}`);
+              }
 
               // Update shop reference with latest data
               shop = updatedShop;
@@ -1132,15 +1247,38 @@ class V2ProfileService {
           // This includes: users with type 'R' (B2C), 'N' (new user completing signup), or v1 users
           // For v2 users with type 'N', always validate B2C signup completion
           // For v1 users or users with type 'R', also validate
+          
+          // IMPORTANT: Skip B2C signup validation if only address-related fields are being updated
+          // Address-only updates should NOT trigger user_type change from 'N' to 'R'
+          // Only validate when signup fields (name, email, contact, documents) are being updated
+          const addressOnlyFields = ['address', 'latitude', 'longitude', 'lat_log', 'pincode', 'state', 'place', 'location', 'place_id', 'language'];
+          const signupFields = ['shopname', 'ownername', 'contact', 'aadhar_card', 'driving_license'];
+          const userSignupFields = ['name', 'email'];
+          
+          // Check if updateData contains signup fields (not just address fields)
+          const hasSignupFields = Object.keys(updateData.shop || {}).some(key => 
+            signupFields.includes(key) && updateData.shop[key] !== undefined
+          );
+          const hasUserSignupFields = updateData.name !== undefined || updateData.email !== undefined;
+          const isAddressOnlyUpdate = !hasSignupFields && !hasUserSignupFields && 
+            Object.keys(updateData.shop || {}).every(key => 
+              addressOnlyFields.includes(key) || updateData.shop[key] === undefined
+            );
+          
           const isCompletingB2CSignup = user.user_type === 'N' || user.user_type === 'R' || (isV1User && !user.user_type);
-          // Always validate if user_type is 'N' (new user), or if it's a v1 user, or if shop is new
-          const shouldValidateB2C = isCompletingB2CSignup && (user.user_type === 'N' || isV1User || isNewUser);
+          // IMPORTANT: Only validate B2C signup completion if signup fields are being updated
+          // Skip validation for address-only updates to prevent premature user_type change from 'N' to 'R'
+          // For v1 users: always validate (they need strict validation for Aadhar card requirement)
+          // For v2 users with type 'N': only validate when signup fields (name, email, contact, documents) are included
+          const shouldValidateB2C = isCompletingB2CSignup && 
+            (isV1User || (!isAddressOnlyUpdate && (hasSignupFields || hasUserSignupFields)));
 
           console.log(`🔍 [B2C Signup Validation] Checking if should validate:`);
           console.log(`   user.user_type: ${user.user_type}`);
           console.log(`   isV1User: ${isV1User}`);
           console.log(`   isNewUser: ${isNewUser}`);
           console.log(`   isCompletingB2CSignup: ${isCompletingB2CSignup}`);
+          console.log(`   isAddressOnlyUpdate: ${isAddressOnlyUpdate} (hasSignupFields: ${hasSignupFields}, hasUserSignupFields: ${hasUserSignupFields})`);
           console.log(`   shouldValidateB2C: ${shouldValidateB2C}`);
 
           if (shouldValidateB2C) {
@@ -1399,41 +1537,76 @@ class V2ProfileService {
                 const isB2CFinalComplete = finalName && finalEmail && finalAddress && finalContact && finalAadhar;
 
                 if (isB2CFinalComplete) {
-                  const currentTime = new Date().toISOString();
-                  const updateData = { approval_status: 'pending' };
-                  let shouldSetApplicationSubmitted = false;
+                  // IMPORTANT: Re-fetch shop to get latest approval_status (may have been updated elsewhere)
+                  const currentShop = await Shop.findById(latestShop.id);
+                  if (!currentShop) {
+                    console.error(`❌ Shop ${latestShop.id} not found after update`);
+                    return;
+                  }
 
-                  // If status is 'rejected', change it back to 'pending' when user resubmits
-                  if (latestShop.approval_status === 'rejected') {
+                  const currentTime = new Date().toISOString();
+                  const shopStatusUpdate = {};
+                  let shouldSetApplicationSubmitted = false;
+                  let shouldUpdateStatus = false;
+
+                  // Check current approval status from fresh shop data
+                  const currentApprovalStatus = currentShop.approval_status || null;
+                  console.log(`🔍 [B2C Resubmission] Current approval_status for shop ${currentShop.id}: '${currentApprovalStatus}'`);
+
+                  // If status is 'rejected', ALWAYS change it back to 'pending' when user resubmits
+                  if (currentApprovalStatus === 'rejected' || currentApprovalStatus === 'Rejected') {
                     console.log(`📋 Complete B2C signup - changing approval_status from 'rejected' to 'pending' for user ${userId} (resubmission)`);
+                    shopStatusUpdate.approval_status = 'pending';
+                    shopStatusUpdate.rejection_reason = null; // Clear rejection reason on resubmission
+                    // Always update application_submitted_at on resubmission to reflect new submission time
+                    shopStatusUpdate.application_submitted_at = currentTime;
                     shouldSetApplicationSubmitted = true; // Resubmission counts as new application
-                  } else if (!latestShop.approval_status || latestShop.approval_status === null) {
+                    shouldUpdateStatus = true;
+                  } else if (!currentApprovalStatus || currentApprovalStatus === null) {
                     // Set approval_status to 'pending' only if signup is complete and no status exists
                     console.log(`📋 Complete B2C signup - setting approval_status to 'pending' for user ${userId}`);
+                    shopStatusUpdate.approval_status = 'pending';
                     shouldSetApplicationSubmitted = true; // First time submission
-                  } else if (latestShop.approval_status === 'approved') {
+                    shouldUpdateStatus = true;
+                  } else if (currentApprovalStatus === 'approved') {
                     // Keep approved status - don't override admin approval
                     console.log(`📋 Complete B2C signup - keeping existing approval_status 'approved' for user ${userId}`);
-                    return; // Don't update if already approved
+                    // Don't update if already approved - return early
+                    return;
+                  } else if (currentApprovalStatus === 'pending') {
+                    // Status is already 'pending' - no need to update status, but check if we need to update timestamps
+                    console.log(`📋 Complete B2C signup - approval_status already 'pending' for user ${userId}`);
+                    // Still update application_submitted_at if it's missing (for edge cases)
+                    if (!currentShop.application_submitted_at) {
+                      shopStatusUpdate.application_submitted_at = currentTime;
+                      shouldUpdateStatus = true;
+                    }
                   } else {
-                    // Status is 'pending' - keep it
-                    console.log(`📋 Complete B2C signup - keeping existing approval_status 'pending' for user ${userId}`);
+                    // Unknown status - reset to pending for safety
+                    console.log(`⚠️  Complete B2C signup - unknown approval_status '${currentApprovalStatus}', resetting to 'pending' for user ${userId}`);
+                    shopStatusUpdate.approval_status = 'pending';
+                    shouldUpdateStatus = true;
                   }
 
-                  // Set application_submitted_at when signup is completed for the first time or resubmitted
-                  if (shouldSetApplicationSubmitted && !latestShop.application_submitted_at) {
-                    updateData.application_submitted_at = currentTime;
-                    console.log(`📋 Setting application_submitted_at for B2C user: ${userId}`);
-                  }
+                  // Only update if status needs to be changed
+                  if (shouldUpdateStatus && Object.keys(shopStatusUpdate).length > 0) {
+                    // Set application_submitted_at when signup is completed for the first time or resubmitted
+                    if (shouldSetApplicationSubmitted) {
+                      shopStatusUpdate.application_submitted_at = currentTime;
+                      console.log(`📋 Setting application_submitted_at for B2C user: ${userId}`);
+                    }
 
-                  // Set review_initiated_at when status is set to pending for the first time
-                  if (!latestShop.review_initiated_at) {
-                    updateData.review_initiated_at = currentTime;
-                    console.log(`📋 Setting review_initiated_at for B2C user: ${userId}`);
-                  }
+                    // Set review_initiated_at when status is set to pending for the first time
+                    if (!currentShop.review_initiated_at) {
+                      shopStatusUpdate.review_initiated_at = currentTime;
+                      console.log(`📋 Setting review_initiated_at for B2C user: ${userId}`);
+                    }
 
-                  await Shop.update(latestShop.id, updateData);
-                  console.log(`✅ B2C approval_status updated for shop ${latestShop.id}`);
+                    await Shop.update(currentShop.id, shopStatusUpdate);
+                    console.log(`✅ B2C approval_status updated for shop ${currentShop.id}: '${currentApprovalStatus}' -> 'pending'`);
+                  } else {
+                    console.log(`ℹ️  No approval_status update needed for shop ${currentShop.id} (status: '${currentApprovalStatus}')`);
+                  }
                 }
               }
             }

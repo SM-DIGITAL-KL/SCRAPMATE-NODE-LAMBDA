@@ -42,7 +42,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' })); // Increased limit for large data syncs
 app.use(express.urlencoded({ extended: true }));
 
 // Session configuration (for web routes authentication)

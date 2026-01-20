@@ -227,41 +227,155 @@ class Shop {
       const id = data.id || (Date.now() + Math.floor(Math.random() * 1000));
 
       // Base shop object with required fields
+      // Validate user_id conversion
+      let validatedUserId = data.user_id;
+      if (typeof data.user_id === 'string' && data.user_id.trim() !== '' && !isNaN(data.user_id)) {
+        const parsed = parseInt(data.user_id);
+        if (!isNaN(parsed) && isFinite(parsed)) {
+          validatedUserId = parsed;
+        }
+      }
+      
+      // Validate contact conversion - only convert if it's a non-empty numeric string
+      let validatedContact = data.contact || '';
+      if (typeof data.contact === 'string' && data.contact.trim() !== '') {
+        if (!isNaN(data.contact) && data.contact.trim() !== '') {
+          const parsed = parseInt(data.contact);
+          if (!isNaN(parsed) && isFinite(parsed)) {
+            validatedContact = parsed;
+          }
+        }
+      }
+      
+      // Validate shop_type to ensure it's a valid number
+      let validatedShopType = 1;
+      if (data.shop_type !== undefined && data.shop_type !== null) {
+        const shopType = typeof data.shop_type === 'string' ? parseInt(data.shop_type) : data.shop_type;
+        if (typeof shopType === 'number' && !isNaN(shopType) && isFinite(shopType)) {
+          validatedShopType = shopType;
+        }
+      }
+      
+      // Validate del_status to ensure it's a valid number
+      let validatedDelStatus = 1;
+      if (data.del_status !== undefined && data.del_status !== null) {
+        const delStatus = typeof data.del_status === 'string' ? parseInt(data.del_status) : data.del_status;
+        if (typeof delStatus === 'number' && !isNaN(delStatus) && isFinite(delStatus)) {
+          validatedDelStatus = delStatus;
+        }
+      }
+      
       const shop = {
         id: id,
-        user_id: typeof data.user_id === 'string' && !isNaN(data.user_id) ? parseInt(data.user_id) : data.user_id,
+        user_id: validatedUserId,
         email: data.email || '',
         shopname: data.shopname || '',
-        contact: typeof data.contact === 'string' && !isNaN(data.contact) ? parseInt(data.contact) : (data.contact || ''),
+        contact: validatedContact,
         address: data.address || '',
         location: data.location || '',
         state: data.state || '',
         place: data.place || '',
         language: data.language || '',
         profile_photo: data.profile_photo || '',
-        shop_type: data.shop_type || 1,
+        shop_type: validatedShopType,
         pincode: data.pincode || '',
         lat_log: data.lat_log || '',
         place_id: data.place_id || '',
-        del_status: data.del_status || 1,
+        del_status: validatedDelStatus,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
 
+      // Handle latitude and longitude separately with validation
+      if (data.latitude !== undefined && data.latitude !== null) {
+        const lat = typeof data.latitude === 'string' ? parseFloat(data.latitude) : data.latitude;
+        if (typeof lat === 'number' && !isNaN(lat) && isFinite(lat)) {
+          // Limit precision to 8 decimal places to prevent floating-point issues
+          shop.latitude = Number(lat.toFixed(8));
+          console.log(`✅ Shop.create: Validated latitude: ${shop.latitude}`);
+        } else {
+          console.warn(`⚠️ Shop.create: Invalid latitude value: ${data.latitude}, skipping`);
+        }
+      }
+      if (data.longitude !== undefined && data.longitude !== null) {
+        const lng = typeof data.longitude === 'string' ? parseFloat(data.longitude) : data.longitude;
+        if (typeof lng === 'number' && !isNaN(lng) && isFinite(lng)) {
+          // Limit precision to 8 decimal places to prevent floating-point issues
+          shop.longitude = Number(lng.toFixed(8));
+          console.log(`✅ Shop.create: Validated longitude: ${shop.longitude}`);
+        } else {
+          console.warn(`⚠️ Shop.create: Invalid longitude value: ${data.longitude}, skipping`);
+        }
+      }
+
       // Add all other fields from data (including B2B signup fields)
+      // But validate numeric fields to prevent NaN from reaching DynamoDB
       Object.keys(data).forEach(key => {
         if (data[key] !== undefined && !shop.hasOwnProperty(key)) {
-          shop[key] = data[key];
+          let value = data[key];
+          
+          // Skip null values
+          if (value === null) {
+            return;
+          }
+          
+          // Validate numeric fields to prevent NaN
+          if (typeof value === 'number') {
+            if (isNaN(value) || !isFinite(value)) {
+              console.warn(`⚠️ Shop.create: Skipping invalid numeric value for ${key}: ${value}`);
+              return; // Skip this field
+            }
+          }
+          
+          // Handle string-to-number conversions that might produce NaN
+          if (typeof value === 'string' && !isNaN(value) && value.trim() !== '') {
+            // Check if it's a numeric string (like "123", "45.67") but don't auto-convert
+            // Only convert if it's clearly meant to be a number (already handled in specific cases above)
+          }
+          
+          shop[key] = value;
+        }
+      });
+
+      // Final validation: Check all numeric fields in shop object before sending to DynamoDB
+      const cleanedShop = {};
+      Object.keys(shop).forEach(key => {
+        const value = shop[key];
+        
+        // Skip null/undefined
+        if (value === null || value === undefined) {
+          return;
+        }
+        
+        // Validate numeric fields - skip if NaN or Infinity
+        if (typeof value === 'number') {
+          if (isNaN(value) || !isFinite(value)) {
+            console.error(`❌ Shop.create: CRITICAL - Found invalid numeric value in final shop object for ${key}: ${value}`);
+            console.error(`   Full shop object keys:`, Object.keys(shop));
+            console.error(`   Problematic value type: ${typeof value}, value: ${value}`);
+            throw new Error(`Cannot create shop: Invalid numeric value (NaN/Infinity) detected for ${key}: ${value}`);
+          }
+        }
+        
+        cleanedShop[key] = value;
+      });
+
+      console.log(`🔍 Shop.create: Final cleaned shop object keys:`, Object.keys(cleanedShop));
+      console.log(`🔍 Shop.create: Checking numeric fields in cleanedShop:`);
+      Object.keys(cleanedShop).forEach(key => {
+        const val = cleanedShop[key];
+        if (typeof val === 'number') {
+          console.log(`   ${key}: ${val} (type: ${typeof val}, isNaN: ${isNaN(val)}, isFinite: ${isFinite(val)})`);
         }
       });
 
       const command = new PutCommand({
         TableName: TABLE_NAME,
-        Item: shop
+        Item: cleanedShop
       });
 
       await client.send(command);
-      return shop;
+      return cleanedShop;
     } catch (err) {
       throw err;
     }
@@ -276,24 +390,72 @@ class Shop {
       const expressionAttributeValues = {};
       const expressionAttributeNames = {};
 
+      // Build update expressions, filtering out invalid values
       Object.keys(data).forEach((key, index) => {
-        if (data[key] !== undefined) {
-          const attrName = `#attr${index}`;
-          const attrValue = `:val${index}`;
-          updateExpressions.push(`${attrName} = ${attrValue}`);
-          expressionAttributeNames[attrName] = key;
-          expressionAttributeValues[attrValue] = data[key];
+        if (data[key] === undefined || data[key] === null) {
+          return; // Skip undefined/null values
         }
+        
+        let value = data[key];
+        let shouldSkip = false;
+        
+        // Validate numeric fields to prevent NaN from reaching DynamoDB
+        if (typeof value === 'number') {
+          if (isNaN(value) || !isFinite(value)) {
+            console.warn(`⚠️ Shop.update: Skipping invalid numeric value for ${key}: ${value} (NaN or Infinity)`);
+            console.warn(`   Full data object:`, JSON.stringify(data, null, 2));
+            shouldSkip = true;
+          }
+        }
+        
+        // Validate if value is string that should be a number (for latitude/longitude)
+        if (!shouldSkip && (key === 'latitude' || key === 'longitude') && typeof value === 'string') {
+          const numValue = parseFloat(value);
+          if (isNaN(numValue) || !isFinite(numValue)) {
+            console.warn(`⚠️ Shop.update: Skipping invalid numeric string value for ${key}: ${value}`);
+            shouldSkip = true;
+          } else {
+            value = numValue; // Convert to number
+          }
+        }
+        
+        if (shouldSkip) {
+          return; // Skip this field
+        }
+        
+        const attrName = `#attr${index}`;
+        const attrValue = `:val${index}`;
+        updateExpressions.push(`${attrName} = ${attrValue}`);
+        expressionAttributeNames[attrName] = key;
+        expressionAttributeValues[attrValue] = value;
       });
 
       if (updateExpressions.length === 0) {
         return { affectedRows: 0 };
       }
 
+      // Final validation: check all expression attribute values for NaN/Infinity
+      Object.keys(expressionAttributeValues).forEach(key => {
+        const value = expressionAttributeValues[key];
+        if (typeof value === 'number') {
+          if (isNaN(value) || !isFinite(value)) {
+            const fieldName = Object.keys(expressionAttributeNames).find(
+              nameKey => expressionAttributeValues[key] === value
+            ) || 'unknown';
+            console.error(`❌ Shop.update: CRITICAL - Found NaN/Infinity in expressionAttributeValues: ${key} = ${value}`);
+            console.error(`   Field name: ${fieldName}`);
+            console.error(`   All expressionAttributeValues:`, JSON.stringify(expressionAttributeValues, null, 2));
+            throw new Error(`Cannot update shop: Invalid numeric value (NaN/Infinity) detected for ${key}: ${value}`);
+          }
+        }
+      });
+
       updateExpressions.push('#updated = :updated');
       expressionAttributeNames['#updated'] = 'updated_at';
       expressionAttributeValues[':updated'] = new Date().toISOString();
 
+      console.log(`🔍 Shop.update: Final check - expressionAttributeValues:`, JSON.stringify(expressionAttributeValues, null, 2));
+      
       const command = new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: shopId },
