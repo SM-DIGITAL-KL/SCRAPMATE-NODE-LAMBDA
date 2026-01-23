@@ -408,6 +408,7 @@ class CustomerPanelController {
         try {
           if (order.notified_vendor_ids) {
             const User = require('../models/User');
+            const Shop = require('../models/Shop');
             let notifiedVendorIds = order.notified_vendor_ids;
             
             // Parse if it's a string
@@ -432,18 +433,93 @@ class CustomerPanelController {
               
               console.log(`   Found ${notifiedVendors.length} users from database`);
               
-              // Add vendor details to order
-              order.notified_vendors = notifiedVendors.map(user => ({
-                id: user.id,
-                name: user.name || 'N/A',
-                mobile: user.mob_num || user.mobile || user.phone || 'N/A',
-                email: user.email || 'N/A',
-                user_type: user.user_type || 'N/A',
-                app_version: user.app_version || 'N/A'
-              }));
+              // Get order location for distance calculation
+              let orderLat = null, orderLng = null;
+              if (order.lat_log) {
+                const [lat, lng] = order.lat_log.split(',').map(Number);
+                if (!isNaN(lat) && !isNaN(lng)) {
+                  orderLat = lat;
+                  orderLng = lng;
+                }
+              }
               
-              console.log(`✅ Enriched order with ${order.notified_vendors.length} notified vendor details`);
+              // Haversine formula to calculate distance
+              const calculateDistance = (lat1, lon1, lat2, lon2) => {
+                const R = 6371; // Earth's radius in km
+                const dLat = (lat2 - lat1) * Math.PI / 180;
+                const dLon = (lon2 - lon1) * Math.PI / 180;
+                const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                  Math.sin(dLon / 2) * Math.sin(dLon / 2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+                return R * c;
+              };
+              
+              // OPTIMIZED: Batch fetch all shops at once instead of N+1 queries
+              const vendorUserIds = notifiedVendors.map(u => u.id).filter(id => id);
+              let shopsMap = new Map(); // Map<userId, shop>
+              
+              if (vendorUserIds.length > 0 && orderLat !== null && orderLng !== null) {
+                try {
+                  console.log(`📦 Batch fetching shops for ${vendorUserIds.length} vendors...`);
+                  const shops = await Shop.findByUserIds(vendorUserIds);
+                  shops.forEach(shop => {
+                    if (shop.user_id) {
+                      const userId = typeof shop.user_id === 'string' ? parseInt(shop.user_id) : shop.user_id;
+                      if (!shopsMap.has(userId)) {
+                        shopsMap.set(userId, shop);
+                      }
+                    }
+                  });
+                  console.log(`✅ Batch fetched ${shopsMap.size} shops for ${vendorUserIds.length} vendors`);
+                } catch (batchErr) {
+                  console.error('Error batch fetching shops:', batchErr.message);
+                }
+              }
+              
+              // Add vendor details to order with distance calculation
+              const vendorDetailsWithDistance = notifiedVendors.map((user) => {
+                let distance = null;
+                let shopName = null;
+                let shopAddress = null;
+                
+                // Get shop from batch-fetched map
+                const shop = shopsMap.get(user.id);
+                if (shop) {
+                  shopName = shop.shopname || shop.name || null;
+                  shopAddress = shop.address || null;
+                  if (shop.lat_log && orderLat !== null && orderLng !== null) {
+                    const [shopLat, shopLng] = shop.lat_log.split(',').map(Number);
+                    if (!isNaN(shopLat) && !isNaN(shopLng)) {
+                      distance = calculateDistance(orderLat, orderLng, shopLat, shopLng);
+                    }
+                  }
+                }
+                
+                return {
+                  id: user.id,
+                  name: user.name || 'N/A',
+                  mobile: user.mob_num || user.mobile || user.phone || 'N/A',
+                  email: user.email || 'N/A',
+                  user_type: user.user_type || 'N/A',
+                  app_version: user.app_version || 'N/A',
+                  shop_name: shopName,
+                  shop_address: shopAddress,
+                  distance_km: distance !== null ? parseFloat(distance.toFixed(2)) : null
+                };
+              });
+              
+              // Sort vendors by distance (closest first), null distances at the end
+              order.notified_vendors = vendorDetailsWithDistance.sort((a, b) => {
+                if (a.distance_km === null && b.distance_km === null) return 0;
+                if (a.distance_km === null) return 1;
+                if (b.distance_km === null) return -1;
+                return a.distance_km - b.distance_km;
+              });
+              
+              console.log(`✅ Enriched order with ${order.notified_vendors.length} notified vendor details (sorted by distance)`);
               console.log(`   User types: ${order.notified_vendors.map(v => v.user_type).join(', ')}`);
+              console.log(`   Distances: ${order.notified_vendors.slice(0, 5).map(v => v.distance_km !== null ? v.distance_km + ' km' : 'N/A').join(', ')}${order.notified_vendors.length > 5 ? '...' : ''}`);
             } else {
               console.warn(`⚠️  No valid IDs found in notified_vendor_ids`);
               order.notified_vendors = [];

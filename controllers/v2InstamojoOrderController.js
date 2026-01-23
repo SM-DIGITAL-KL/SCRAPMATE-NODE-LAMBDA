@@ -61,6 +61,9 @@ exports.createPaymentRequest = async (req, res) => {
         data: null,
       });
     }
+    
+    // Round to 2 decimal places for Instamojo (required format)
+    const roundedAmount = parseFloat(amountNum.toFixed(2));
 
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -84,7 +87,7 @@ exports.createPaymentRequest = async (req, res) => {
 
     console.log('💳 Creating Instamojo payment request:', {
       purpose,
-      amount: amountNum,
+      amount: roundedAmount,
       buyer_name,
       email,
       phone: phoneClean,
@@ -107,7 +110,7 @@ exports.createPaymentRequest = async (req, res) => {
     // Create payment request using Instamojo v1 API
     const paymentRequestData = new URLSearchParams({
       purpose: purpose,
-      amount: amountNum.toString(),
+      amount: roundedAmount.toFixed(2),
       buyer_name: buyer_name,
       email: email,
       phone: phoneClean,

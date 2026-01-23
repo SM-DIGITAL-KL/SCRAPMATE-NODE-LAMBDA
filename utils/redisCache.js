@@ -49,9 +49,27 @@ class RedisCache {
       if (cached !== null && cached !== undefined && cached !== '') {
         console.log(`⚡ Redis cache hit: ${key}`);
         try {
-          return typeof cached === 'string' ? JSON.parse(cached) : cached;
+          // Handle both JSON objects/arrays and simple strings
+          if (typeof cached === 'string') {
+            // Try to parse as JSON first
+            try {
+              const parsed = JSON.parse(cached);
+              return parsed;
+            } catch (jsonErr) {
+              // If JSON parsing fails, it's likely a simple string value
+              // Check if it looks like a JSON primitive (number, boolean, null)
+              if (cached === 'null') return null;
+              if (cached === 'true') return true;
+              if (cached === 'false') return false;
+              if (!isNaN(cached) && !isNaN(parseFloat(cached))) return parseFloat(cached);
+              
+              // Otherwise, return the string as-is
+              return cached;
+            }
+          }
+          return cached;
         } catch (parseErr) {
-          console.error(`❌ Error parsing cached data for key ${key}:`, parseErr);
+          console.error(`❌ Error processing cached data for key ${key}:`, parseErr);
           return null;
         }
       }
@@ -645,14 +663,34 @@ class RedisCache {
           break;
 
         case 'live_prices':
-          // Invalidate all live prices cache patterns
+          // Invalidate all live prices cache patterns comprehensively
+          // Base patterns
           keysToDelete.push(
             this.listKey('live_prices', { location: 'all', category: 'all' }),
             this.listKey('live_prices', { location: 'all', category: null }),
             this.listKey('live_prices', { location: null, category: 'all' }),
             this.listKey('live_prices', { location: null, category: null })
           );
-          // Also invalidate any location-specific or category-specific caches
+          
+          // Common locations to invalidate (Delhi, Mumbai, Chennai, Bangalore, etc.)
+          const commonLocations = ['Delhi', 'Mumbai', 'Chennai', 'Bangalore', 'Kolkata', 'Hyderabad', 'Pune', 'Ahmedabad'];
+          for (const loc of commonLocations) {
+            keysToDelete.push(
+              this.listKey('live_prices', { location: loc, category: 'all' }),
+              this.listKey('live_prices', { location: loc, category: null })
+            );
+          }
+          
+          // Common categories to invalidate
+          const commonCategories = ['COPPER', 'ALUMINUM', 'BRASS', 'IRON', 'STEEL', 'PLASTIC', 'PAPER'];
+          for (const cat of commonCategories) {
+            keysToDelete.push(
+              this.listKey('live_prices', { location: 'all', category: cat }),
+              this.listKey('live_prices', { location: null, category: cat })
+            );
+          }
+          
+          // Also invalidate any location-specific or category-specific caches from options
           if (options.location) {
             keysToDelete.push(
               this.listKey('live_prices', { location: options.location, category: 'all' }),

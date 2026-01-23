@@ -570,14 +570,29 @@ class Shop {
     }
   }
 
+  /**
+   * OPTIMIZED: Batch fetch shops by multiple user IDs
+   * Uses Scan with IN operator (more efficient than N individual Scans)
+   * 
+   * Note: For even better performance, consider creating a GSI on user_id
+   * which would allow Query instead of Scan (95%+ RCU reduction)
+   * 
+   * @param {Array<string|number>} userIds - Array of user IDs
+   * @returns {Promise<Array>} Array of shops
+   */
   static async findByUserIds(userIds) {
     try {
       const client = getDynamoDBClient();
       const allShops = [];
       const foundShopIds = new Set(); // Track found shop IDs to avoid duplicates
+      const foundUserIds = new Set(); // Track which user_ids we've found shops for
 
-      // DynamoDB FilterExpression supports IN operator, but we need to handle it properly
-      // Process in smaller batches to avoid expression size limits
+      if (!userIds || userIds.length === 0) {
+        return [];
+      }
+
+      // OPTIMIZED: Process in batches to avoid expression size limits
+      // DynamoDB FilterExpression supports IN operator, but has size limits
       const batchSize = 10;
 
       for (let i = 0; i < userIds.length; i += batchSize) {
@@ -604,6 +619,11 @@ class Shop {
             if (!foundShopIds.has(shop.id)) {
               allShops.push(shop);
               foundShopIds.add(shop.id);
+              // Track which user_ids we've found shops for
+              const shopUserId = shop.user_id ? (typeof shop.user_id === 'string' ? parseInt(shop.user_id) : shop.user_id) : null;
+              if (shopUserId) {
+                foundUserIds.add(shopUserId);
+              }
             }
           });
         }
@@ -624,6 +644,10 @@ class Shop {
               if (!foundShopIds.has(shop.id)) {
                 allShops.push(shop);
                 foundShopIds.add(shop.id);
+                const shopUserId = shop.user_id ? (typeof shop.user_id === 'string' ? parseInt(shop.user_id) : shop.user_id) : null;
+                if (shopUserId) {
+                  foundUserIds.add(shopUserId);
+                }
               }
             });
           }
@@ -631,6 +655,7 @@ class Shop {
         }
       }
 
+      console.log(`✅ Shop.findByUserIds: Found ${allShops.length} shop(s) for ${userIds.length} user ID(s)`);
       return allShops;
     } catch (err) {
       console.error('Shop.findByUserIds error:', err);

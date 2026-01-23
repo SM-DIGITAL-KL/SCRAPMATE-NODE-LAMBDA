@@ -59,48 +59,101 @@ class User {
   static async findByMobile(mobNum) {
     try {
       const client = getDynamoDBClient();
+      const { QueryCommand } = require('@aws-sdk/lib-dynamodb');
       const mobileValue = typeof mobNum === 'string' && !isNaN(mobNum) ? parseInt(mobNum) : mobNum;
 
       console.log(`🔍 findByMobile: Searching for mobile ${mobNum} (converted to: ${mobileValue}, type: ${typeof mobileValue})`);
 
-      // Scan with pagination to find the matching mobile number
-      // Note: Limit in ScanCommand limits items scanned, not filtered results
-      let lastKey = null;
-      let scanCount = 0;
-      const allMatchingUsers = [];
+      // OPTIMIZED: Try Query with GSI first (much more efficient than Scan)
+      // GSI: mob_num-index (if exists)
+      const GSI_NAME = 'mob_num-index';
+      let allMatchingUsers = [];
 
-      do {
-        scanCount++;
-        const params = {
+      try {
+        // Try Query with GSI - this is 95%+ more efficient than Scan
+        const queryCommand = new QueryCommand({
           TableName: TABLE_NAME,
-          FilterExpression: 'mob_num = :mobile AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+          IndexName: GSI_NAME,
+          KeyConditionExpression: 'mob_num = :mobile',
+          FilterExpression: '(attribute_not_exists(del_status) OR del_status <> :deleted)',
           ExpressionAttributeValues: {
             ':mobile': mobileValue,
             ':deleted': 2
           }
-        };
+        });
 
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-          console.log(`   Continuing scan with pagination (scan ${scanCount})`);
+        const queryResponse = await client.send(queryCommand);
+        if (queryResponse.Items && queryResponse.Items.length > 0) {
+          allMatchingUsers = queryResponse.Items;
+          console.log(`✅ Found ${allMatchingUsers.length} user(s) using GSI Query (efficient)`);
         } else {
-          console.log(`   Starting scan (scan ${scanCount})`);
+          // Handle pagination for GSI Query if needed
+          let lastKey = queryResponse.LastEvaluatedKey;
+          while (lastKey) {
+            const paginatedQuery = new QueryCommand({
+              TableName: TABLE_NAME,
+              IndexName: GSI_NAME,
+              KeyConditionExpression: 'mob_num = :mobile',
+              FilterExpression: '(attribute_not_exists(del_status) OR del_status <> :deleted)',
+              ExpressionAttributeValues: {
+                ':mobile': mobileValue,
+                ':deleted': 2
+              },
+              ExclusiveStartKey: lastKey
+            });
+            const paginatedResponse = await client.send(paginatedQuery);
+            if (paginatedResponse.Items && paginatedResponse.Items.length > 0) {
+              allMatchingUsers.push(...paginatedResponse.Items);
+            }
+            lastKey = paginatedResponse.LastEvaluatedKey;
+          }
+        }
+      } catch (gsiError) {
+        // GSI doesn't exist or Query failed - fallback to Scan
+        if (gsiError.name === 'ValidationException' || gsiError.message?.includes('index') || gsiError.message?.includes('GSI')) {
+          console.warn(`⚠️  GSI '${GSI_NAME}' not found or not accessible, falling back to Scan (less efficient)`);
+          console.warn(`   Consider creating GSI on mob_num for better performance`);
+        } else {
+          console.warn(`⚠️  GSI Query failed: ${gsiError.message}, falling back to Scan`);
         }
 
-        const command = new ScanCommand(params);
-        const response = await client.send(command);
+        // Fallback to Scan (original implementation)
+        let lastKey = null;
+        let scanCount = 0;
 
-        console.log(`   Scanned ${response.Items?.length || 0} items in this batch`);
+        do {
+          scanCount++;
+          const params = {
+            TableName: TABLE_NAME,
+            FilterExpression: 'mob_num = :mobile AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+            ExpressionAttributeValues: {
+              ':mobile': mobileValue,
+              ':deleted': 2
+            }
+          };
 
-        if (response.Items && response.Items.length > 0) {
-          allMatchingUsers.push(...response.Items);
-        }
+          if (lastKey) {
+            params.ExclusiveStartKey = lastKey;
+            console.log(`   Continuing scan with pagination (scan ${scanCount})`);
+          } else {
+            console.log(`   Starting scan (scan ${scanCount})`);
+          }
 
-        lastKey = response.LastEvaluatedKey;
-        if (lastKey) {
-          console.log(`   More items to scan, continuing...`);
-        }
-      } while (lastKey);
+          const command = new ScanCommand(params);
+          const response = await client.send(command);
+
+          console.log(`   Scanned ${response.Items?.length || 0} items in this batch`);
+
+          if (response.Items && response.Items.length > 0) {
+            allMatchingUsers.push(...response.Items);
+          }
+
+          lastKey = response.LastEvaluatedKey;
+          if (lastKey) {
+            console.log(`   More items to scan, continuing...`);
+          }
+        } while (lastKey);
+      }
 
       if (allMatchingUsers.length > 0) {
         // Prioritize customer_app users with FCM tokens (for notifications)
@@ -152,7 +205,7 @@ class User {
         }
       }
 
-      console.log(`   ❌ No user found with mobile number ${mobNum} after ${scanCount} scan(s)`);
+      console.log(`   ❌ No user found with mobile number ${mobNum}`);
       return null;
     } catch (err) {
       console.error('Error in findByMobile:', err);

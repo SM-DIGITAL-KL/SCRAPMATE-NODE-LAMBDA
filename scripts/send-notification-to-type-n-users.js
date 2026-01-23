@@ -1,6 +1,8 @@
 /**
- * Script to send FCM push notification to all users with user_type 'N'
- * Sends notifications in English, Tamil, and Hindi
+ * Script to send FCM push notification to vendor_app v2 users:
+ * - user_type 'N': all (no approval filter)
+ * - user_type 'R': only approval_status rejected or pending (user or shop)
+ * Sends notifications in English, Tamil, and Hindi.
  * Message: "Confused about how to join? Start by joining as B2C using only your Aadhaar card. You can upgrade to B2B anytime later."
  * Usage: node scripts/send-notification-to-type-n-users.js
  */
@@ -10,33 +12,42 @@ const { getDynamoDBClient } = require('../config/dynamodb');
 const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
 const { sendVendorNotification } = require('../utils/fcmNotification');
 const { getTableName, getEnvironment } = require('../utils/dynamodbTableNames');
+const Shop = require('../models/Shop');
+
+function isRejectedOrPending(status) {
+  if (!status || typeof status !== 'string') return false;
+  const s = status.toLowerCase();
+  return s === 'rejected' || s === 'pending';
+}
 
 // Notification messages in three languages
 const notifications = {
   english: {
     title: 'Join as B2C',
-    body: 'Confused about how to join? Start by joining as B2C using only your Aadhaar card. You can upgrade to B2B anytime later.'
+    body: 'Confused about how to join? Start by joining as B2C using only your Aadhaar card. You can upgrade to B2B anytime later. Finish and see the tender updates, live market prices, and our successful vendors’ testimonials coming soon.'
   },
   tamil: {
     title: 'B2C ஆக சேரவும்',
-    body: 'எப்படி சேருவது என்று குழப்பமா? உங்கள் ஆதார் அட்டையை மட்டும் பயன்படுத்தி B2C ஆக சேரத் தொடங்குங்கள். நீங்கள் எப்போது வேண்டுமானாலும் B2B க்கு மேம்படுத்தலாம்.'
+    body: 'எப்படி சேருவது என்று குழப்பமா? உங்கள் ஆதார் அட்டையை மட்டும் பயன்படுத்தி B2C ஆக சேரத் தொடங்குங்கள். நீங்கள் எப்போது வேண்டுமானாலும் B2B க்கு மேம்படுத்தலாம். முடித்து டெண்டர் அப்டேட்கள், நேரடி சந்தை விலைகள் மற்றும் எங்கள் வெற்றிகரமான விற்பனையாளர்களின் அனுபவங்கள் (விரைவில்) பார்க்கவும்.'
   },
   hindi: {
     title: 'B2C के रूप में शामिल हों',
-    body: 'कैसे शामिल हों इसके बारे में भ्रमित हैं? केवल अपने आधार कार्ड का उपयोग करके B2C के रूप में शामिल होना शुरू करें। आप कभी भी बाद में B2B में अपग्रेड कर सकते हैं।'
+    body: 'कैसे शामिल हों इसके बारे में भ्रमित हैं? केवल अपने आधार कार्ड का उपयोग करके B2C के रूप में शामिल होना शुरू करें। आप कभी भी बाद में B2B में अपग्रेड कर सकते हैं। पूरा करें और टेंडर अपडेट, लाइव मार्केट कीमतें और हमारे सफल विक्रेताओं की प्रशंसाएँ (जल्द आ रही हैं) देखें।'
   }
 };
+
 
 async function sendNotificationsToTypeNUsers() {
   try {
     const environment = getEnvironment();
     const USER_TABLE = getTableName('users');
     
-    console.log('\n📨 Sending Push Notification to All Users with user_type = "N"');
+    console.log('\n📨 Push Notification: vendor_app v2 — N (all) + R (rejected/pending only)');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log(`   Environment: ${environment}`);
     console.log(`   Languages: English, Tamil, Hindi`);
-    console.log(`   Target: user_type = 'N'`);
+    console.log(`   Target: app_type = vendor_app, app_version = v2`);
+    console.log(`   user_type 'N': all | user_type 'R': approval_status rejected OR pending only`);
     console.log('\n📝 Notification Messages:');
     console.log('   English:');
     console.log(`      Title: ${notifications.english.title}`);
@@ -49,18 +60,21 @@ async function sendNotificationsToTypeNUsers() {
     console.log(`      Body: ${notifications.hindi.body}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     
-    // Find all users with user_type 'N'
-    console.log('🔍 Finding all users with user_type = "N"...');
+    // Find vendor_app v2 users with user_type 'N' or 'R'
+    console.log('🔍 Finding vendor_app v2 users with user_type IN ("N", "R")...');
     const client = getDynamoDBClient();
     let lastKey = null;
-    const matchingUsers = [];
+    const rawUsers = [];
     
     do {
       const params = {
         TableName: USER_TABLE,
-        FilterExpression: 'user_type = :typeN AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+        FilterExpression: 'app_type = :appType AND app_version = :appVersion AND (user_type = :typeN OR user_type = :typeR) AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
         ExpressionAttributeValues: {
-          ':typeN': 'S',
+          ':appType': 'vendor_app',
+          ':appVersion': 'v2',
+          ':typeN': 'N',
+          ':typeR': 'R',
           ':deleted': 2
         }
       };
@@ -73,23 +87,52 @@ async function sendNotificationsToTypeNUsers() {
       const response = await client.send(command);
       
       if (response.Items) {
-        matchingUsers.push(...response.Items);
+        rawUsers.push(...response.Items);
       }
       
       lastKey = response.LastEvaluatedKey;
     } while (lastKey);
     
-    console.log(`✅ Found ${matchingUsers.length} user(s) with user_type = 'N'\n`);
+    console.log(`   Raw count (vendor_app v2, user_type N or R): ${rawUsers.length}`);
+    
+    // N: include all. R: include only if approval_status rejected or pending (user or shop)
+    const matchingUsers = [];
+    let nCount = 0;
+    let rCount = 0;
+    for (const user of rawUsers) {
+      const isN = user.user_type === 'N';
+      if (isN) {
+        matchingUsers.push(user);
+        nCount++;
+        continue;
+      }
+      // R: check approval
+      let approvalStatus = user.approval_status;
+      try {
+        const shop = await Shop.findByUserId(user.id);
+        if (shop && shop.approval_status) {
+          approvalStatus = shop.approval_status;
+        }
+      } catch (_) {
+        /* use user approval_status */
+      }
+      if (isRejectedOrPending(approvalStatus)) {
+        matchingUsers.push(user);
+        rCount++;
+      }
+    }
+    
+    console.log(`✅ Found ${matchingUsers.length} user(s): N=${nCount}, R (rejected/pending)=${rCount}\n`);
     
     if (matchingUsers.length === 0) {
-      console.log('❌ No users found with user_type = "N"');
+      console.log('❌ No users found: vendor_app v2, (N all) or (R rejected/pending).');
       return;
     }
     
     // Display list of users
-    console.log('📋 List of Users (user_type = "N"):');
+    console.log('📋 List of Users (vendor_app v2: N all, R rejected/pending):');
     matchingUsers.forEach((user, index) => {
-      console.log(`   ${index + 1}. ID: ${user.id} | Name: ${user.name || 'N/A'} | Mobile: ${user.mob_num || 'N/A'} | FCM Token: ${user.fcm_token ? 'Yes' : 'No'}`);
+      console.log(`   ${index + 1}. ID: ${user.id} | Type: ${user.user_type} | Name: ${user.name || 'N/A'} | Mobile: ${user.mob_num || 'N/A'} | FCM: ${user.fcm_token ? 'Yes' : 'No'}`);
     });
     console.log('');
     
@@ -133,7 +176,7 @@ async function sendNotificationsToTypeNUsers() {
               phone_number: user.mob_num?.toString() || '',
               app_type: user.app_type || 'vendor_app',
               language: lang.key,
-              user_type: 'N'
+              user_type: user.user_type || 'N'
             }
           );
           
@@ -161,7 +204,7 @@ async function sendNotificationsToTypeNUsers() {
     console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('📊 SUMMARY');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log(`Users with user_type = 'N':`);
+    console.log(`Users (vendor_app v2: N all, R rejected/pending):`);
     console.log(`   Total Found: ${matchingUsers.length}`);
     console.log(`\nNotifications (per language):`);
     console.log(`   Total Sent: ${stats.total}`);

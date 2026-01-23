@@ -1080,48 +1080,53 @@ class V2OrderController {
         }
       });
 
-      // Get orders assigned to this vendor's shop(s) (status = 1, shop_id = vendor's shop_id(s))
+      // OPTIMIZED: Get orders assigned to this vendor's shop(s) in a single Scan instead of N Scans
       // Status 1 with shop_id = auto-assigned but pending acceptance
-      // For SR users, check all their shops (B2C + B2B)
+      // For SR users, check all their shops (B2C + B2B) in one query
       if (vendorShopIds.length > 0) {
         const existingOrderIds = new Set(allOrders.map(o => o.id));
         
-        // Loop through all shop IDs to get orders assigned to each shop
-        for (const shopId of vendorShopIds) {
-          // Get orders with status 1 assigned to this shop (auto-assigned, pending acceptance)
-          const assignedPendingCommand = new ScanCommand({
-            TableName: 'orders',
-            FilterExpression: '#status = :status1 AND shop_id = :shopId',
-            ExpressionAttributeNames: {
-              '#status': 'status'
-            },
-            ExpressionAttributeValues: {
-              ':status1': 1,
-              ':shopId': shopId
-            }
-          });
+        // OPTIMIZATION: Use IN operator to get all shop orders in a single Scan
+        // Build FilterExpression with IN operator for all shop IDs
+        const shopIdPlaceholders = vendorShopIds.map((_, idx) => `:shopId${idx}`);
+        const shopIdValues = {};
+        vendorShopIds.forEach((shopId, idx) => {
+          shopIdValues[`:shopId${idx}`] = shopId;
+        });
+        
+        // Single Scan for all shop IDs
+        const assignedPendingCommand = new ScanCommand({
+          TableName: 'orders',
+          FilterExpression: `#status = :status1 AND shop_id IN (${shopIdPlaceholders.join(', ')})`,
+          ExpressionAttributeNames: {
+            '#status': 'status'
+          },
+          ExpressionAttributeValues: {
+            ':status1': 1,
+            ...shopIdValues
+          }
+        });
 
-          const assignedPendingResponse = await client.send(assignedPendingCommand);
-          const assignedPendingOrders = assignedPendingResponse.Items || [];
-          console.log(`📦 Found ${assignedPendingOrders.length} orders assigned to this vendor (status=1, shop_id=${shopId}) - scheduled, pending acceptance`);
+        const assignedPendingResponse = await client.send(assignedPendingCommand);
+        const assignedPendingOrders = assignedPendingResponse.Items || [];
+        console.log(`📦 Found ${assignedPendingOrders.length} orders assigned to vendor shops (status=1, shop_ids: ${vendorShopIds.join(', ')}) - scheduled, pending acceptance`);
 
-          // Safety check: Log any orders that somehow have status != 1
-          assignedPendingOrders.forEach(order => {
-            const orderStatus = typeof order.status === 'string' ? parseInt(order.status) : order.status;
-            if (orderStatus !== 1) {
-              console.warn(`⚠️  WARNING: Found order ${order.order_number || order.id} with status ${orderStatus} in assigned query (should be 1)`);
-            }
-          });
+        // Safety check: Log any orders that somehow have status != 1
+        assignedPendingOrders.forEach(order => {
+          const orderStatus = typeof order.status === 'string' ? parseInt(order.status) : order.status;
+          if (orderStatus !== 1) {
+            console.warn(`⚠️  WARNING: Found order ${order.order_number || order.id} with status ${orderStatus} in assigned query (should be 1)`);
+          }
+        });
 
-          // Combine all sets of orders (avoid duplicates)
-          // Only status 1 orders are available for acceptance
-          assignedPendingOrders.forEach(order => {
-            if (!existingOrderIds.has(order.id)) {
-              allOrders.push(order);
-              existingOrderIds.add(order.id);
-            }
-          });
-        }
+        // Combine all sets of orders (avoid duplicates)
+        // Only status 1 orders are available for acceptance
+        assignedPendingOrders.forEach(order => {
+          if (!existingOrderIds.has(order.id)) {
+            allOrders.push(order);
+            existingOrderIds.add(order.id);
+          }
+        });
       }
 
       let orders = allOrders;
@@ -1265,60 +1270,79 @@ class V2OrderController {
         orders.sort((a, b) => (a.distance_km || Infinity) - (b.distance_km || Infinity));
       }
 
-      // Get unique customer IDs and fetch customer data
+      // OPTIMIZED: Batch fetch customers instead of N+1 queries
       const customerIds = [...new Set(orders.map(o => o.customer_id).filter(Boolean))];
-      const customers = await Promise.all(
-        customerIds.map(async (id) => {
-          try {
-            // First try to find by customer ID
-            let customer = await Customer.findById(id);
-            if (customer) {
-              console.log(`✅ Found customer by ID ${id}:`, customer.name || 'No name');
-              return customer;
-            }
-            // If not found, try to find by user_id (customer_id might be user_id)
-            customer = await Customer.findByUserId(id);
-            if (customer) {
-              console.log(`✅ Found customer by user_id ${id}:`, customer.name || 'No name');
-              return customer;
-            }
-            // If still not found, try to get from User table as fallback
-            const User = require('../models/User');
-            const user = await User.findById(id);
-            if (user) {
-              console.log(`✅ Found user ${id}, using as customer fallback:`, user.name || 'No name');
-              // Return a customer-like object from user data
-              return {
-                id: id,
-                name: user.name || null,
-                contact: user.mob_num || null
-              };
-            }
-            console.log(`❌ No customer or user found for ID ${id}`);
-            return null;
-          } catch (err) {
-            console.error(`Error fetching customer ${id}:`, err);
-            return null;
-          }
-        })
-      );
       const customerMap = {};
-      customers.forEach(c => {
-        if (c) {
-          // Map by both customer.id and the original customer_id
-          customerMap[c.id] = c;
-          // Also check if we need to map by a different key
-          if (c.user_id && c.user_id !== c.id) {
-            customerMap[c.user_id] = c;
+      const User = require('../models/User');
+      
+      if (customerIds.length > 0) {
+        try {
+          // Batch fetch customers by IDs
+          const customers = await Customer.findByIds(customerIds);
+          customers.forEach(c => {
+            if (c) {
+              customerMap[c.id] = c;
+              if (c.user_id && c.user_id !== c.id) {
+                customerMap[c.user_id] = c;
+              }
+            }
+          });
+          console.log(`✅ Batch fetched ${customers.length} customers for ${customerIds.length} customer IDs`);
+          
+          // For any customer IDs not found, try batch fetching from User table
+          const missingCustomerIds = customerIds.filter(id => !customerMap[id]);
+          if (missingCustomerIds.length > 0) {
+            console.log(`📦 Fetching ${missingCustomerIds.length} missing customers from User table...`);
+            const users = await User.findByIds(missingCustomerIds);
+            users.forEach(user => {
+              if (user && !customerMap[user.id]) {
+                // Create customer-like object from user data
+                customerMap[user.id] = {
+                  id: user.id,
+                  name: user.name || null,
+                  contact: user.mob_num || null
+                };
+              }
+            });
+            console.log(`✅ Batch fetched ${users.length} users as customer fallback`);
           }
+        } catch (batchErr) {
+          console.error('Error batch fetching customers:', batchErr.message);
+          // Fallback to individual fetches if batch fails
+          const customers = await Promise.all(
+            customerIds.map(async (id) => {
+              try {
+                let customer = await Customer.findById(id);
+                if (customer) return customer;
+                customer = await Customer.findByUserId(id);
+                if (customer) return customer;
+                const user = await User.findById(id);
+                if (user) {
+                  return { id: id, name: user.name || null, contact: user.mob_num || null };
+                }
+                return null;
+              } catch (err) {
+                console.error(`Error fetching customer ${id}:`, err);
+                return null;
+              }
+            })
+          );
+          customers.forEach(c => {
+            if (c) {
+              customerMap[c.id] = c;
+              if (c.user_id && c.user_id !== c.id) {
+                customerMap[c.user_id] = c;
+              }
+            }
+          });
         }
-      });
-
-      // Also map customer_id to customer if customer_id is user_id
+      }
+      
+      // Ensure all customer IDs are mapped (handle edge cases)
       customerIds.forEach(customerId => {
         if (!customerMap[customerId]) {
-          // Try to find customer that matches this ID
-          const found = customers.find(c => c && (c.id === customerId || c.user_id === customerId));
+          // Try to find in existing map by checking user_id
+          const found = Object.values(customerMap).find(c => c && (c.id === customerId || c.user_id === customerId));
           if (found) {
             customerMap[customerId] = found;
           }

@@ -303,8 +303,17 @@ class V2StatsController {
       let newOperatingCategories = 0;
       if (user && user.operating_categories && Array.isArray(user.operating_categories)) {
         newOperatingCategories = user.operating_categories.length;
-        if (cachedStats && cachedStats.operatingCategories !== newOperatingCategories) {
+        // Always check for changes - if cached stats don't exist or don't match, it's a change
+        if (!cachedStats || cachedStats.operatingCategories === undefined || cachedStats.operatingCategories !== newOperatingCategories) {
           operatingCategoriesChanged = true;
+          console.log(`🔄 [getIncrementalStatsUpdates] Operating categories changed: ${cachedStats?.operatingCategories || 0} -> ${newOperatingCategories}`);
+        }
+      } else if (user && (!user.operating_categories || !Array.isArray(user.operating_categories))) {
+        // User has no operating categories - check if cached stats had some
+        if (cachedStats && cachedStats.operatingCategories !== undefined && cachedStats.operatingCategories > 0) {
+          operatingCategoriesChanged = true;
+          newOperatingCategories = 0;
+          console.log(`🔄 [getIncrementalStatsUpdates] Operating categories removed: ${cachedStats.operatingCategories} -> 0`);
         }
       }
 
@@ -372,8 +381,10 @@ class V2StatsController {
       if (incrementalOrderValue > 0) {
         updates.totalOrderValue = parseFloat(incrementalOrderValue.toFixed(2));
       }
+      // Always include operatingCategories if it changed
       if (operatingCategoriesChanged) {
         updates.operatingCategories = newOperatingCategories;
+        console.log(`✅ [getIncrementalStatsUpdates] Including operatingCategories in updates: ${newOperatingCategories}`);
       }
 
       return res.json({

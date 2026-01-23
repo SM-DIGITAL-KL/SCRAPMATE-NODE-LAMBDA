@@ -16,23 +16,69 @@ class V2LivePriceController {
    */
   static async getLivePrices(req, res) {
     try {
-      const { location, category } = req.query;
+      const { location, category, refresh } = req.query;
 
-      // Check Redis cache first
+      // Check if refresh parameter is set to bypass cache
+      const forceRefresh = refresh === '1' || refresh === 'true' || refresh === true;
+      
+      // Check Redis cache first (unless refresh is requested)
       const cacheKey = RedisCache.listKey('live_prices', { location: location || 'all', category: category || 'all' });
-      try {
-        const cached = await RedisCache.get(cacheKey);
-        if (cached !== null && cached !== undefined) {
-          console.log('⚡ Live prices cache hit');
-          return res.json({
-            status: 'success',
-            msg: 'Live prices retrieved successfully',
-            data: cached,
-            cached: true
-          });
+      
+      if (!forceRefresh) {
+        try {
+          const cached = await RedisCache.get(cacheKey);
+          if (cached !== null && cached !== undefined) {
+            console.log('⚡ Live prices cache hit');
+            // Get remaining TTL from Redis to calculate next refresh time
+            const redis = require('../config/redis');
+            let remainingTtl = 43200; // Default 12 hours
+            try {
+              const ttl = await redis.ttl(cacheKey);
+              if (ttl > 0) {
+                remainingTtl = ttl;
+              }
+            } catch (ttlErr) {
+              console.warn('Could not get TTL from Redis:', ttlErr.message);
+            }
+            
+            // Get the most recent updated_at from cached prices
+            let lastUpdated = null;
+            if (Array.isArray(cached) && cached.length > 0) {
+              const timestamps = cached
+                .map(p => p.updated_at || p.created_at)
+                .filter(t => t)
+                .sort()
+                .reverse();
+              if (timestamps.length > 0) {
+                lastUpdated = timestamps[0];
+              }
+            }
+            
+            return res.json({
+              status: 'success',
+              msg: 'Live prices retrieved successfully',
+              data: cached,
+              cached: true,
+              last_updated: lastUpdated || new Date().toISOString(),
+              next_refresh: new Date(Date.now() + (remainingTtl * 1000)).toISOString(),
+              cache_ttl_seconds: remainingTtl
+            });
+          }
+        } catch (err) {
+          console.error('Redis get error:', err);
         }
-      } catch (err) {
-        console.error('Redis get error:', err);
+      } else {
+        // If refresh is requested, invalidate all live prices cache keys
+        console.log('🔄 Refresh requested - bypassing cache and invalidating all live prices cache');
+        try {
+          // Delete the specific cache key
+          await RedisCache.delete(cacheKey);
+          // Also invalidate all live prices cache patterns
+          await RedisCache.invalidateV2ApiCache('live_prices', null, {});
+          console.log('🗑️  Invalidated all live prices cache keys');
+        } catch (err) {
+          console.error('Redis delete error:', err);
+        }
       }
 
       // Fetch from DynamoDB
@@ -56,12 +102,25 @@ class V2LivePriceController {
         }
       }
 
-      // Cache for 1 hour (only if we have data)
+      // Cache for 12 hours (only if we have data) - long cache period for performance
       if (prices.length > 0) {
         try {
-          await RedisCache.set(cacheKey, prices, 3600); // 1 hour TTL
+          await RedisCache.set(cacheKey, prices, 43200); // 12 hours TTL
         } catch (err) {
           console.error('Redis set error:', err);
+        }
+      }
+
+      // Get the most recent updated_at timestamp from prices
+      let lastUpdated = null;
+      if (prices.length > 0) {
+        const timestamps = prices
+          .map(p => p.updated_at || p.created_at)
+          .filter(t => t)
+          .sort()
+          .reverse();
+        if (timestamps.length > 0) {
+          lastUpdated = timestamps[0];
         }
       }
 
@@ -69,7 +128,10 @@ class V2LivePriceController {
         status: 'success',
         msg: prices.length > 0 ? 'Live prices retrieved successfully' : 'No live prices available. Please sync prices first.',
         data: prices,
-        cached: false
+        cached: false,
+        last_updated: lastUpdated || new Date().toISOString(),
+        next_refresh: new Date(Date.now() + 43200000).toISOString(), // 12 hours from now
+        cache_ttl_seconds: 43200
       });
     } catch (error) {
       console.error('❌ Error fetching live prices:', error);
@@ -177,19 +239,125 @@ class V2LivePriceController {
         throw syncErr;
       }
 
-      // Invalidate cache
+      // Fetch the synced data from DynamoDB to update cache
+      let syncedPrices = [];
       try {
-        await RedisCache.invalidateV2ApiCache('live_prices', null, {});
+        console.log('🔄 [SYNC] Fetching synced data from DynamoDB for cache update...');
+        syncedPrices = await LivePrice.getAll();
+        console.log(`✅ [SYNC] Fetched ${syncedPrices.length} prices from DynamoDB for cache update`);
+        
+        // Log sample data to verify it's fresh
+        if (syncedPrices.length > 0) {
+          const samplePrice = syncedPrices[0];
+          console.log('📊 [SYNC] Sample price data:', {
+            location: samplePrice.location,
+            item: samplePrice.item,
+            buy_price: samplePrice.buy_price,
+            updated_at: samplePrice.updated_at || samplePrice.created_at
+          });
+        }
+      } catch (fetchErr) {
+        console.error('❌ [SYNC] Error fetching prices for cache update:', fetchErr);
+        // Use the input data as fallback
+        syncedPrices = pricesData;
+        console.log(`⚠️  [SYNC] Using input data as fallback (${syncedPrices.length} prices)`);
+      }
+
+      // Update Redis cache with fresh data (not just invalidate)
+      let invalidatedCount = 0;
+      let syncTimestamp = new Date().toISOString();
+      try {
+        console.log('🔄 [SYNC] Updating Redis cache with fresh data...');
+        
+        // Step 1: Invalidate all existing cache keys comprehensively
+        console.log('🗑️  [SYNC] Step 1: Invalidating all live prices cache keys...');
+        invalidatedCount = await RedisCache.invalidateV2ApiCache('live_prices', null, {});
+        console.log(`🗑️  [SYNC] Invalidated ${invalidatedCount} live prices cache key(s)`);
+        
+        // Step 2: Also try to delete the main cache key explicitly (in case it wasn't caught by invalidation)
+        const mainCacheKey = RedisCache.listKey('live_prices', { location: 'all', category: 'all' });
+        try {
+          await RedisCache.delete(mainCacheKey);
+          console.log(`🗑️  [SYNC] Explicitly deleted main cache key: ${mainCacheKey}`);
+        } catch (delErr) {
+          console.warn(`⚠️  [SYNC] Could not delete main cache key (may not exist): ${delErr.message}`);
+        }
+        
+        // Step 3: Set a cache version/timestamp to track when sync happened
+        syncTimestamp = new Date().toISOString();
+        const cacheVersionKey = 'live_prices:sync_timestamp';
+        await RedisCache.set(cacheVersionKey, syncTimestamp, 43200); // Same TTL as cache (12 hours)
+        console.log(`📅 [SYNC] Set cache version timestamp: ${syncTimestamp}`);
+        
+        // Step 4: Update the main cache key with fresh data
+        console.log(`💾 [SYNC] Step 2: Setting fresh cache data...`);
+        await RedisCache.set(mainCacheKey, syncedPrices, 43200); // 12 hours TTL - long cache period
+        
+        // Verify cache was set
+        const verifyCache = await RedisCache.get(mainCacheKey);
+        if (verifyCache && Array.isArray(verifyCache)) {
+          console.log(`✅ [SYNC] Successfully updated Redis cache with ${syncedPrices.length} fresh prices`);
+          console.log(`✅ [SYNC] Cache verification: ${verifyCache.length} prices in cache`);
+          
+          // Log sample from cache to verify
+          if (verifyCache.length > 0) {
+            const cachedSample = verifyCache[0];
+            console.log('📊 [SYNC] Sample cached data:', {
+              location: cachedSample.location,
+              item: cachedSample.item,
+              buy_price: cachedSample.buy_price,
+              updated_at: cachedSample.updated_at || cachedSample.created_at
+            });
+          }
+        } else {
+          console.error('❌ [SYNC] Cache verification failed - cache not set properly');
+        }
       } catch (err) {
-        console.error('Cache invalidation error:', err);
+        console.error('❌ [SYNC] Cache update error:', err);
+        // Try to at least invalidate if update fails
+        try {
+          await RedisCache.invalidateV2ApiCache('live_prices', null, {});
+          console.log('🗑️  [SYNC] At least invalidated cache as fallback');
+        } catch (invalidateErr) {
+          console.error('❌ [SYNC] Cache invalidation also failed:', invalidateErr);
+        }
+      }
+
+      // Get the sync timestamp (already set in try block above)
+      try {
+        const cacheVersionKey = 'live_prices:sync_timestamp';
+        const cachedTimestamp = await RedisCache.get(cacheVersionKey);
+        // Handle both string timestamps and Date objects
+        if (cachedTimestamp) {
+          if (typeof cachedTimestamp === 'string') {
+            // Validate it's a proper ISO timestamp
+            const date = new Date(cachedTimestamp);
+            if (!isNaN(date.getTime())) {
+              syncTimestamp = cachedTimestamp;
+            } else {
+              console.warn('Invalid timestamp format in cache:', cachedTimestamp);
+              syncTimestamp = new Date().toISOString();
+            }
+          } else if (cachedTimestamp instanceof Date) {
+            syncTimestamp = cachedTimestamp.toISOString();
+          } else {
+            console.warn('Unexpected timestamp type in cache:', typeof cachedTimestamp);
+            syncTimestamp = new Date().toISOString();
+          }
+        }
+      } catch (err) {
+        console.warn('Could not retrieve sync timestamp:', err.message);
+        syncTimestamp = new Date().toISOString();
       }
 
       return res.json({
         status: 'success',
-        msg: `Successfully synced ${result.count} live prices from admin panel`,
+        msg: `Successfully synced ${result.count} live prices from admin panel. Cache invalidated and updated.`,
         data: {
           synced: result.count,
-          timestamp: new Date().toISOString()
+          timestamp: syncTimestamp,
+          cache_invalidated: true,
+          cache_keys_invalidated: invalidatedCount || 0
         }
       });
     } catch (error) {

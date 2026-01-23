@@ -215,6 +215,7 @@ class V2AuthService {
       otp = '123456';
       console.log('🔧 [generateOtp] Using static OTP 123456 for number: 9074135121 (SMS will be skipped)');
     }
+    
     // Determine target app type: if appType is provided, use it; otherwise default to vendor_app
     const targetAppType = appType || 'vendor_app';
     console.log(`📱 generateOtp: targetAppType=${targetAppType}`);
