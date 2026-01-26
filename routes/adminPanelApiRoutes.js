@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { apiKeyCheck } = require('../middleware/apiKeyMiddleware');
+const { dynamodbHighRruLogMiddleware } = require('../middleware/dynamodbHighRruLogMiddleware');
 
 // Controllers
 const AdminController = require('../controllers/adminPanelController');
@@ -35,6 +36,9 @@ router.use((req, res, next) => {
   console.log('═══════════════════════════════════════════════════════════');
   next();
 });
+
+// Log when high-RRU (DynamoDB Scan) APIs are hit. Enable: LOG_DYNAMODB_HIGH_RRU=1
+router.use(dynamodbHighRruLogMiddleware);
 
 // All admin panel API routes require API key
 router.use(apiKeyCheck);

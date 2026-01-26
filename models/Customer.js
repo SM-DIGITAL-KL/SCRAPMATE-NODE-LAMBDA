@@ -1,7 +1,9 @@
 const { getDynamoDBClient } = require('../config/dynamodb');
 const { GetCommand, PutCommand, UpdateCommand, ScanCommand, BatchGetCommand, BatchWriteCommand, DeleteCommand } = require('@aws-sdk/lib-dynamodb');
+const RedisCache = require('../utils/redisCache');
 
 const TABLE_NAME = 'customer';
+const CUSTOMER_BY_USER_PREFIX = 'customer:by_user:';
 
 class Customer {
   static async findById(id) {
@@ -23,35 +25,34 @@ class Customer {
 
   static async findByUserId(userId) {
     try {
-      const client = getDynamoDBClient();
       const uid = typeof userId === 'string' && !isNaN(userId) ? parseInt(userId) : userId;
-      
-      // Scan with pagination to find the matching customer
+      const cacheKey = `${CUSTOMER_BY_USER_PREFIX}${uid}`;
+      const cached = await RedisCache.get(cacheKey);
+      if (cached !== null && cached !== undefined) {
+        if (cached && typeof cached === 'object' && cached.__nil) return null;
+        return cached;
+      }
+
+      const client = getDynamoDBClient();
       let lastKey = null;
-      
       do {
         const params = {
           TableName: TABLE_NAME,
           FilterExpression: 'user_id = :userId',
-          ExpressionAttributeValues: {
-            ':userId': uid
-          }
+          ExpressionAttributeValues: { ':userId': uid }
         };
-        
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-        }
-        
+        if (lastKey) params.ExclusiveStartKey = lastKey;
         const command = new ScanCommand(params);
         const response = await client.send(command);
-        
         if (response.Items && response.Items.length > 0) {
-          return response.Items[0];
+          const customer = response.Items[0];
+          await RedisCache.set(cacheKey, customer, 'orders');
+          return customer;
         }
-        
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
-      
+
+      await RedisCache.set(cacheKey, { __nil: true }, 'orders');
       return null;
     } catch (err) {
       throw err;
@@ -88,9 +89,22 @@ class Customer {
       });
 
       await client.send(command);
+      if (customer.user_id != null) Customer.invalidateCustomerByUserCache(customer.user_id).catch(() => {});
       return customer;
     } catch (err) {
       throw err;
+    }
+  }
+
+  /** Invalidate Redis cache for customer by user_id (call after create/update). */
+  static async invalidateCustomerByUserCache(userId) {
+    const uid = userId == null ? null : (typeof userId === 'string' && !isNaN(userId) ? parseInt(userId) : userId);
+    if (uid == null) return false;
+    try {
+      await RedisCache.delete(`${CUSTOMER_BY_USER_PREFIX}${uid}`);
+      return true;
+    } catch (e) {
+      return false;
     }
   }
 
@@ -126,10 +140,13 @@ class Customer {
         Key: { id: customerId },
         UpdateExpression: `SET ${updateExpressions.join(', ')}`,
         ExpressionAttributeNames: expressionAttributeNames,
-        ExpressionAttributeValues: expressionAttributeValues
+        ExpressionAttributeValues: expressionAttributeValues,
+        ReturnValues: 'ALL_OLD'
       });
 
-      await client.send(command);
+      const response = await client.send(command);
+      const attrs = response.Attributes;
+      if (attrs && attrs.user_id != null) Customer.invalidateCustomerByUserCache(attrs.user_id).catch(() => {});
       return { affectedRows: 1 };
     } catch (err) {
       throw err;
@@ -202,6 +219,32 @@ class Customer {
     } catch (err) {
       throw err;
     }
+  }
+
+  /**
+   * Bulk fetch customers by user_ids with a single Scan (RCU-optimized).
+   * Use for /admin/customers enrichment instead of N × findByUserId.
+   * @param {Array<string|number>} userIds
+   * @returns {Promise<Map<number, object>>} Map of userId -> customer
+   */
+  static async findByUserIdsBulk(userIds) {
+    const map = new Map();
+    if (!userIds || userIds.length === 0) return map;
+    const idSet = new Set(userIds.map(uid => typeof uid === 'string' && !isNaN(uid) ? parseInt(uid) : uid));
+    const client = getDynamoDBClient();
+    let lastKey = null;
+    do {
+      const params = { TableName: TABLE_NAME };
+      if (lastKey) params.ExclusiveStartKey = lastKey;
+      const command = new ScanCommand(params);
+      const response = await client.send(command);
+      for (const c of response.Items || []) {
+        const uid = c.user_id != null ? (typeof c.user_id === 'string' && !isNaN(c.user_id) ? parseInt(c.user_id) : c.user_id) : null;
+        if (uid != null && idSet.has(uid) && !map.has(uid)) map.set(uid, c);
+      }
+      lastKey = response.LastEvaluatedKey;
+    } while (lastKey);
+    return map;
   }
 
   static async batchCreate(customers) {

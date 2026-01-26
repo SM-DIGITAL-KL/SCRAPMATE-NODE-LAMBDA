@@ -1,23 +1,54 @@
 const { getDynamoDBClient } = require('../config/dynamodb');
-const { GetCommand, PutCommand, UpdateCommand, ScanCommand, BatchGetCommand, BatchWriteCommand } = require('@aws-sdk/lib-dynamodb');
+const { GetCommand, PutCommand, UpdateCommand, ScanCommand, QueryCommand, BatchGetCommand, BatchWriteCommand } = require('@aws-sdk/lib-dynamodb');
+const RedisCache = require('../utils/redisCache');
 
 const TABLE_NAME = 'orders';
+const ORDER_BY_CUSTOMER_CACHE_PREFIX = 'order:by_customer:';
+const ORDER_ALL_CACHE_PREFIX = 'order:all:';
+const ORDER_BY_SHOP_CACHE_PREFIX = 'order:by_shop:';
+const ORDER_BY_DELIVERY_PREFIX = 'order:by_delivery:';
+const ORDER_BY_ORDER_NO_PREFIX = 'order:by_order_no:';
 
 class Order {
   static async findByOrderNo(orderNo) {
     try {
+      const key = String(orderNo).trim();
+      if (!key) return [];
+      const cacheKey = `${ORDER_BY_ORDER_NO_PREFIX}${key}`;
+      const cached = await RedisCache.get(cacheKey);
+      if (cached !== null && cached !== undefined && Array.isArray(cached)) {
+        return cached;
+      }
       const client = getDynamoDBClient();
       
+      // Try using GSI first (order_no-index)
+      try {
+        const queryCommand = new QueryCommand({
+          TableName: TABLE_NAME,
+          IndexName: 'order_no-index',
+          KeyConditionExpression: 'order_no = :orderNo',
+          ExpressionAttributeValues: { ':orderNo': key }
+        });
+        const queryResponse = await client.send(queryCommand);
+        if (queryResponse.Items && queryResponse.Items.length > 0) {
+          await RedisCache.set(cacheKey, queryResponse.Items, 'orders');
+          return queryResponse.Items;
+        }
+      } catch (gsiError) {
+        // GSI might not exist yet, fall back to Scan
+        console.warn('⚠️  GSI order_no-index not available, using Scan fallback:', gsiError.message);
+      }
+      
+      // Fallback to Scan if GSI doesn't exist or no results
       const command = new ScanCommand({
         TableName: TABLE_NAME,
         FilterExpression: 'order_no = :orderNo OR order_number = :orderNo',
-        ExpressionAttributeValues: {
-          ':orderNo': orderNo
-        }
+        ExpressionAttributeValues: { ':orderNo': orderNo }
       });
-
       const response = await client.send(command);
-      return response.Items || [];
+      const items = response.Items || [];
+      await RedisCache.set(cacheKey, items, 'orders');
+      return items;
     } catch (err) {
       throw err;
     }
@@ -25,39 +56,78 @@ class Order {
 
   static async findByShopId(shopId, status = null, offset = 0, limit = 10) {
     try {
-      const client = getDynamoDBClient();
       const sid = typeof shopId === 'string' && !isNaN(shopId) ? parseInt(shopId) : shopId;
+      const cacheKey = status === null ? `${ORDER_BY_SHOP_CACHE_PREFIX}${sid}` : null;
+      if (cacheKey) {
+        const cached = await RedisCache.get(cacheKey);
+        if (cached !== null && cached !== undefined && Array.isArray(cached)) {
+          if (offset > 0) return cached.slice(offset * limit, (offset * limit) + limit);
+          return cached.slice(0, limit);
+        }
+      }
+
+      const client = getDynamoDBClient();
       
+      // Try using GSI first (shop_id-status-index)
+      try {
+        const queryCommand = new QueryCommand({
+          TableName: TABLE_NAME,
+          IndexName: 'shop_id-status-index',
+          KeyConditionExpression: 'shop_id = :shopId',
+          ExpressionAttributeValues: { ':shopId': sid },
+          ScanIndexForward: false, // Sort descending by created_at
+          Limit: limit + offset // Fetch enough items for pagination
+        });
+        
+        // Add status filter if provided
+        if (status !== null) {
+          queryCommand.FilterExpression = '#status = :status';
+          queryCommand.ExpressionAttributeNames = { '#status': 'status' };
+          queryCommand.ExpressionAttributeValues[':status'] = status;
+        }
+        
+        const queryResponse = await client.send(queryCommand);
+        let results = queryResponse.Items || [];
+        
+        // Apply offset
+        if (offset > 0) {
+          results = results.slice(offset);
+        }
+        results = results.slice(0, limit);
+        
+        if (cacheKey) await RedisCache.set(cacheKey, results, 'orders');
+        return results;
+      } catch (gsiError) {
+        // GSI might not exist yet, fall back to Scan
+        console.warn('⚠️  GSI shop_id-status-index not available, using Scan fallback:', gsiError.message);
+      }
+      
+      // Fallback to Scan if GSI doesn't exist
       let filterExpression = 'shop_id = :shopId';
       const expressionAttributeNames = { '#status': 'status' };
       const expressionAttributeValues = { ':shopId': sid };
-      
       if (status !== null) {
         filterExpression += ' AND #status = :status';
         expressionAttributeValues[':status'] = status;
       }
-      
       const command = new ScanCommand({
         TableName: TABLE_NAME,
         FilterExpression: filterExpression,
         ExpressionAttributeNames: status !== null ? expressionAttributeNames : undefined,
         ExpressionAttributeValues: expressionAttributeValues
       });
-
       const response = await client.send(command);
       let results = response.Items || [];
-      
-      // Sort by id DESC (DynamoDB doesn't support ORDER BY, so we sort in memory)
-      results.sort((a, b) => (b.id || 0) - (a.id || 0));
-      
-      // Apply pagination
-      if (offset > 0) {
-        results = results.slice(offset * limit, (offset * limit) + limit);
-      } else {
-        results = results.slice(0, limit);
-      }
-      
-      return results;
+      results.sort((a, b) => {
+        // Sort by created_at descending, fallback to id
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        if (dateB !== dateA) return dateB - dateA;
+        return (b.id || 0) - (a.id || 0);
+      });
+      if (cacheKey) await RedisCache.set(cacheKey, results, 'orders');
+      if (offset > 0) return results.slice(offset * limit, (offset * limit) + limit);
+      return results.slice(0, limit);
     } catch (err) {
       throw err;
     }
@@ -65,9 +135,57 @@ class Order {
 
   static async findByCustomerId(customerId) {
     try {
-      const client = getDynamoDBClient();
       const cid = typeof customerId === 'string' && !isNaN(customerId) ? parseInt(customerId) : customerId;
+      const cacheKey = `${ORDER_BY_CUSTOMER_CACHE_PREFIX}${cid}`;
+      const cached = await RedisCache.get(cacheKey);
+      if (cached && Array.isArray(cached)) {
+        return cached;
+      }
+
+      const client = getDynamoDBClient();
       
+      // Try using GSI first (customer_id-status-index)
+      try {
+        const queryCommand = new QueryCommand({
+          TableName: TABLE_NAME,
+          IndexName: 'customer_id-status-index',
+          KeyConditionExpression: 'customer_id = :customerId',
+          ExpressionAttributeValues: {
+            ':customerId': cid
+          },
+          ScanIndexForward: false // Sort descending by created_at
+        });
+        
+        const queryResponse = await client.send(queryCommand);
+        let results = queryResponse.Items || [];
+        
+        // Handle pagination if LastEvaluatedKey exists
+        let lastKey = queryResponse.LastEvaluatedKey;
+        while (lastKey) {
+          queryCommand.ExclusiveStartKey = lastKey;
+          const nextResponse = await client.send(queryCommand);
+          if (nextResponse.Items) {
+            results.push(...nextResponse.Items);
+          }
+          lastKey = nextResponse.LastEvaluatedKey;
+        }
+        
+        // Sort by id as fallback if created_at is missing
+        results.sort((a, b) => {
+          const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+          if (dateB !== dateA) return dateB - dateA;
+          return (b.id || 0) - (a.id || 0);
+        });
+        
+        await RedisCache.set(cacheKey, results, 'orders');
+        return results;
+      } catch (gsiError) {
+        // GSI might not exist yet, fall back to Scan
+        console.warn('⚠️  GSI customer_id-status-index not available, using Scan fallback:', gsiError.message);
+      }
+      
+      // Fallback to Scan if GSI doesn't exist
       const command = new ScanCommand({
         TableName: TABLE_NAME,
         FilterExpression: 'customer_id = :customerId',
@@ -78,7 +196,13 @@ class Order {
 
       const response = await client.send(command);
       let results = response.Items || [];
-      results.sort((a, b) => (b.id || 0) - (a.id || 0));
+      results.sort((a, b) => {
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        if (dateB !== dateA) return dateB - dateA;
+        return (b.id || 0) - (a.id || 0);
+      });
+      await RedisCache.set(cacheKey, results, 'orders');
       return results;
     } catch (err) {
       throw err;
@@ -87,20 +211,85 @@ class Order {
 
   static async findByDeliveryBoyId(delvBoyId) {
     try {
-      const client = getDynamoDBClient();
       const dbid = typeof delvBoyId === 'string' && !isNaN(delvBoyId) ? parseInt(delvBoyId) : delvBoyId;
+      const cacheKey = `${ORDER_BY_DELIVERY_PREFIX}${dbid}`;
+      const cached = await RedisCache.get(cacheKey);
+      if (cached !== null && cached !== undefined && Array.isArray(cached)) {
+        return cached;
+      }
+      const client = getDynamoDBClient();
       
+      // Try using GSI first (delv_boy_id-status-index)
+      try {
+        const queryCommand = new QueryCommand({
+          TableName: TABLE_NAME,
+          IndexName: 'delv_boy_id-status-index',
+          KeyConditionExpression: 'delv_boy_id = :dbid',
+          ExpressionAttributeValues: { ':dbid': dbid },
+          ScanIndexForward: false // Sort descending by created_at
+        });
+        
+        const queryResponse = await client.send(queryCommand);
+        let results = queryResponse.Items || [];
+        
+        // Handle pagination if LastEvaluatedKey exists
+        let lastKey = queryResponse.LastEvaluatedKey;
+        while (lastKey) {
+          queryCommand.ExclusiveStartKey = lastKey;
+          const nextResponse = await client.send(queryCommand);
+          if (nextResponse.Items) {
+            results.push(...nextResponse.Items);
+          }
+          lastKey = nextResponse.LastEvaluatedKey;
+        }
+        
+        // Also check delv_id (fallback field) using Scan if needed
+        // Note: This is a limitation - we'd need another GSI for delv_id
+        const scanCommand = new ScanCommand({
+          TableName: TABLE_NAME,
+          FilterExpression: 'delv_id = :dbid AND (attribute_not_exists(delv_boy_id) OR delv_boy_id <> :dbid)',
+          ExpressionAttributeValues: { ':dbid': dbid }
+        });
+        const scanResponse = await client.send(scanCommand);
+        if (scanResponse.Items && scanResponse.Items.length > 0) {
+          // Merge results, avoiding duplicates
+          const existingIds = new Set(results.map(r => r.id));
+          scanResponse.Items.forEach(item => {
+            if (!existingIds.has(item.id)) {
+              results.push(item);
+            }
+          });
+        }
+        
+        results.sort((a, b) => {
+          const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+          if (dateB !== dateA) return dateB - dateA;
+          return (b.id || 0) - (a.id || 0);
+        });
+        
+        await RedisCache.set(cacheKey, results, 'orders');
+        return results;
+      } catch (gsiError) {
+        // GSI might not exist yet, fall back to Scan
+        console.warn('⚠️  GSI delv_boy_id-status-index not available, using Scan fallback:', gsiError.message);
+      }
+      
+      // Fallback to Scan if GSI doesn't exist
       const command = new ScanCommand({
         TableName: TABLE_NAME,
         FilterExpression: 'delv_boy_id = :dbid OR delv_id = :dbid',
-        ExpressionAttributeValues: {
-          ':dbid': dbid
-        }
+        ExpressionAttributeValues: { ':dbid': dbid }
       });
-
       const response = await client.send(command);
       let results = response.Items || [];
-      results.sort((a, b) => (b.id || 0) - (a.id || 0));
+      results.sort((a, b) => {
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        if (dateB !== dateA) return dateB - dateA;
+        return (b.id || 0) - (a.id || 0);
+      });
+      await RedisCache.set(cacheKey, results, 'orders');
       return results;
     } catch (err) {
       throw err;
@@ -109,23 +298,9 @@ class Order {
 
   static async findCompletedByDeliveryBoyId(delvBoyId) {
     try {
-      const client = getDynamoDBClient();
       const dbid = typeof delvBoyId === 'string' && !isNaN(delvBoyId) ? parseInt(delvBoyId) : delvBoyId;
-      
-      const command = new ScanCommand({
-        TableName: TABLE_NAME,
-        FilterExpression: '(delv_boy_id = :dbid OR delv_id = :dbid) AND #status = :status',
-        ExpressionAttributeNames: {
-          '#status': 'status'
-        },
-        ExpressionAttributeValues: {
-          ':dbid': dbid,
-          ':status': 4
-        }
-      });
-
-      const response = await client.send(command);
-      let results = response.Items || [];
+      const orders = await this.findByDeliveryBoyId(dbid);
+      const results = orders.filter(o => o.status === 4 || o.status === 5);
       results.sort((a, b) => (b.id || 0) - (a.id || 0));
       return results;
     } catch (err) {
@@ -135,26 +310,14 @@ class Order {
 
   static async findPendingByCustomerId(customerId) {
     try {
-      const client = getDynamoDBClient();
       const cid = typeof customerId === 'string' && !isNaN(customerId) ? parseInt(customerId) : customerId;
       const today = new Date().toISOString().split('T')[0];
-      
-      // Scan and filter in memory for complex date logic
-      const command = new ScanCommand({
-        TableName: TABLE_NAME,
-        FilterExpression: 'customer_id = :customerId',
-        ExpressionAttributeValues: {
-          ':customerId': cid
-        }
-      });
-
-      const response = await client.send(command);
-      let results = (response.Items || []).filter(order => {
+      const orders = await this.findByCustomerId(cid);
+      const results = orders.filter(order => {
         if (order.status !== 4) return true;
         const orderDate = order.updated_at ? order.updated_at.split('T')[0] : null;
         return orderDate === today;
       });
-      
       results.sort((a, b) => (b.id || 0) - (a.id || 0));
       return results;
     } catch (err) {
@@ -213,6 +376,13 @@ class Order {
       });
 
       await client.send(command);
+      Order.invalidateCustomerOrdersCache(order.customer_id).catch(() => {});
+      if (order.shop_id != null) Order.invalidateOrdersByShopCache(order.shop_id).catch(() => {});
+      if (order.delv_boy_id != null) Order.invalidateOrdersByDeliveryCache(order.delv_boy_id).catch(() => {});
+      if (order.delv_id != null) Order.invalidateOrdersByDeliveryCache(order.delv_id).catch(() => {});
+      const ono = order.order_no || order.order_number;
+      if (ono != null) Order.invalidateOrderByOrderNoCache(ono).catch(() => {});
+      if (order.order_number != null && order.order_number !== ono) Order.invalidateOrderByOrderNoCache(order.order_number).catch(() => {});
       return order;
     } catch (err) {
       throw err;
@@ -260,6 +430,14 @@ class Order {
       });
 
       await client.send(command);
+      if (order.customer_id != null) Order.invalidateCustomerOrdersCache(order.customer_id).catch(() => {});
+      if (order.shop_id != null) Order.invalidateOrdersByShopCache(order.shop_id).catch(() => {});
+      if (order.delv_boy_id != null) Order.invalidateOrdersByDeliveryCache(order.delv_boy_id).catch(() => {});
+      if (order.delv_id != null) Order.invalidateOrdersByDeliveryCache(order.delv_id).catch(() => {});
+      const ono = order.order_no || order.order_number;
+      if (ono != null) Order.invalidateOrderByOrderNoCache(ono).catch(() => {});
+      const onum = order.order_number;
+      if (onum != null && onum !== ono) Order.invalidateOrderByOrderNoCache(onum).catch(() => {});
       return { affectedRows: 1 };
     } catch (err) {
       throw err;
@@ -299,10 +477,21 @@ class Order {
         Key: { id: id },
         UpdateExpression: `SET ${updateExpressions.join(', ')}`,
         ExpressionAttributeNames: expressionAttributeNames,
-        ExpressionAttributeValues: expressionAttributeValues
+        ExpressionAttributeValues: expressionAttributeValues,
+        ReturnValues: 'ALL_OLD'
       });
 
-      await client.send(command);
+      const response = await client.send(command);
+      const attrs = response.Attributes;
+      if (attrs) {
+        if (attrs.customer_id != null) Order.invalidateCustomerOrdersCache(attrs.customer_id).catch(() => {});
+        if (attrs.shop_id != null) Order.invalidateOrdersByShopCache(attrs.shop_id).catch(() => {});
+        if (attrs.delv_boy_id != null) Order.invalidateOrdersByDeliveryCache(attrs.delv_boy_id).catch(() => {});
+        if (attrs.delv_id != null) Order.invalidateOrdersByDeliveryCache(attrs.delv_id).catch(() => {});
+        const ono = attrs.order_no || attrs.order_number;
+        if (ono != null) Order.invalidateOrderByOrderNoCache(ono).catch(() => {});
+        if (attrs.order_number != null && attrs.order_number !== ono) Order.invalidateOrderByOrderNoCache(attrs.order_number).catch(() => {});
+      }
       return { affectedRows: 1 };
     } catch (err) {
       throw err;
@@ -640,102 +829,136 @@ class Order {
 
   // Count orders from v2 customer_app users (excluding bulk orders)
   // Bulk orders are identified by having bulk_request_id attribute
+  // OPTIMIZED: Uses GSIs for faster queries
   static async countCustomerAppOrdersV2() {
     try {
       const client = getDynamoDBClient();
-      const User = require('./User');
-      let lastKey = null;
       let count = 0;
-      let totalScanned = 0;
 
-      console.log('📊 [countCustomerAppOrdersV2] Starting count of orders from v2 customer_app users (excluding bulk orders)');
+      console.log('📊 [countCustomerAppOrdersV2] Starting optimized count of orders from v2 customer_app users (excluding bulk orders)');
 
-      // First, get all v2 customer_app user IDs
+      // OPTIMIZED: Use app_version-app_type-index GSI to get v2 customer_app users
       const v2CustomerAppUsers = [];
       let userLastKey = null;
       
-      do {
-        const userParams = {
-          TableName: 'users',
-          FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
-          ExpressionAttributeValues: {
-            ':appVersion': 'v2',
-            ':appType': 'customer_app',
-            ':deleted': 2
-          },
-          ProjectionExpression: 'id'
-        };
-
-        if (userLastKey) {
-          userParams.ExclusiveStartKey = userLastKey;
-        }
-
-        const userCommand = new ScanCommand(userParams);
-        const userResponse = await client.send(userCommand);
-
-        if (userResponse.Items) {
-          v2CustomerAppUsers.push(...userResponse.Items.map(u => u.id));
-        }
-
-        userLastKey = userResponse.LastEvaluatedKey;
-      } while (userLastKey);
+      try {
+        do {
+          const userQueryCommand = new QueryCommand({
+            TableName: 'users',
+            IndexName: 'app_version-app_type-index',
+            KeyConditionExpression: 'app_version = :appVersion AND app_type = :appType',
+            FilterExpression: '(attribute_not_exists(del_status) OR del_status <> :deleted)',
+            ExpressionAttributeValues: {
+              ':appVersion': 'v2',
+              ':appType': 'customer_app',
+              ':deleted': 2
+            },
+            ProjectionExpression: 'id'
+          });
+          
+          if (userLastKey) {
+            userQueryCommand.ExclusiveStartKey = userLastKey;
+          }
+          
+          const userResponse = await client.send(userQueryCommand);
+          if (userResponse.Items) {
+            v2CustomerAppUsers.push(...userResponse.Items.map(u => u.id));
+          }
+          userLastKey = userResponse.LastEvaluatedKey;
+        } while (userLastKey);
+      } catch (gsiError) {
+        console.warn('⚠️  GSI app_version-app_type-index not available for users, using Scan fallback:', gsiError.message);
+        // Fallback to Scan
+        let userLastKey = null;
+        do {
+          const userParams = {
+            TableName: 'users',
+            FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+            ExpressionAttributeValues: {
+              ':appVersion': 'v2',
+              ':appType': 'customer_app',
+              ':deleted': 2
+            },
+            ProjectionExpression: 'id'
+          };
+          if (userLastKey) userParams.ExclusiveStartKey = userLastKey;
+          const userCommand = new ScanCommand(userParams);
+          const userResponse = await client.send(userCommand);
+          if (userResponse.Items) {
+            v2CustomerAppUsers.push(...userResponse.Items.map(u => u.id));
+          }
+          userLastKey = userResponse.LastEvaluatedKey;
+        } while (userLastKey);
+      }
 
       console.log(`📊 [countCustomerAppOrdersV2] Found ${v2CustomerAppUsers.length} v2 customer_app users`);
-      if (v2CustomerAppUsers.length > 0) {
-        console.log(`📊 [countCustomerAppOrdersV2] Sample customer_app user IDs: ${v2CustomerAppUsers.slice(0, 5).join(', ')}`);
-      }
 
       if (v2CustomerAppUsers.length === 0) {
         console.log(`⚠️ [countCustomerAppOrdersV2] No v2 customer_app users found, returning 0`);
         return 0;
       }
 
-      // Count orders for these users
-      // Process in batches to avoid filter expression limits
-      // Use OR conditions instead of IN (more reliable for DynamoDB FilterExpression)
-      const batchSize = 25; // Limit to avoid expression size limits
+      // OPTIMIZED: Use customer_id-status-index GSI to query orders for each customer
+      // Process in parallel batches for better performance
+      const batchSize = 10; // Process 10 customers in parallel
+      const customerBatches = [];
       for (let i = 0; i < v2CustomerAppUsers.length; i += batchSize) {
-        const batch = v2CustomerAppUsers.slice(i, i + batchSize);
-        const batchUserIds = batch.map(id => typeof id === 'string' && !isNaN(id) ? parseInt(id) : id);
-
-        if (batchUserIds.length === 0) continue;
-
-        let batchLastKey = null;
-        do {
-          // Build OR conditions: customer_id = :id0 OR customer_id = :id1 OR ...
-          // Note: We'll filter out bulk orders in JavaScript after fetching
-          const filterParts = batchUserIds.map((_, idx) => `customer_id = :customerId${idx}`);
-          const filterExpression = `(${filterParts.join(' OR ')})`;
-          const expressionAttributeValues = batchUserIds.reduce((acc, id, idx) => {
-            acc[`:customerId${idx}`] = id;
-            return acc;
-          }, {});
-
-          const params = {
-            TableName: TABLE_NAME,
-            FilterExpression: filterExpression,
-            ExpressionAttributeValues: expressionAttributeValues
-          };
-
-          if (batchLastKey) {
-            params.ExclusiveStartKey = batchLastKey;
-          }
-
-          const command = new ScanCommand(params);
-          const response = await client.send(command);
-
-          if (response.Items) {
-            // Filter out bulk orders (orders with bulk_request_id)
-            const nonBulkOrders = response.Items.filter(order => !order.bulk_request_id);
-            count += nonBulkOrders.length;
-            console.log(`📊 [countCustomerAppOrdersV2] Batch ${i / batchSize + 1}: Found ${response.Items.length} orders, ${nonBulkOrders.length} non-bulk orders`);
-          }
-          totalScanned += response.ScannedCount || 0;
-          batchLastKey = response.LastEvaluatedKey;
-        } while (batchLastKey);
+        customerBatches.push(v2CustomerAppUsers.slice(i, i + batchSize));
       }
 
-      console.log(`✅ [countCustomerAppOrdersV2] Completed: count=${count}, total_scanned=${totalScanned}`);
+      // Process batches in parallel
+      const batchPromises = customerBatches.map(async (batch) => {
+        let batchCount = 0;
+        const customerPromises = batch.map(async (customerId) => {
+          try {
+            const cid = typeof customerId === 'string' && !isNaN(customerId) ? parseInt(customerId) : customerId;
+            let lastKey = null;
+            let customerOrderCount = 0;
+            
+            // Use customer_id-status-index GSI to query orders
+            try {
+              do {
+                const orderQueryCommand = new QueryCommand({
+                  TableName: TABLE_NAME,
+                  IndexName: 'customer_id-status-index',
+                  KeyConditionExpression: 'customer_id = :customerId',
+                  FilterExpression: 'attribute_not_exists(bulk_request_id)',
+                  ExpressionAttributeValues: {
+                    ':customerId': cid
+                  },
+                  Select: 'COUNT'
+                });
+                
+                if (lastKey) {
+                  orderQueryCommand.ExclusiveStartKey = lastKey;
+                }
+                
+                const response = await client.send(orderQueryCommand);
+                customerOrderCount += response.Count || 0;
+                lastKey = response.LastEvaluatedKey;
+              } while (lastKey);
+            } catch (gsiError) {
+              // Fallback: use findByCustomerId and filter
+              const orders = await this.findByCustomerId(cid);
+              customerOrderCount = orders.filter(order => !order.bulk_request_id).length;
+            }
+            
+            return customerOrderCount;
+          } catch (err) {
+            console.warn(`⚠️  Error counting orders for customer ${customerId}:`, err.message);
+            return 0;
+          }
+        });
+        
+        const results = await Promise.all(customerPromises);
+        batchCount = results.reduce((sum, count) => sum + count, 0);
+        return batchCount;
+      });
+
+      const batchCounts = await Promise.all(batchPromises);
+      count = batchCounts.reduce((sum, batchCount) => sum + batchCount, 0);
+
+      console.log(`✅ [countCustomerAppOrdersV2] Completed: count=${count} (optimized with GSIs)`);
       return count;
     } catch (err) {
       console.error('❌ [countCustomerAppOrdersV2] Error:', err);
@@ -745,70 +968,19 @@ class Order {
 
   // Count all orders that are NOT from customer_app users (includes vendor orders, bulk orders, etc.)
   // This shows all "other" orders that should appear in bulk orders section
+  // OPTIMIZED: Uses count() and countCustomerAppOrdersV2() which are now optimized
   static async countBulkOrders() {
     try {
-      const client = getDynamoDBClient();
-      let count = 0;
-      let totalScanned = 0;
+      console.log('📊 [countBulkOrders] Starting optimized count of all non-customer_app orders');
 
-      console.log('📊 [countBulkOrders] Starting count of all non-customer_app orders');
+      // Get total count of all orders (already optimized with Select: COUNT)
+      const totalOrders = await this.count();
 
-      // First, get all v2 customer_app user IDs to exclude
-      const v2CustomerAppUsers = [];
-      let userLastKey = null;
-      
-      do {
-        const userParams = {
-          TableName: 'users',
-          FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
-          ExpressionAttributeValues: {
-            ':appVersion': 'v2',
-            ':appType': 'customer_app',
-            ':deleted': 2
-          },
-          ProjectionExpression: 'id'
-        };
-
-        if (userLastKey) {
-          userParams.ExclusiveStartKey = userLastKey;
-        }
-
-        const userCommand = new ScanCommand(userParams);
-        const userResponse = await client.send(userCommand);
-
-        if (userResponse.Items) {
-          v2CustomerAppUsers.push(...userResponse.Items.map(u => u.id));
-        }
-
-        userLastKey = userResponse.LastEvaluatedKey;
-      } while (userLastKey);
-
-      console.log(`📊 [countBulkOrders] Found ${v2CustomerAppUsers.length} v2 customer_app users to exclude`);
-
-      // Get total count of all orders
-      let totalOrders = 0;
-      let totalOrdersLastKey = null;
-      do {
-        const totalParams = {
-          TableName: TABLE_NAME,
-          Select: 'COUNT'
-        };
-
-        if (totalOrdersLastKey) {
-          totalParams.ExclusiveStartKey = totalOrdersLastKey;
-        }
-
-        const totalCommand = new ScanCommand(totalParams);
-        const totalResponse = await client.send(totalCommand);
-        totalOrders += totalResponse.Count || 0;
-        totalOrdersLastKey = totalResponse.LastEvaluatedKey;
-      } while (totalOrdersLastKey);
-
-      // Get count of customer_app orders (excluding bulk)
+      // Get count of customer_app orders (now optimized with GSIs)
       const customerAppOrdersCount = await this.countCustomerAppOrdersV2();
 
       // Bulk orders = Total orders - Customer app orders
-      count = totalOrders - customerAppOrdersCount;
+      const count = totalOrders - customerAppOrdersCount;
 
       console.log(`✅ [countBulkOrders] Completed: total_orders=${totalOrders}, customer_app_orders=${customerAppOrdersCount}, bulk_orders=${count}`);
       return count;
@@ -820,104 +992,151 @@ class Order {
 
   // Get recent orders from v2 customer_app users with details (excluding bulk orders)
   // Bulk orders are identified by having bulk_request_id attribute
+  // OPTIMIZED: Uses GSIs for faster queries
   static async getCustomerAppOrdersV2(limit = 10) {
     try {
       const client = getDynamoDBClient();
-      const User = require('./User');
       
-      // Get all v2 customer_app user IDs
+      // OPTIMIZED: Use app_version-app_type-index GSI to get v2 customer_app users
       const v2CustomerAppUsers = [];
       let userLastKey = null;
       
-      do {
-        const userParams = {
-          TableName: 'users',
-          FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
-          ExpressionAttributeValues: {
-            ':appVersion': 'v2',
-            ':appType': 'customer_app',
-            ':deleted': 2
-          },
-          ProjectionExpression: 'id'
-        };
-
-        if (userLastKey) {
-          userParams.ExclusiveStartKey = userLastKey;
-        }
-
-        const userCommand = new ScanCommand(userParams);
-        const userResponse = await client.send(userCommand);
-
-        if (userResponse.Items) {
-          v2CustomerAppUsers.push(...userResponse.Items.map(u => u.id));
-        }
-
-        userLastKey = userResponse.LastEvaluatedKey;
-      } while (userLastKey);
+      try {
+        do {
+          const userQueryCommand = new QueryCommand({
+            TableName: 'users',
+            IndexName: 'app_version-app_type-index',
+            KeyConditionExpression: 'app_version = :appVersion AND app_type = :appType',
+            FilterExpression: '(attribute_not_exists(del_status) OR del_status <> :deleted)',
+            ExpressionAttributeValues: {
+              ':appVersion': 'v2',
+              ':appType': 'customer_app',
+              ':deleted': 2
+            },
+            ProjectionExpression: 'id'
+          });
+          
+          if (userLastKey) {
+            userQueryCommand.ExclusiveStartKey = userLastKey;
+          }
+          
+          const userResponse = await client.send(userQueryCommand);
+          if (userResponse.Items) {
+            v2CustomerAppUsers.push(...userResponse.Items.map(u => u.id));
+          }
+          userLastKey = userResponse.LastEvaluatedKey;
+        } while (userLastKey);
+      } catch (gsiError) {
+        console.warn('⚠️  GSI app_version-app_type-index not available for users, using Scan fallback:', gsiError.message);
+        // Fallback to Scan
+        let userLastKey = null;
+        do {
+          const userParams = {
+            TableName: 'users',
+            FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+            ExpressionAttributeValues: {
+              ':appVersion': 'v2',
+              ':appType': 'customer_app',
+              ':deleted': 2
+            },
+            ProjectionExpression: 'id'
+          };
+          if (userLastKey) userParams.ExclusiveStartKey = userLastKey;
+          const userCommand = new ScanCommand(userParams);
+          const userResponse = await client.send(userCommand);
+          if (userResponse.Items) {
+            v2CustomerAppUsers.push(...userResponse.Items.map(u => u.id));
+          }
+          userLastKey = userResponse.LastEvaluatedKey;
+        } while (userLastKey);
+      }
 
       console.log(`📊 [getCustomerAppOrdersV2] Found ${v2CustomerAppUsers.length} v2 customer_app users`);
-      if (v2CustomerAppUsers.length > 0) {
-        console.log(`📊 [getCustomerAppOrdersV2] Sample customer_app user IDs: ${v2CustomerAppUsers.slice(0, 5).join(', ')}`);
-      }
 
       if (v2CustomerAppUsers.length === 0) {
         console.log(`⚠️ [getCustomerAppOrdersV2] No v2 customer_app users found, returning empty array`);
         return [];
       }
 
-      // Get orders for these users
+      // OPTIMIZED: Use customer_id-status-index GSI to query orders for each customer in parallel
+      // Collect orders from top customers first (to get recent orders faster)
       const allOrders = [];
-      const batchSize = 25; // Limit to avoid expression size limits
-      
+      const batchSize = 5; // Process 5 customers in parallel
+      const customerBatches = [];
       for (let i = 0; i < v2CustomerAppUsers.length; i += batchSize) {
-        const batch = v2CustomerAppUsers.slice(i, i + batchSize);
-        const batchUserIds = batch.map(id => typeof id === 'string' && !isNaN(id) ? parseInt(id) : id);
-
-        if (batchUserIds.length === 0) continue;
-
-        let batchLastKey = null;
-        do {
-          // Build OR conditions: customer_id = :id0 OR customer_id = :id1 OR ...
-          // Note: We'll filter out bulk orders in JavaScript after fetching
-          const filterParts = batchUserIds.map((_, idx) => `customer_id = :customerId${idx}`);
-          const filterExpression = `(${filterParts.join(' OR ')})`;
-          const expressionAttributeValues = batchUserIds.reduce((acc, id, idx) => {
-            acc[`:customerId${idx}`] = id;
-            return acc;
-          }, {});
-
-          const params = {
-            TableName: TABLE_NAME,
-            FilterExpression: filterExpression,
-            ExpressionAttributeValues: expressionAttributeValues
-          };
-
-          if (batchLastKey) {
-            params.ExclusiveStartKey = batchLastKey;
-          }
-
-          const command = new ScanCommand(params);
-          const response = await client.send(command);
-
-          if (response.Items) {
-            console.log(`📊 [getCustomerAppOrdersV2] Found ${response.Items.length} orders in batch ${i / batchSize + 1}`);
-            allOrders.push(...response.Items);
-          }
-
-          batchLastKey = response.LastEvaluatedKey;
-        } while (batchLastKey);
+        customerBatches.push(v2CustomerAppUsers.slice(i, i + batchSize));
       }
 
-      console.log(`📊 [getCustomerAppOrdersV2] Total orders found before filtering: ${allOrders.length}`);
-      
-      // Filter out orders with bulk_request_id
-      const filteredOrders = allOrders.filter(order => !order.bulk_request_id);
-      console.log(`📊 [getCustomerAppOrdersV2] Orders after excluding bulk_request_id: ${filteredOrders.length}`);
+      // Process batches in parallel, but stop early if we have enough orders
+      for (const batch of customerBatches) {
+        if (allOrders.length >= limit * 2) break; // Stop if we have enough for sorting
+        
+        const batchPromises = batch.map(async (customerId) => {
+          try {
+            const cid = typeof customerId === 'string' && !isNaN(customerId) ? parseInt(customerId) : customerId;
+            let lastKey = null;
+            const customerOrders = [];
+            
+            // Use customer_id-status-index GSI to query orders (limit to recent orders)
+            try {
+              do {
+                const orderQueryCommand = new QueryCommand({
+                  TableName: TABLE_NAME,
+                  IndexName: 'customer_id-status-index',
+                  KeyConditionExpression: 'customer_id = :customerId',
+                  FilterExpression: 'attribute_not_exists(bulk_request_id)',
+                  ExpressionAttributeValues: {
+                    ':customerId': cid
+                  },
+                  ScanIndexForward: false, // Sort descending by created_at
+                  Limit: 20 // Limit per customer to get recent orders
+                });
+                
+                if (lastKey) {
+                  orderQueryCommand.ExclusiveStartKey = lastKey;
+                }
+                
+                const response = await client.send(orderQueryCommand);
+                if (response.Items) {
+                  customerOrders.push(...response.Items);
+                }
+                lastKey = response.LastEvaluatedKey;
+                
+                // Stop if we have enough orders from this customer
+                if (customerOrders.length >= 20) break;
+              } while (lastKey);
+            } catch (gsiError) {
+              // Fallback: use findByCustomerId and filter
+              const orders = await this.findByCustomerId(cid);
+              customerOrders.push(...orders.filter(order => !order.bulk_request_id));
+            }
+            
+            return customerOrders;
+          } catch (err) {
+            console.warn(`⚠️  Error getting orders for customer ${customerId}:`, err.message);
+            return [];
+          }
+        });
+        
+        const batchResults = await Promise.all(batchPromises);
+        allOrders.push(...batchResults.flat());
+        
+        // Early exit if we have enough orders
+        if (allOrders.length >= limit * 2) break;
+      }
 
-      // Sort by id DESC (newest first) and limit
-      filteredOrders.sort((a, b) => (b.id || 0) - (a.id || 0));
-      const result = filteredOrders.slice(0, limit);
-      console.log(`✅ [getCustomerAppOrdersV2] Returning ${result.length} customer app orders`);
+      console.log(`📊 [getCustomerAppOrdersV2] Total orders found: ${allOrders.length}`);
+      
+      // Sort by created_at DESC (newest first), then by id DESC
+      allOrders.sort((a, b) => {
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        if (dateB !== dateA) return dateB - dateA;
+        return (b.id || 0) - (a.id || 0);
+      });
+      
+      const result = allOrders.slice(0, limit);
+      console.log(`✅ [getCustomerAppOrdersV2] Returning ${result.length} customer app orders (optimized with GSIs)`);
       return result;
     } catch (err) {
       console.error('❌ [getCustomerAppOrdersV2] Error:', err);
@@ -1058,49 +1277,84 @@ class Order {
 
   // Get recent orders that are NOT from customer_app users (includes vendor orders, bulk orders, etc.)
   // This shows all "other" orders that should appear in bulk orders section
+  // OPTIMIZED: Uses getRecent() and filters efficiently
   static async getBulkOrders(limit = 10) {
     try {
       const client = getDynamoDBClient();
       
-      // Get all v2 customer_app user IDs to exclude
-      const v2CustomerAppUsers = [];
+      // OPTIMIZED: Use app_version-app_type-index GSI to get v2 customer_app users (for filtering)
+      const v2CustomerAppUsers = new Set();
       let userLastKey = null;
       
-      do {
-        const userParams = {
-          TableName: 'users',
-          FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
-          ExpressionAttributeValues: {
-            ':appVersion': 'v2',
-            ':appType': 'customer_app',
-            ':deleted': 2
-          },
-          ProjectionExpression: 'id'
-        };
+      try {
+        do {
+          const userQueryCommand = new QueryCommand({
+            TableName: 'users',
+            IndexName: 'app_version-app_type-index',
+            KeyConditionExpression: 'app_version = :appVersion AND app_type = :appType',
+            FilterExpression: '(attribute_not_exists(del_status) OR del_status <> :deleted)',
+            ExpressionAttributeValues: {
+              ':appVersion': 'v2',
+              ':appType': 'customer_app',
+              ':deleted': 2
+            },
+            ProjectionExpression: 'id'
+          });
+          
+          if (userLastKey) {
+            userQueryCommand.ExclusiveStartKey = userLastKey;
+          }
+          
+          const userResponse = await client.send(userQueryCommand);
+          if (userResponse.Items) {
+            userResponse.Items.forEach(u => {
+              const id = typeof u.id === 'string' && !isNaN(u.id) ? parseInt(u.id) : u.id;
+              v2CustomerAppUsers.add(id);
+            });
+          }
+          userLastKey = userResponse.LastEvaluatedKey;
+        } while (userLastKey);
+      } catch (gsiError) {
+        console.warn('⚠️  GSI app_version-app_type-index not available for users, using Scan fallback:', gsiError.message);
+        // Fallback to Scan
+        let userLastKey = null;
+        do {
+          const userParams = {
+            TableName: 'users',
+            FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+            ExpressionAttributeValues: {
+              ':appVersion': 'v2',
+              ':appType': 'customer_app',
+              ':deleted': 2
+            },
+            ProjectionExpression: 'id'
+          };
+          if (userLastKey) userParams.ExclusiveStartKey = userLastKey;
+          const userCommand = new ScanCommand(userParams);
+          const userResponse = await client.send(userCommand);
+          if (userResponse.Items) {
+            userResponse.Items.forEach(u => {
+              const id = typeof u.id === 'string' && !isNaN(u.id) ? parseInt(u.id) : u.id;
+              v2CustomerAppUsers.add(id);
+            });
+          }
+          userLastKey = userResponse.LastEvaluatedKey;
+        } while (userLastKey);
+      }
 
-        if (userLastKey) {
-          userParams.ExclusiveStartKey = userLastKey;
-        }
+      console.log(`📊 [getBulkOrders] Found ${v2CustomerAppUsers.size} v2 customer_app users to exclude`);
 
-        const userCommand = new ScanCommand(userParams);
-        const userResponse = await client.send(userCommand);
-
-        if (userResponse.Items) {
-          v2CustomerAppUsers.push(...userResponse.Items.map(u => u.id));
-        }
-
-        userLastKey = userResponse.LastEvaluatedKey;
-      } while (userLastKey);
-
-      console.log(`📊 [getBulkOrders] Found ${v2CustomerAppUsers.length} v2 customer_app users to exclude`);
-
-      // Get all orders, then filter out customer_app orders
+      // OPTIMIZED: Get recent orders (limited scan) and filter
+      // Since we only need a few orders, scan a limited set and filter
       const allOrders = [];
+      const maxScan = limit * 5; // Scan up to 5x the limit to find enough bulk orders
+      let scanned = 0;
       let lastKey = null;
 
       do {
         const params = {
-          TableName: TABLE_NAME
+          TableName: TABLE_NAME,
+          Limit: Math.min(100, maxScan - scanned)
         };
 
         if (lastKey) {
@@ -1112,22 +1366,31 @@ class Order {
 
         if (response.Items) {
           allOrders.push(...response.Items);
+          scanned += response.Items.length;
         }
 
         lastKey = response.LastEvaluatedKey;
-      } while (lastKey);
+        
+        // Stop early if we have enough orders or scanned enough
+        if (allOrders.length >= maxScan || scanned >= maxScan) break;
+      } while (lastKey && scanned < maxScan);
 
       // Filter out customer_app orders (where customer_id is in customer_app users AND no bulk_request_id)
-      const customerAppUserSet = new Set(v2CustomerAppUsers.map(id => typeof id === 'string' && !isNaN(id) ? parseInt(id) : id));
       const bulkOrders = allOrders.filter(order => {
         const customerId = order.customer_id ? (typeof order.customer_id === 'string' && !isNaN(order.customer_id) ? parseInt(order.customer_id) : order.customer_id) : null;
-        const isCustomerAppOrder = customerId && customerAppUserSet.has(customerId) && !order.bulk_request_id;
+        const isCustomerAppOrder = customerId && v2CustomerAppUsers.has(customerId) && !order.bulk_request_id;
         return !isCustomerAppOrder; // Return orders that are NOT customer_app orders
       });
 
-      // Sort by id DESC (newest first) and limit
-      bulkOrders.sort((a, b) => (b.id || 0) - (a.id || 0));
-      console.log(`✅ [getBulkOrders] Found ${bulkOrders.length} bulk orders (non-customer_app orders)`);
+      // Sort by created_at DESC (newest first), then by id DESC
+      bulkOrders.sort((a, b) => {
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        if (dateB !== dateA) return dateB - dateA;
+        return (b.id || 0) - (a.id || 0);
+      });
+      
+      console.log(`✅ [getBulkOrders] Found ${bulkOrders.length} bulk orders (non-customer_app orders, optimized)`);
       return bulkOrders.slice(0, limit);
     } catch (err) {
       console.error('❌ [getBulkOrders] Error:', err);
@@ -1368,43 +1631,180 @@ class Order {
     }
   }
 
+  /**
+   * Find orders by status using GSI (optimized for getAvailablePickupRequests)
+   * @param {number} status - Order status
+   * @param {number} limit - Maximum number of orders to return
+   * @param {string} lastEvaluatedKey - For pagination
+   * @returns {Promise<{items: Array, lastEvaluatedKey: string|null}>}
+   */
+  static async findByStatus(status, limit = 100, lastEvaluatedKey = null) {
+    try {
+      const client = getDynamoDBClient();
+      
+      // Try using GSI first (status-created_at-index)
+      try {
+        const queryCommand = new QueryCommand({
+          TableName: TABLE_NAME,
+          IndexName: 'status-created_at-index',
+          KeyConditionExpression: '#status = :status',
+          ExpressionAttributeNames: { '#status': 'status' },
+          ExpressionAttributeValues: { ':status': status },
+          ScanIndexForward: false, // Sort descending by created_at (newest first)
+          Limit: limit
+        });
+        
+        if (lastEvaluatedKey) {
+          queryCommand.ExclusiveStartKey = lastEvaluatedKey;
+        }
+        
+        const queryResponse = await client.send(queryCommand);
+        return {
+          items: queryResponse.Items || [],
+          lastEvaluatedKey: queryResponse.LastEvaluatedKey || null
+        };
+      } catch (gsiError) {
+        // GSI might not exist yet, fall back to Scan
+        console.warn('⚠️  GSI status-created_at-index not available, using Scan fallback:', gsiError.message);
+      }
+      
+      // Fallback to Scan if GSI doesn't exist
+      const params = {
+        TableName: TABLE_NAME,
+        FilterExpression: '#status = :status',
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: { ':status': status },
+        Limit: limit
+      };
+      
+      if (lastEvaluatedKey) {
+        params.ExclusiveStartKey = lastEvaluatedKey;
+      }
+      
+      const command = new ScanCommand(params);
+      const response = await client.send(command);
+      
+      let items = response.Items || [];
+      items.sort((a, b) => {
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        if (dateB !== dateA) return dateB - dateA;
+        return (b.id || 0) - (a.id || 0);
+      });
+      
+      return {
+        items: items.slice(0, limit),
+        lastEvaluatedKey: response.LastEvaluatedKey || null
+      };
+    } catch (err) {
+      throw err;
+    }
+  }
+
   static async getAll(status = null) {
     try {
+      const cacheKey = `${ORDER_ALL_CACHE_PREFIX}${status === null ? 'all' : status}`;
+      const cached = await RedisCache.get(cacheKey);
+      if (cached && Array.isArray(cached)) {
+        return cached;
+      }
+
       const client = getDynamoDBClient();
       let lastKey = null;
       const allOrders = [];
-      
+
+      // If status is provided, use optimized findByStatus method
+      if (status !== null) {
+        do {
+          const result = await this.findByStatus(status, 1000, lastKey);
+          if (result.items) {
+            allOrders.push(...result.items);
+          }
+          lastKey = result.lastEvaluatedKey;
+        } while (lastKey);
+        
+        await RedisCache.set(cacheKey, allOrders, 'orders');
+        return allOrders;
+      }
+
+      // For all orders, use Scan (no GSI for this case)
       do {
         const params = {
           TableName: TABLE_NAME
         };
-        
-        if (status !== null) {
-          params.FilterExpression = '#status = :status';
-          params.ExpressionAttributeNames = { '#status': 'status' };
-          params.ExpressionAttributeValues = { ':status': status };
-        }
-        
+
         if (lastKey) {
           params.ExclusiveStartKey = lastKey;
         }
-        
+
         const command = new ScanCommand(params);
         const response = await client.send(command);
-        
+
         if (response.Items) {
           allOrders.push(...response.Items);
         }
-        
+
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
-      
-      // Sort by id DESC
-      allOrders.sort((a, b) => (b.id || 0) - (a.id || 0));
-      
+
+      allOrders.sort((a, b) => {
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        if (dateB !== dateA) return dateB - dateA;
+        return (b.id || 0) - (a.id || 0);
+      });
+      await RedisCache.set(cacheKey, allOrders, 'orders');
       return allOrders;
     } catch (err) {
       throw err;
+    }
+  }
+
+  /** Invalidate Redis cache for customer orders (call after create/update). */
+  static async invalidateCustomerOrdersCache(customerId) {
+    const cid = customerId == null ? null : (typeof customerId === 'string' && !isNaN(customerId) ? parseInt(customerId) : customerId);
+    if (cid == null) return false;
+    try {
+      await RedisCache.delete(`${ORDER_BY_CUSTOMER_CACHE_PREFIX}${cid}`);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /** Invalidate Redis cache for orders by shop (call after create/update). */
+  static async invalidateOrdersByShopCache(shopId) {
+    const sid = shopId == null ? null : (typeof shopId === 'string' && !isNaN(shopId) ? parseInt(shopId) : shopId);
+    if (sid == null) return false;
+    try {
+      await RedisCache.delete(`${ORDER_BY_SHOP_CACHE_PREFIX}${sid}`);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /** Invalidate Redis cache for orders by delivery boy (call after create/update). */
+  static async invalidateOrdersByDeliveryCache(delvBoyId) {
+    const dbid = delvBoyId == null ? null : (typeof delvBoyId === 'string' && !isNaN(delvBoyId) ? parseInt(delvBoyId) : delvBoyId);
+    if (dbid == null) return false;
+    try {
+      await RedisCache.delete(`${ORDER_BY_DELIVERY_PREFIX}${dbid}`);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /** Invalidate Redis cache for order by order_no (call after update). */
+  static async invalidateOrderByOrderNoCache(orderNo) {
+    const key = orderNo == null ? null : String(orderNo).trim();
+    if (!key) return false;
+    try {
+      await RedisCache.delete(`${ORDER_BY_ORDER_NO_PREFIX}${key}`);
+      return true;
+    } catch (e) {
+      return false;
     }
   }
 }

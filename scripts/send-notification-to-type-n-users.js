@@ -4,7 +4,9 @@
  * - user_type 'R': only approval_status rejected or pending (user or shop)
  * Sends notifications in English, Tamil, and Hindi.
  * Message: "Confused about how to join? Start by joining as B2C using only your Aadhaar card. You can upgrade to B2B anytime later."
- * Usage: node scripts/send-notification-to-type-n-users.js
+ * Usage: 
+ *   node scripts/send-notification-to-type-n-users.js
+ *   TEST_MOBILE=9074135121 node scripts/send-notification-to-type-n-users.js  (test mode)
  */
 
 require('dotenv').config();
@@ -41,10 +43,20 @@ async function sendNotificationsToTypeNUsers() {
   try {
     const environment = getEnvironment();
     const USER_TABLE = getTableName('users');
+    // Check for test mode: TEST_MOBILE env var or first command-line arg
+    const TEST_MOBILE = process.env.TEST_MOBILE || (process.argv[2] && /^[0-9]+$/.test(process.argv[2]) ? process.argv[2] : null);
+    const isTestMode = !!TEST_MOBILE;
+    
+    if (isTestMode) {
+      console.log(`\n🧪 TEST MODE ENABLED - Mobile: ${TEST_MOBILE}`);
+    }
     
     console.log('\n📨 Push Notification: vendor_app v2 — N (all) + R (rejected/pending only)');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log(`   Environment: ${environment}`);
+    if (isTestMode) {
+      console.log(`   🧪 TEST MODE: Sending to mobile ${TEST_MOBILE} only`);
+    }
     console.log(`   Languages: English, Tamil, Hindi`);
     console.log(`   Target: app_type = vendor_app, app_version = v2`);
     console.log(`   user_type 'N': all | user_type 'R': approval_status rejected OR pending only`);
@@ -61,39 +73,83 @@ async function sendNotificationsToTypeNUsers() {
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     
     // Find vendor_app v2 users with user_type 'N' or 'R'
-    console.log('🔍 Finding vendor_app v2 users with user_type IN ("N", "R")...');
     const client = getDynamoDBClient();
-    let lastKey = null;
-    const rawUsers = [];
+    let rawUsers = [];
     
-    do {
-      const params = {
-        TableName: USER_TABLE,
-        FilterExpression: 'app_type = :appType AND app_version = :appVersion AND (user_type = :typeN OR user_type = :typeR) AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
-        ExpressionAttributeValues: {
-          ':appType': 'vendor_app',
-          ':appVersion': 'v2',
-          ':typeN': 'N',
-          ':typeR': 'R',
-          ':deleted': 2
+    if (isTestMode) {
+      // Test mode: Find user by mobile number
+      console.log(`🔍 TEST MODE: Finding user with mobile ${TEST_MOBILE}...`);
+      const mobileNum = parseInt(TEST_MOBILE);
+      let lastKey = null;
+      
+      do {
+        const params = {
+          TableName: USER_TABLE,
+          FilterExpression: 'mob_num = :mobile AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+          ExpressionAttributeValues: {
+            ':mobile': mobileNum,
+            ':deleted': 2
+          }
+        };
+        
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
         }
-      };
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        
+        if (response.Items) {
+          rawUsers.push(...response.Items);
+        }
+        
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
       
-      if (lastKey) {
-        params.ExclusiveStartKey = lastKey;
-      }
+      console.log(`   Found ${rawUsers.length} user(s) with mobile ${TEST_MOBILE}`);
       
-      const command = new ScanCommand(params);
-      const response = await client.send(command);
+      // Filter to vendor_app v2, user_type N or R
+      rawUsers = rawUsers.filter(u => 
+        u.app_type === 'vendor_app' && 
+        u.app_version === 'v2' && 
+        (u.user_type === 'N' || u.user_type === 'R')
+      );
       
-      if (response.Items) {
-        rawUsers.push(...response.Items);
-      }
+      console.log(`   After filtering (vendor_app v2, user_type N or R): ${rawUsers.length}`);
+    } else {
+      // Normal mode: Find all vendor_app v2 users with user_type 'N' or 'R'
+      console.log('🔍 Finding vendor_app v2 users with user_type IN ("N", "R")...');
+      let lastKey = null;
       
-      lastKey = response.LastEvaluatedKey;
-    } while (lastKey);
-    
-    console.log(`   Raw count (vendor_app v2, user_type N or R): ${rawUsers.length}`);
+      do {
+        const params = {
+          TableName: USER_TABLE,
+          FilterExpression: 'app_type = :appType AND app_version = :appVersion AND (user_type = :typeN OR user_type = :typeR) AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+          ExpressionAttributeValues: {
+            ':appType': 'vendor_app',
+            ':appVersion': 'v2',
+            ':typeN': 'N',
+            ':typeR': 'R',
+            ':deleted': 2
+          }
+        };
+        
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+        
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+        
+        if (response.Items) {
+          rawUsers.push(...response.Items);
+        }
+        
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+      
+      console.log(`   Raw count (vendor_app v2, user_type N or R): ${rawUsers.length}`);
+    }
     
     // N: include all. R: include only if approval_status rejected or pending (user or shop)
     const matchingUsers = [];

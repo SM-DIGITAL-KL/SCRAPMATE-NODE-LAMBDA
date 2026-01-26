@@ -6,6 +6,99 @@ const CallLog = require('../models/CallLog');
 const ProductCategory = require('../models/ProductCategory');
 const RedisCache = require('../utils/redisCache');
 
+/** Bulk-enrich users with Shop via 1 Scan (RCU-optimized). Used for B2B. */
+async function _enrichUsersWithShopsBulk(users, Shop) {
+  if (!users || users.length === 0) return [];
+  const userIds = users.map(u => u.id);
+  const shopMap = await Shop.findByUserIdsBulk(userIds);
+  return users.map(user => {
+    const shop = shopMap.get(user.id) || null;
+    const email = shop ? (shop.contact_person_email || shop.email || user.email || '') : (user.email || '');
+    return {
+      ...user,
+      shop: shop || null,
+      shopname: shop?.shopname || '',
+      contact: shop?.contact || user.mob_num || '',
+      address: shop?.address || '',
+      shop_type: shop?.shop_type ?? null,
+      approval_status: shop?.approval_status ?? null,
+      company_name: shop?.company_name || '',
+      gst_number: shop?.gst_number || '',
+      email,
+      contact_person_email: shop?.contact_person_email || shop?.email || '',
+      contact_person_name: shop?.contact_person_name || ''
+    };
+  });
+}
+
+/** Bulk-enrich B2C users with Shop via 1 Scan (RCU-optimized). */
+async function _enrichB2CUsersWithShopsBulk(users, Shop) {
+  if (!users || users.length === 0) return [];
+  const userIds = users.map(u => u.id);
+  const shopMap = await Shop.findByUserIdsBulk(userIds);
+  return users.map(user => {
+    const shop = shopMap.get(user.id) || null;
+    return {
+      ...user,
+      shop: shop || null,
+      shopname: shop?.shopname || '',
+      contact: shop?.contact || user.mob_num || '',
+      address: shop?.address || '',
+      aadhar_card: shop?.aadhar_card || '',
+      driving_license: shop?.driving_license || '',
+      approval_status: shop?.approval_status ?? null,
+      is_contacted: shop?.is_contacted === true || shop?.is_contacted === 1
+    };
+  });
+}
+
+/** Bulk-enrich new users (N) with Shop via 1 Scan (RCU-optimized). */
+async function _enrichNewUsersWithShopsBulk(users, Shop) {
+  if (!users || users.length === 0) return [];
+  const userIds = users.map(u => u.id);
+  const shopMap = await Shop.findByUserIdsBulk(userIds);
+  return users.map(user => {
+    const shop = shopMap.get(user.id) || null;
+    return {
+      ...user,
+      shop: shop || null,
+      shopname: shop?.shopname || '',
+      contact: shop?.contact || user.mob_num || '',
+      address: shop?.address || '',
+      aadhar_card: shop?.aadhar_card || '',
+      driving_license: shop?.driving_license || ''
+    };
+  });
+}
+
+/** Bulk-enrich customer users with Customer + Address via 1 Scan each (RCU-optimized). */
+async function _enrichCustomersWithBulk(users, Customer, Address) {
+  if (!users || users.length === 0) return [];
+  const userIds = users.map(u => u.id);
+  const customerMap = await Customer.findByUserIdsBulk(userIds);
+  const customerIds = [...new Set([...customerMap.values()].map(c => c.id).filter(Boolean))];
+  const addressIds = [...new Set([...customerIds, ...userIds])];
+  const addressMap = await Address.findByCustomerIdsBulk(addressIds);
+  return users.map(user => {
+    const customer = customerMap.get(user.id) || null;
+    const addrsByCust = customer?.id ? addressMap.get(customer.id) : null;
+    const addrsByUser = user.id ? addressMap.get(user.id) : null;
+    const addrs = addrsByCust && addrsByCust.length ? addrsByCust : (addrsByUser && addrsByUser.length ? addrsByUser : []);
+    const customerAddress = customer?.address || (addrs[0]?.address || '');
+    return {
+      ...user,
+      customer,
+      contact: customer?.contact != null ? String(customer.contact) : (user.mob_num != null ? String(user.mob_num) : ''),
+      address: customerAddress,
+      email: customer?.email || user.email || '',
+      location: customer?.location || '',
+      state: customer?.state || '',
+      place: customer?.place || '',
+      is_contacted: customer?.is_contacted === true || customer?.is_contacted === 1
+    };
+  });
+}
+
 class AdminPanelController {
   // Dashboard KPIs (counts only) - Optimized for performance
   static async dashboardKPIs(req, res) {
@@ -1729,73 +1822,8 @@ class AdminPanelController {
 
         console.log(`📊 Total B2B users fetched: ${allResult.total}, users in result: ${allResult.users.length}`);
 
-        // Enrich all users with shop data
-        enrichedUsers = await Promise.all(allResult.users.map(async (user) => {
-          try {
-            const shop = await Shop.findByUserId(user.id);
-
-            // Determine email - prioritize shop email fields for v2 B2B users
-            let email = '';
-            if (shop) {
-              // For v2 B2B users, email should be in shop.contact_person_email or shop.email
-              email = shop.contact_person_email || shop.email || user.email || '';
-
-              // Log email source for debugging v2 users
-              if (user.app_version === 'v2' && (user.user_type === 'S' || user.user_type === 'SR')) {
-                console.log(`📧 [B2B Users - All] User ${user.id} (${user.name || 'N/A'}):`);
-                console.log(`   Final email: ${email || 'EMPTY'}`);
-                console.log(`   shop.contact_person_email: ${shop.contact_person_email || 'N/A'}`);
-                console.log(`   shop.email: ${shop.email || 'N/A'}`);
-                console.log(`   user.email: ${user.email || 'N/A'}`);
-                console.log(`   Shop keys: ${Object.keys(shop).join(', ')}`);
-              }
-            } else {
-              // Fallback to user email if no shop found
-              email = user.email || '';
-
-              // Log for v2 users without shop
-              if (user.app_version === 'v2' && (user.user_type === 'S' || user.user_type === 'SR')) {
-                console.log(`⚠️ [B2B Users - All] User ${user.id} (${user.name || 'N/A'}): No shop found, using user.email=${email || 'EMPTY'}`);
-              }
-            }
-
-            return {
-              ...user,
-              shop: shop || null,
-              shopname: shop?.shopname || '',
-              contact: shop?.contact || user.mob_num || '',
-              address: shop?.address || '',
-              shop_type: shop?.shop_type || null,
-              approval_status: shop?.approval_status || null,
-              company_name: shop?.company_name || '',
-              gst_number: shop?.gst_number || '',
-              // Include shop email (contactEmail from B2B signup) - prioritize over user email
-              email: email,
-              contact_person_email: shop?.contact_person_email || shop?.email || '',
-              contact_person_name: shop?.contact_person_name || ''
-            };
-          } catch (err) {
-            console.error(`Error fetching shop for user ${user.id}:`, err);
-
-            // For v2 users, try to get email from user record even if shop fetch fails
-            let email = user.email || '';
-
-            return {
-              ...user,
-              shop: null,
-              shopname: '',
-              contact: user.mob_num || '',
-              address: '',
-              shop_type: null,
-              approval_status: null,
-              company_name: '',
-              gst_number: '',
-              email: email,
-              contact_person_email: '',
-              contact_person_name: ''
-            };
-          }
-        }));
+        // Bulk enrich: 1 Shop Scan instead of N × findByUserId
+        enrichedUsers = await _enrichUsersWithShopsBulk(allResult.users, Shop);
 
         // Apply search filter after enriching with shop data (to search contact from shop)
         const searchTerm = search.trim();
@@ -1983,73 +2011,8 @@ class AdminPanelController {
         // No search and no app_version filter - use normal pagination
         const result = await User.getB2BUsers(page, limit, null);
 
-        // Enrich paginated users with shop data
-        enrichedUsers = await Promise.all(result.users.map(async (user) => {
-          try {
-            const shop = await Shop.findByUserId(user.id);
-
-            // Determine email - prioritize shop email fields for v2 B2B users
-            let email = '';
-            if (shop) {
-              // For v2 B2B users, email should be in shop.contact_person_email or shop.email
-              email = shop.contact_person_email || shop.email || user.email || '';
-
-              // Log email source for debugging v2 users
-              if (user.app_version === 'v2' && (user.user_type === 'S' || user.user_type === 'SR')) {
-                console.log(`📧 [B2B Users - Paginated] User ${user.id} (${user.name || 'N/A'}):`);
-                console.log(`   Final email: ${email || 'EMPTY'}`);
-                console.log(`   shop.contact_person_email: ${shop.contact_person_email || 'N/A'}`);
-                console.log(`   shop.email: ${shop.email || 'N/A'}`);
-                console.log(`   user.email: ${user.email || 'N/A'}`);
-                console.log(`   Shop keys: ${Object.keys(shop).join(', ')}`);
-              }
-            } else {
-              // Fallback to user email if no shop found
-              email = user.email || '';
-
-              // Log for v2 users without shop
-              if (user.app_version === 'v2' && (user.user_type === 'S' || user.user_type === 'SR')) {
-                console.log(`⚠️ [B2B Users - Paginated] User ${user.id} (${user.name || 'N/A'}): No shop found, using user.email=${email || 'EMPTY'}`);
-              }
-            }
-
-            return {
-              ...user,
-              shop: shop || null,
-              shopname: shop?.shopname || '',
-              contact: shop?.contact || user.mob_num || '',
-              address: shop?.address || '',
-              shop_type: shop?.shop_type || null,
-              approval_status: shop?.approval_status || null,
-              company_name: shop?.company_name || '',
-              gst_number: shop?.gst_number || '',
-              // Include shop email (contactEmail from B2B signup) - prioritize over user email
-              email: email,
-              contact_person_email: shop?.contact_person_email || shop?.email || '',
-              contact_person_name: shop?.contact_person_name || ''
-            };
-          } catch (err) {
-            console.error(`Error fetching shop for user ${user.id}:`, err);
-
-            // For v2 users, try to get email from user record even if shop fetch fails
-            let email = user.email || '';
-
-            return {
-              ...user,
-              shop: null,
-              shopname: '',
-              contact: user.mob_num || '',
-              address: '',
-              shop_type: null,
-              approval_status: null,
-              company_name: '',
-              gst_number: '',
-              email: email,
-              contact_person_email: '',
-              contact_person_name: ''
-            };
-          }
-        }));
+        // Bulk enrich: 1 Shop Scan instead of N × findByUserId
+        enrichedUsers = await _enrichUsersWithShopsBulk(result.users, Shop);
 
         // Filter by app_version if specified
         if (appVersion && (appVersion === 'v1' || appVersion === 'v2')) {
@@ -2361,36 +2324,8 @@ class AdminPanelController {
 
         console.log(`📊 Total B2C users fetched: ${allResult.total}, users in result: ${allResult.users.length}`);
 
-        // Enrich all users with shop data
-        enrichedUsers = await Promise.all(allResult.users.map(async (user) => {
-          try {
-            const shop = await Shop.findByUserId(user.id);
-
-            return {
-              ...user,
-              shop: shop || null,
-              shopname: shop?.shopname || '',
-              contact: shop?.contact || user.mob_num || '',
-              address: shop?.address || '',
-              aadhar_card: shop?.aadhar_card || '',
-              driving_license: shop?.driving_license || '',
-              approval_status: shop?.approval_status || null,
-              is_contacted: shop?.is_contacted === true || shop?.is_contacted === 1 || false
-            };
-          } catch (err) {
-            console.error(`Error fetching shop for user ${user.id}:`, err);
-            return {
-              ...user,
-              shop: null,
-              shopname: '',
-              contact: user.mob_num || '',
-              address: '',
-              aadhar_card: '',
-              driving_license: '',
-              is_contacted: false
-            };
-          }
-        }));
+        // Bulk enrich: 1 Shop Scan instead of N × findByUserId
+        enrichedUsers = await _enrichB2CUsersWithShopsBulk(allResult.users, Shop);
 
         // Apply search filter after enriching with shop data
         const searchTerm = search.trim();
@@ -2477,36 +2412,8 @@ class AdminPanelController {
         console.log(`🔍 Filtering by app_version=${appVersion}, fetching all users first`);
         const allResult = await User.getB2CUsers(1, 999999, null);
 
-        // Enrich all users with shop data
-        enrichedUsers = await Promise.all(allResult.users.map(async (user) => {
-          try {
-            const shop = await Shop.findByUserId(user.id);
-
-            return {
-              ...user,
-              shop: shop || null,
-              shopname: shop?.shopname || '',
-              contact: shop?.contact || user.mob_num || '',
-              address: shop?.address || '',
-              aadhar_card: shop?.aadhar_card || '',
-              driving_license: shop?.driving_license || '',
-              approval_status: shop?.approval_status || null,
-              is_contacted: shop?.is_contacted === true || shop?.is_contacted === 1 || false
-            };
-          } catch (err) {
-            console.error(`Error fetching shop for user ${user.id}:`, err);
-            return {
-              ...user,
-              shop: null,
-              shopname: '',
-              contact: user.mob_num || '',
-              address: '',
-              aadhar_card: '',
-              driving_license: '',
-              is_contacted: false
-            };
-          }
-        }));
+        // Bulk enrich: 1 Shop Scan instead of N × findByUserId
+        enrichedUsers = await _enrichB2CUsersWithShopsBulk(allResult.users, Shop);
 
         // Filter by app_version - ensure we check the actual app_version field
         enrichedUsers = enrichedUsers.filter(user => {
@@ -2565,36 +2472,8 @@ class AdminPanelController {
         // No search and no app_version filter - use normal pagination
         const result = await User.getB2CUsers(page, limit, null);
 
-        // Enrich paginated users with shop data
-        enrichedUsers = await Promise.all(result.users.map(async (user) => {
-          try {
-            const shop = await Shop.findByUserId(user.id);
-
-            return {
-              ...user,
-              shop: shop || null,
-              shopname: shop?.shopname || '',
-              contact: shop?.contact || user.mob_num || '',
-              address: shop?.address || '',
-              aadhar_card: shop?.aadhar_card || '',
-              driving_license: shop?.driving_license || '',
-              approval_status: shop?.approval_status || null,
-              is_contacted: shop?.is_contacted === true || shop?.is_contacted === 1 || false
-            };
-          } catch (err) {
-            console.error(`Error fetching shop for user ${user.id}:`, err);
-            return {
-              ...user,
-              shop: null,
-              shopname: '',
-              contact: user.mob_num || '',
-              address: '',
-              aadhar_card: '',
-              driving_license: '',
-              is_contacted: false
-            };
-          }
-        }));
+        // Bulk enrich: 1 Shop Scan instead of N × findByUserId
+        enrichedUsers = await _enrichB2CUsersWithShopsBulk(result.users, Shop);
 
         // Sort enriched users: v2 users first, then v1 users
         enrichedUsers.sort((a, b) => {
@@ -3309,33 +3188,8 @@ class AdminPanelController {
 
         console.log(`📊 Total New users fetched: ${allResult.total}, users in result: ${allResult.users.length}`);
 
-        // Enrich all users with shop data
-        enrichedUsers = await Promise.all(allResult.users.map(async (user) => {
-          try {
-            const shop = await Shop.findByUserId(user.id);
-
-            return {
-              ...user,
-              shop: shop || null,
-              shopname: shop?.shopname || '',
-              contact: shop?.contact || user.mob_num || '',
-              address: shop?.address || '',
-              aadhar_card: shop?.aadhar_card || '',
-              driving_license: shop?.driving_license || ''
-            };
-          } catch (err) {
-            console.error(`Error fetching shop for user ${user.id}:`, err);
-            return {
-              ...user,
-              shop: null,
-              shopname: '',
-              contact: user.mob_num || '',
-              address: '',
-              aadhar_card: '',
-              driving_license: ''
-            };
-          }
-        }));
+        // Bulk enrich: 1 Shop Scan instead of N × findByUserId
+        enrichedUsers = await _enrichNewUsersWithShopsBulk(allResult.users, Shop);
 
         // Apply search filter after enriching with shop data
         const searchTerm = search.trim();
@@ -3407,33 +3261,8 @@ class AdminPanelController {
         console.log(`🔍 Filtering by app_version=${appVersion}, fetching all users first`);
         const allResult = await User.getNewUsers(1, 999999, null);
 
-        // Enrich all users with shop data
-        enrichedUsers = await Promise.all(allResult.users.map(async (user) => {
-          try {
-            const shop = await Shop.findByUserId(user.id);
-
-            return {
-              ...user,
-              shop: shop || null,
-              shopname: shop?.shopname || '',
-              contact: shop?.contact || user.mob_num || '',
-              address: shop?.address || '',
-              aadhar_card: shop?.aadhar_card || '',
-              driving_license: shop?.driving_license || ''
-            };
-          } catch (err) {
-            console.error(`Error fetching shop for user ${user.id}:`, err);
-            return {
-              ...user,
-              shop: null,
-              shopname: '',
-              contact: user.mob_num || '',
-              address: '',
-              aadhar_card: '',
-              driving_license: ''
-            };
-          }
-        }));
+        // Bulk enrich: 1 Shop Scan instead of N × findByUserId
+        enrichedUsers = await _enrichNewUsersWithShopsBulk(allResult.users, Shop);
 
         // Filter by app_version
         enrichedUsers = enrichedUsers.filter(user => {
@@ -3460,33 +3289,8 @@ class AdminPanelController {
         // No search and no app_version filter - use normal pagination
         const result = await User.getNewUsers(page, limit, null);
 
-        // Enrich paginated users with shop data
-        enrichedUsers = await Promise.all(result.users.map(async (user) => {
-          try {
-            const shop = await Shop.findByUserId(user.id);
-
-            return {
-              ...user,
-              shop: shop || null,
-              shopname: shop?.shopname || '',
-              contact: shop?.contact || user.mob_num || '',
-              address: shop?.address || '',
-              aadhar_card: shop?.aadhar_card || '',
-              driving_license: shop?.driving_license || ''
-            };
-          } catch (err) {
-            console.error(`Error fetching shop for user ${user.id}:`, err);
-            return {
-              ...user,
-              shop: null,
-              shopname: '',
-              contact: user.mob_num || '',
-              address: '',
-              aadhar_card: '',
-              driving_license: ''
-            };
-          }
-        }));
+        // Bulk enrich: 1 Shop Scan instead of N × findByUserId
+        enrichedUsers = await _enrichNewUsersWithShopsBulk(result.users, Shop);
 
         total = result.total;
       }
@@ -3831,64 +3635,9 @@ class AdminPanelController {
 
         console.log(`📊 Total customers fetched: ${allResult.total}, users in result: ${allResult.users.length}`);
 
-        // Enrich all users with customer data
+        // Bulk enrich: 1 Customer Scan + 1 Address Scan instead of N × (findByUserId + findByCustomerId)
         const Address = require('../models/Address');
-        enrichedUsers = await Promise.all(allResult.users.map(async (user) => {
-          try {
-            const customer = await Customer.findByUserId(user.id);
-            
-            // Get address from customer table first, then from addresses table if not found
-            let customerAddress = customer?.address || '';
-            if (!customerAddress) {
-              try {
-                let addresses = [];
-                // Try with customer.id first
-                if (customer?.id) {
-                  addresses = await Address.findByCustomerId(customer.id);
-                }
-                // Also try with user.id (user_id) as addresses are often saved with customer_id = user_id
-                if ((!addresses || addresses.length === 0) && user.id) {
-                  addresses = await Address.findByCustomerId(user.id);
-                }
-                
-                if (addresses && addresses.length > 0) {
-                  // Sort by created_at (most recent first) and get the latest address
-                  addresses.sort((a, b) => {
-                    const dateA = new Date(a.created_at || a.updated_at || 0).getTime();
-                    const dateB = new Date(b.created_at || b.updated_at || 0).getTime();
-                    return dateB - dateA; // Descending order (newest first)
-                  });
-                  customerAddress = addresses[0]?.address || '';
-                }
-              } catch (addrErr) {
-                console.error(`Error fetching addresses for customer ${customer?.id || user.id}:`, addrErr);
-              }
-            }
-
-            return {
-              ...user,
-              customer: customer || null,
-              contact: customer?.contact ? String(customer.contact) : (user.mob_num ? String(user.mob_num) : ''),
-              address: customerAddress,
-              email: customer?.email || user.email || '',
-              location: customer?.location || '',
-              state: customer?.state || '',
-              place: customer?.place || ''
-            };
-          } catch (err) {
-            console.error(`Error fetching customer for user ${user.id}:`, err);
-            return {
-              ...user,
-              customer: null,
-              contact: user.mob_num ? String(user.mob_num) : '',
-              address: '',
-              email: user.email || '',
-              location: '',
-              state: '',
-              place: ''
-            };
-          }
-        }));
+        enrichedUsers = await _enrichCustomersWithBulk(allResult.users, Customer, Address);
 
         // Apply search filter after enriching with customer data
         const searchTerm = search.trim();
@@ -3954,64 +3703,9 @@ class AdminPanelController {
         // No search - use normal pagination
         const result = await User.getCustomers(page, limit, null);
 
-        // Enrich paginated users with customer data
+        // Bulk enrich: 1 Customer Scan + 1 Address Scan instead of N × (findByUserId + findByCustomerId)
         const Address = require('../models/Address');
-        enrichedUsers = await Promise.all(result.users.map(async (user) => {
-          try {
-            const customer = await Customer.findByUserId(user.id);
-            
-            // Get address from customer table first, then from addresses table if not found
-            let customerAddress = customer?.address || '';
-            if (!customerAddress) {
-              try {
-                let addresses = [];
-                // Try with customer.id first
-                if (customer?.id) {
-                  addresses = await Address.findByCustomerId(customer.id);
-                }
-                // Also try with user.id (user_id) as addresses are often saved with customer_id = user_id
-                if ((!addresses || addresses.length === 0) && user.id) {
-                  addresses = await Address.findByCustomerId(user.id);
-                }
-                
-                if (addresses && addresses.length > 0) {
-                  // Sort by created_at (most recent first) and get the latest address
-                  addresses.sort((a, b) => {
-                    const dateA = new Date(a.created_at || a.updated_at || 0).getTime();
-                    const dateB = new Date(b.created_at || b.updated_at || 0).getTime();
-                    return dateB - dateA; // Descending order (newest first)
-                  });
-                  customerAddress = addresses[0]?.address || '';
-                }
-              } catch (addrErr) {
-                console.error(`Error fetching addresses for customer ${customer?.id || user.id}:`, addrErr);
-              }
-            }
-
-            return {
-              ...user,
-              customer: customer || null,
-              contact: customer?.contact ? String(customer.contact) : (user.mob_num ? String(user.mob_num) : ''),
-              address: customerAddress,
-              email: customer?.email || user.email || '',
-              location: customer?.location || '',
-              state: customer?.state || '',
-              place: customer?.place || ''
-            };
-          } catch (err) {
-            console.error(`Error fetching customer for user ${user.id}:`, err);
-            return {
-              ...user,
-              customer: null,
-              contact: user.mob_num ? String(user.mob_num) : '',
-              address: '',
-              email: user.email || '',
-              location: '',
-              state: '',
-              place: ''
-            };
-          }
-        }));
+        enrichedUsers = await _enrichCustomersWithBulk(result.users, Customer, Address);
 
         // Sort enriched users by app_version (v2 first, then v1), without sorting by date
         enrichedUsers.sort((a, b) => {
@@ -4821,8 +4515,9 @@ class AdminPanelController {
     console.log('✅ AdminPanelController.v2UserTypesDashboard called (no cache)');
 
     try {
+      // Increased timeout to 60 seconds to allow for GSI queries (which are faster but may need more time for initial setup)
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Query timeout')), 30000);
+        setTimeout(() => reject(new Error('Query timeout')), 60000);
       });
 
       // Get counts for each v2 user type (N, R, S, SR, D, C)

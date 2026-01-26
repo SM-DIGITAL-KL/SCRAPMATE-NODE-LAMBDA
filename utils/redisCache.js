@@ -13,6 +13,7 @@ class RedisCache {
       '30days': process.env.CACHE_TTL_30_DAYS || 2592000,
       'dashboard': process.env.CACHE_TTL_DASHBOARD || 300,
       'short': process.env.CACHE_TTL_SHORT || 120,
+      'orders': process.env.CACHE_TTL_ORDERS || 60,
       'list': process.env.CACHE_TTL_LIST || 600,
       'medium': process.env.CACHE_TTL_MEDIUM || 600,
       'record': process.env.CACHE_TTL_RECORD || 1800,

@@ -1,9 +1,14 @@
 const { getDynamoDBClient } = require('../config/dynamodb');
-const { GetCommand, PutCommand, UpdateCommand, ScanCommand, BatchGetCommand, BatchWriteCommand } = require('@aws-sdk/lib-dynamodb');
+const { GetCommand, PutCommand, UpdateCommand, ScanCommand, QueryCommand, BatchGetCommand, BatchWriteCommand } = require('@aws-sdk/lib-dynamodb');
 const redis = require('../config/redis');
 const bcrypt = require('bcryptjs');
+const RedisCache = require('../utils/redisCache');
 
 const TABLE_NAME = 'users';
+const USER_COUNT_PREFIX = 'user:count:';
+const USER_MONTHLY_PREFIX = 'user:monthly:';
+const USER_COUNT_MONTH_PREFIX = 'user:count_month:';
+const USER_COUNT_V2_PREFIX = 'user:count_v2:';
 
 class User {
   // Create a new user
@@ -346,9 +351,34 @@ class User {
   static async findByEmail(email) {
     try {
       const client = getDynamoDBClient();
+      
+      // Try using GSI first (email-index)
+      try {
+        const queryCommand = new QueryCommand({
+          TableName: TABLE_NAME,
+          IndexName: 'email-index',
+          KeyConditionExpression: 'email = :email',
+          ExpressionAttributeValues: {
+            ':email': email
+          },
+          Limit: 1
+        });
+        
+        const response = await client.send(queryCommand);
+        
+        if (response.Items && response.Items.length > 0) {
+          const user = response.Items[0];
+          const { password: _, ...userWithoutPassword } = user;
+          return userWithoutPassword;
+        }
+        
+        return null;
+      } catch (gsiError) {
+        // GSI might not exist yet, fall back to Scan
+        console.warn('⚠️  GSI email-index not available, using Scan fallback:', gsiError.message);
+      }
 
-      // Scan with pagination to find the matching email
-      // Note: Limit in ScanCommand limits items scanned, not filtered results
+      // Fallback to Scan if GSI doesn't exist
       let lastKey = null;
 
       do {
@@ -694,33 +724,59 @@ class User {
   // Count users by user_type (optimized with Select: "COUNT")
   static async countByUserType(userType) {
     try {
+      const cacheKey = `${USER_COUNT_PREFIX}${userType}`;
+      const cached = await RedisCache.get(cacheKey);
+      if (cached !== null && cached !== undefined && typeof cached === 'number') {
+        return cached;
+      }
       const client = getDynamoDBClient();
+      
+      // Try using GSI first (user_type-created_at-index)
+      try {
+        let lastKey = null;
+        let count = 0;
+        do {
+          const queryCommand = new QueryCommand({
+            TableName: TABLE_NAME,
+            IndexName: 'user_type-created_at-index',
+            KeyConditionExpression: 'user_type = :userType',
+            ExpressionAttributeValues: { ':userType': userType },
+            Select: 'COUNT'
+          });
+          
+          if (lastKey) {
+            queryCommand.ExclusiveStartKey = lastKey;
+          }
+          
+          const response = await client.send(queryCommand);
+          count += response.Count || 0;
+          lastKey = response.LastEvaluatedKey;
+        } while (lastKey);
+        
+        await RedisCache.set(cacheKey, count, 'dashboard');
+        return count;
+      } catch (gsiError) {
+        // GSI might not exist yet, fall back to Scan
+        console.warn('⚠️  GSI user_type-created_at-index not available, using Scan fallback:', gsiError.message);
+      }
+      
+      // Fallback to Scan if GSI doesn't exist
       let lastKey = null;
       let count = 0;
-
       do {
         const params = {
           TableName: TABLE_NAME,
           FilterExpression: 'user_type = :userType',
-          ExpressionAttributeValues: {
-            ':userType': userType
-          },
+          ExpressionAttributeValues: { ':userType': userType },
           Select: 'COUNT'
         };
-
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-        }
-
+        if (lastKey) params.ExclusiveStartKey = lastKey;
         const command = new ScanCommand(params);
         const response = await client.send(command);
-
-        // With Select: "COUNT", response.Count contains the count
         count += response.Count || 0;
-
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
-
+      await RedisCache.set(cacheKey, count, 'dashboard');
       return count;
     } catch (err) {
       throw err;
@@ -731,25 +787,55 @@ class User {
   // appType: 'vendor_app' for N, R, S, SR, D | 'customer_app' for C
   static async countByUserTypeV2(userType, appType = null) {
     try {
+      if (!appType) {
+        appType = userType === 'C' ? 'customer_app' : 'vendor_app';
+      }
+      const cacheKey = `${USER_COUNT_V2_PREFIX}${userType}:${appType}`;
+      const cached = await RedisCache.get(cacheKey);
+      if (cached !== null && cached !== undefined && typeof cached === 'number') {
+        return cached;
+      }
       const client = getDynamoDBClient();
+      
+      // Try using GSI first (user_type-app_type-index)
+      try {
+        let lastKey = null;
+        let count = 0;
+        do {
+          const queryCommand = new QueryCommand({
+            TableName: TABLE_NAME,
+            IndexName: 'user_type-app_type-index',
+            KeyConditionExpression: 'user_type = :userType AND app_type = :appType',
+            FilterExpression: 'app_version = :appVersion AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+            ExpressionAttributeValues: {
+              ':userType': userType,
+              ':appType': appType,
+              ':appVersion': 'v2',
+              ':deleted': 2
+            },
+            Select: 'COUNT'
+          });
+          
+          if (lastKey) {
+            queryCommand.ExclusiveStartKey = lastKey;
+          }
+          
+          const response = await client.send(queryCommand);
+          count += response.Count || 0;
+          lastKey = response.LastEvaluatedKey;
+        } while (lastKey);
+        
+        await RedisCache.set(cacheKey, count, 'dashboard');
+        return count;
+      } catch (gsiError) {
+        // GSI might not exist yet, fall back to Scan
+        console.warn('⚠️  GSI user_type-app_type-index not available, using Scan fallback:', gsiError.message);
+      }
+      
+      // Fallback to Scan if GSI doesn't exist
       let lastKey = null;
       let count = 0;
-      let totalScanned = 0;
-
-      // Determine app_type based on user_type if not provided
-      if (!appType) {
-        if (userType === 'C') {
-          appType = 'customer_app';
-        } else {
-          // R, S, SR, D are all vendor_app
-          appType = 'vendor_app';
-        }
-      }
-
-      console.log(`📊 [countByUserTypeV2] Counting users: user_type=${userType}, app_version=v2, app_type=${appType}`);
-
       do {
-        // Filter: user_type must match, app_version must be 'v2', app_type must match, and not deleted
         const params = {
           TableName: TABLE_NAME,
           FilterExpression: 'user_type = :userType AND app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
@@ -761,25 +847,13 @@ class User {
           },
           Select: 'COUNT'
         };
-
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-        }
-
+        if (lastKey) params.ExclusiveStartKey = lastKey;
         const command = new ScanCommand(params);
         const response = await client.send(command);
-
-        // With Select: "COUNT", response.Count contains the count
-        const batchCount = response.Count || 0;
-        const batchScanned = response.ScannedCount || 0;
-        count += batchCount;
-        totalScanned += batchScanned;
-
+        count += response.Count || 0;
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
-
-      console.log(`✅ [countByUserTypeV2] Completed: user_type=${userType}, app_type=${appType}, count=${count}, total_scanned=${totalScanned}`);
-
+      await RedisCache.set(cacheKey, count, 'dashboard');
       return count;
     } catch (err) {
       console.error(`❌ [countByUserTypeV2] Error for user_type ${userType}:`, err);
@@ -790,33 +864,27 @@ class User {
   // Count users by user_type and current month (optimized with Select: "COUNT")
   static async countByUserTypeAndCurrentMonth(userType) {
     try {
-      const client = getDynamoDBClient();
       const now = new Date();
       const currentMonth = now.getMonth() + 1;
       const currentYear = now.getFullYear();
-
+      const cacheKey = `${USER_COUNT_MONTH_PREFIX}${userType}:${currentYear}:${currentMonth}`;
+      const cached = await RedisCache.get(cacheKey);
+      if (cached !== null && cached !== undefined && typeof cached === 'number') {
+        return cached;
+      }
+      const client = getDynamoDBClient();
       let lastKey = null;
       let count = 0;
-
       do {
         const params = {
           TableName: TABLE_NAME,
           FilterExpression: 'user_type = :userType',
-          ExpressionAttributeValues: {
-            ':userType': userType
-          }
-          // Note: Can't use Select: "COUNT" here because we need items to filter by date
+          ExpressionAttributeValues: { ':userType': userType }
         };
-
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-        }
-
+        if (lastKey) params.ExclusiveStartKey = lastKey;
         const command = new ScanCommand(params);
         const response = await client.send(command);
-
         if (response.Items) {
-          // Filter by current month in memory
           const matching = response.Items.filter(user => {
             if (!user.created_at) return false;
             const userDate = new Date(user.created_at);
@@ -824,10 +892,9 @@ class User {
           });
           count += matching.length;
         }
-
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
-
+      await RedisCache.set(cacheKey, count, 'dashboard');
       return count;
     } catch (err) {
       throw err;
@@ -838,6 +905,48 @@ class User {
   static async findWithFcmTokenByUserType(userType) {
     try {
       const client = getDynamoDBClient();
+      
+      // Try using GSI first (user_type-created_at-index)
+      try {
+        let lastKey = null;
+        const users = [];
+        
+        do {
+          const queryCommand = new QueryCommand({
+            TableName: TABLE_NAME,
+            IndexName: 'user_type-created_at-index',
+            KeyConditionExpression: 'user_type = :userType',
+            FilterExpression: 'attribute_exists(fcm_token)',
+            ExpressionAttributeValues: {
+              ':userType': userType
+            }
+          });
+          
+          if (lastKey) {
+            queryCommand.ExclusiveStartKey = lastKey;
+          }
+          
+          const response = await client.send(queryCommand);
+          
+          if (response.Items) {
+            // Filter out users without fcm_token (attribute_exists might not work as expected)
+            const withToken = response.Items.filter(u => u.fcm_token);
+            users.push(...withToken.map(u => ({
+              id: u.id,
+              name: u.name
+            })));
+          }
+          
+          lastKey = response.LastEvaluatedKey;
+        } while (lastKey);
+        
+        return users;
+      } catch (gsiError) {
+        // GSI might not exist yet, fall back to Scan
+        console.warn('⚠️  GSI user_type-created_at-index not available, using Scan fallback:', gsiError.message);
+      }
+      
+      // Fallback to Scan if GSI doesn't exist
       let lastKey = null;
       const users = [];
 
@@ -878,60 +987,38 @@ class User {
   // Get monthly count by user_type
   static async getMonthlyCountByUserType(userType) {
     try {
-      const client = getDynamoDBClient();
       const currentYear = new Date().getFullYear();
+      const cacheKey = `${USER_MONTHLY_PREFIX}${userType}:${currentYear}`;
+      const cached = await RedisCache.get(cacheKey);
+      if (cached !== null && cached !== undefined && Array.isArray(cached) && cached.length === 12) {
+        return cached;
+      }
+      const client = getDynamoDBClient();
       const monthlyCounts = new Array(12).fill(0);
-      let totalScanned = 0;
-      let totalMatched = 0;
-
-      console.log(`📊 [getMonthlyCountByUserType] Starting query for user_type: ${userType}, year: ${currentYear}`);
-
       let lastKey = null;
-
       do {
         const params = {
           TableName: TABLE_NAME,
           FilterExpression: 'user_type = :userType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
-          ExpressionAttributeValues: {
-            ':userType': userType,
-            ':deleted': 2
-          },
-          ProjectionExpression: 'created_at' // Only get needed field
+          ExpressionAttributeValues: { ':userType': userType, ':deleted': 2 },
+          ProjectionExpression: 'created_at'
         };
-
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-        }
-
+        if (lastKey) params.ExclusiveStartKey = lastKey;
         const command = new ScanCommand(params);
         const response = await client.send(command);
-
-        // Process items incrementally instead of storing all
-        if (response.Items) {
-          totalScanned += response.Items.length;
-          response.Items.forEach(user => {
-            if (user.created_at) {
-              try {
-              const date = new Date(user.created_at);
-              if (date.getFullYear() === currentYear) {
-                const month = date.getMonth(); // 0-11
-                monthlyCounts[month]++;
-                  totalMatched++;
-                }
-              } catch (dateError) {
-                console.warn(`⚠️ [getMonthlyCountByUserType] Invalid date format: ${user.created_at}`);
-              }
+        (response.Items || []).forEach(user => {
+          if (!user.created_at) return;
+          try {
+            const date = new Date(user.created_at);
+            if (date.getFullYear() === currentYear) {
+              const month = date.getMonth();
+              monthlyCounts[month]++;
             }
-          });
-        }
-
+          } catch (_) {}
+        });
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
-
-      console.log(`✅ [getMonthlyCountByUserType] Completed for user_type: ${userType}`);
-      console.log(`   Total scanned: ${totalScanned}, Total matched (current year): ${totalMatched}`);
-      console.log(`   Monthly counts: [${monthlyCounts.join(', ')}]`);
-
+      await RedisCache.set(cacheKey, monthlyCounts, 'dashboard');
       return monthlyCounts;
     } catch (err) {
       console.error(`❌ [getMonthlyCountByUserType] Error for user_type ${userType}:`, err);
@@ -943,28 +1030,66 @@ class User {
   // appType: 'vendor_app' for N, R, S, SR, D | 'customer_app' for C
   static async getMonthlyCountByUserTypeV2(userType, appType = null) {
     try {
-      const client = getDynamoDBClient();
-      const currentYear = new Date().getFullYear();
-      const monthlyCounts = new Array(12).fill(0);
-      let totalScanned = 0;
-      let totalMatched = 0;
-
-      // Determine app_type based on user_type if not provided
       if (!appType) {
-        if (userType === 'C') {
-          appType = 'customer_app';
-        } else {
-          // N, R, S, SR, D are all vendor_app
-          appType = 'vendor_app';
-        }
+        appType = userType === 'C' ? 'customer_app' : 'vendor_app';
       }
-
-      console.log(`📊 [getMonthlyCountByUserTypeV2] Starting query for user_type: ${userType}, app_version: v2, app_type: ${appType}, year: ${currentYear}`);
-
+      const currentYear = new Date().getFullYear();
+      const cacheKey = `user:monthly_v2:${userType}:${appType}:${currentYear}`;
+      const cached = await RedisCache.get(cacheKey);
+      if (cached !== null && cached !== undefined && Array.isArray(cached) && cached.length === 12) {
+        return cached;
+      }
+      const client = getDynamoDBClient();
+      const monthlyCounts = new Array(12).fill(0);
+      
+      // Try using GSI first (user_type-app_type-index)
+      try {
+        let lastKey = null;
+        do {
+          const queryCommand = new QueryCommand({
+            TableName: TABLE_NAME,
+            IndexName: 'user_type-app_type-index',
+            KeyConditionExpression: 'user_type = :userType AND app_type = :appType',
+            FilterExpression: 'app_version = :appVersion AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+            ExpressionAttributeValues: {
+              ':userType': userType,
+              ':appType': appType,
+              ':appVersion': 'v2',
+              ':deleted': 2
+            },
+            ProjectionExpression: 'created_at'
+          });
+          
+          if (lastKey) {
+            queryCommand.ExclusiveStartKey = lastKey;
+          }
+          
+          const response = await client.send(queryCommand);
+          
+          (response.Items || []).forEach(user => {
+            if (!user.created_at) return;
+            try {
+              const date = new Date(user.created_at);
+              if (date.getFullYear() === currentYear) {
+                const month = date.getMonth();
+                monthlyCounts[month]++;
+              }
+            } catch (_) {}
+          });
+          
+          lastKey = response.LastEvaluatedKey;
+        } while (lastKey);
+        
+        await RedisCache.set(cacheKey, monthlyCounts, 'dashboard');
+        return monthlyCounts;
+      } catch (gsiError) {
+        // GSI might not exist yet, fall back to Scan
+        console.warn('⚠️  GSI user_type-app_type-index not available, using Scan fallback:', gsiError.message);
+      }
+      
+      // Fallback to Scan if GSI doesn't exist
       let lastKey = null;
-
       do {
-        // Filter: user_type must match, app_version must be 'v2', app_type must match, and not deleted
         const params = {
           TableName: TABLE_NAME,
           FilterExpression: 'user_type = :userType AND app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
@@ -974,42 +1099,24 @@ class User {
             ':appType': appType,
             ':deleted': 2
           },
-          ProjectionExpression: 'created_at' // Only get needed field
+          ProjectionExpression: 'created_at'
         };
-
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-        }
-
+        if (lastKey) params.ExclusiveStartKey = lastKey;
         const command = new ScanCommand(params);
         const response = await client.send(command);
-
-        // Process items incrementally instead of storing all
-        if (response.Items) {
-          totalScanned += response.Items.length;
-          response.Items.forEach(user => {
-            if (user.created_at) {
-              try {
-                const date = new Date(user.created_at);
-                if (date.getFullYear() === currentYear) {
-                  const month = date.getMonth(); // 0-11
-                  monthlyCounts[month]++;
-                  totalMatched++;
-                }
-              } catch (dateError) {
-                console.warn(`⚠️ [getMonthlyCountByUserTypeV2] Invalid date format: ${user.created_at}`);
-              }
+        (response.Items || []).forEach(user => {
+          if (!user.created_at) return;
+          try {
+            const date = new Date(user.created_at);
+            if (date.getFullYear() === currentYear) {
+              const month = date.getMonth();
+              monthlyCounts[month]++;
             }
-          });
-        }
-
+          } catch (_) {}
+        });
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
-
-      console.log(`✅ [getMonthlyCountByUserTypeV2] Completed for user_type: ${userType}, app_type: ${appType}`);
-      console.log(`   Total scanned: ${totalScanned}, Total matched (current year, v2): ${totalMatched}`);
-      console.log(`   Monthly counts: [${monthlyCounts.join(', ')}]`);
-
+      await RedisCache.set(cacheKey, monthlyCounts, 'dashboard');
       return monthlyCounts;
     } catch (err) {
       console.error(`❌ [getMonthlyCountByUserTypeV2] Error for user_type ${userType}:`, err);
@@ -1991,13 +2098,56 @@ class User {
     try {
       const client = getDynamoDBClient();
       const allUsers = [];
+      
+      // Convert date strings to ISO strings for DynamoDB comparison
+      const startDateTime = new Date(`${startDate} 00:00:00`).toISOString();
+      const endDateTime = new Date(`${endDate} 23:59:59`).toISOString();
+
+      console.log(`🔍 Querying users for user_type = "${userType}" between ${startDate} and ${endDate}...`);
+
+      // Try using GSI first (user_type-created_at-index)
+      try {
+        let lastKey = null;
+        
+        do {
+          const queryCommand = new QueryCommand({
+            TableName: TABLE_NAME,
+            IndexName: 'user_type-created_at-index',
+            KeyConditionExpression: 'user_type = :userType AND created_at BETWEEN :startDate AND :endDate',
+            FilterExpression: '(attribute_not_exists(del_status) OR del_status <> :deleted)',
+            ExpressionAttributeValues: {
+              ':userType': userType,
+              ':startDate': startDateTime,
+              ':endDate': endDateTime,
+              ':deleted': 2
+            },
+            ScanIndexForward: false // Sort descending by created_at
+          });
+          
+          if (lastKey) {
+            queryCommand.ExclusiveStartKey = lastKey;
+          }
+          
+          const response = await client.send(queryCommand);
+          
+          if (response.Items) {
+            allUsers.push(...response.Items);
+          }
+          
+          lastKey = response.LastEvaluatedKey;
+        } while (lastKey);
+        
+        console.log(`✅ Found ${allUsers.length} users of type "${userType}" in date range (using GSI)`);
+        return allUsers;
+      } catch (gsiError) {
+        // GSI might not exist yet, fall back to Scan
+        console.warn('⚠️  GSI user_type-created_at-index not available, using Scan fallback:', gsiError.message);
+      }
+
+      // Fallback to Scan if GSI doesn't exist
       let lastKey = null;
-
-      // Convert date strings to Date objects for comparison
-      const startDateTime = new Date(`${startDate} 00:00:00`);
-      const endDateTime = new Date(`${endDate} 23:59:59`);
-
-      console.log(`🔍 Scanning users for user_type = "${userType}" between ${startDate} and ${endDate}...`);
+      const startDateTimeObj = new Date(`${startDate} 00:00:00`);
+      const endDateTimeObj = new Date(`${endDate} 23:59:59`);
 
       do {
         const params = {
@@ -2021,7 +2171,7 @@ class User {
           const filteredUsers = response.Items.filter(user => {
             if (!user.created_at) return false;
             const userDate = new Date(user.created_at);
-            return userDate >= startDateTime && userDate <= endDateTime;
+            return userDate >= startDateTimeObj && userDate <= endDateTimeObj;
           });
           allUsers.push(...filteredUsers);
         }
@@ -2049,6 +2199,40 @@ class User {
   static async countV2CustomerAppUsers() {
     try {
       const client = getDynamoDBClient();
+      
+      // Try using GSI first (app_version-app_type-index)
+      try {
+        let lastKey = null;
+        let count = 0;
+        
+        do {
+          const queryCommand = new QueryCommand({
+            TableName: TABLE_NAME,
+            IndexName: 'app_version-app_type-index',
+            KeyConditionExpression: 'app_version = :appVersion AND app_type = :appType',
+            ExpressionAttributeValues: {
+              ':appVersion': 'v2',
+              ':appType': 'customer_app'
+            },
+            Select: 'COUNT'
+          });
+          
+          if (lastKey) {
+            queryCommand.ExclusiveStartKey = lastKey;
+          }
+          
+          const response = await client.send(queryCommand);
+          count += response.Count || 0;
+          lastKey = response.LastEvaluatedKey;
+        } while (lastKey);
+        
+        return count;
+      } catch (gsiError) {
+        // GSI might not exist yet, fall back to Scan
+        console.warn('⚠️  GSI app_version-app_type-index not available, using Scan fallback:', gsiError.message);
+      }
+      
+      // Fallback to Scan if GSI doesn't exist
       let lastKey = null;
       let count = 0;
 
@@ -2085,6 +2269,40 @@ class User {
   static async countV2VendorAppUsers() {
     try {
       const client = getDynamoDBClient();
+      
+      // Try using GSI first (app_version-app_type-index)
+      try {
+        let lastKey = null;
+        let count = 0;
+        
+        do {
+          const queryCommand = new QueryCommand({
+            TableName: TABLE_NAME,
+            IndexName: 'app_version-app_type-index',
+            KeyConditionExpression: 'app_version = :appVersion AND app_type = :appType',
+            ExpressionAttributeValues: {
+              ':appVersion': 'v2',
+              ':appType': 'vendor_app'
+            },
+            Select: 'COUNT'
+          });
+          
+          if (lastKey) {
+            queryCommand.ExclusiveStartKey = lastKey;
+          }
+          
+          const response = await client.send(queryCommand);
+          count += response.Count || 0;
+          lastKey = response.LastEvaluatedKey;
+        } while (lastKey);
+        
+        return count;
+      } catch (gsiError) {
+        // GSI might not exist yet, fall back to Scan
+        console.warn('⚠️  GSI app_version-app_type-index not available, using Scan fallback:', gsiError.message);
+      }
+      
+      // Fallback to Scan if GSI doesn't exist
       let lastKey = null;
       let count = 0;
 

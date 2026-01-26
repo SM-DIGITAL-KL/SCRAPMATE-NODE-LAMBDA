@@ -1,7 +1,9 @@
 const { getDynamoDBClient } = require('../config/dynamodb');
 const { GetCommand, PutCommand, UpdateCommand, ScanCommand, QueryCommand } = require('@aws-sdk/lib-dynamodb');
+const RedisCache = require('../utils/redisCache');
 
 const TABLE_NAME = 'addresses';
+const ADDRESS_BY_CUSTOMER_PREFIX = 'address:by_customer:';
 
 class Address {
   // Find address by ID
@@ -24,62 +26,90 @@ class Address {
   // Find addresses by customer ID
   static async findByCustomerId(customerId) {
     try {
+      const cid = typeof customerId === 'string' && !isNaN(customerId) ? parseInt(customerId) : customerId;
+      const cacheKey = `${ADDRESS_BY_CUSTOMER_PREFIX}${cid}`;
+      const cached = await RedisCache.get(cacheKey);
+      if (cached !== null && cached !== undefined && Array.isArray(cached)) {
+        return cached;
+      }
+
       const client = getDynamoDBClient();
-      
       if (!client) {
         throw new Error('DynamoDB client is not initialized');
       }
-      
-      // Try GSI query first if it exists
+
+      let activeAddresses = [];
       try {
         const command = new QueryCommand({
           TableName: TABLE_NAME,
-          IndexName: 'customer_id-index', // Assuming GSI exists
+          IndexName: 'customer_id-index',
           KeyConditionExpression: 'customer_id = :customerId',
-          FilterExpression: 'attribute_not_exists(del_status) OR del_status <> :deleted',
+          FilterExpression: 'attribute_not_exists(#del) OR #del <> :deleted',
+          ExpressionAttributeNames: { '#del': 'del_status' },
           ExpressionAttributeValues: {
-            ':customerId': typeof customerId === 'string' && !isNaN(customerId) ? parseInt(customerId) : customerId,
+            ':customerId': cid,
             ':deleted': 0
           }
         });
-
         const response = await client.send(command);
-        // Filter out soft-deleted addresses (del_status = 0)
-        const activeAddresses = (response.Items || []).filter(item => 
-          !item.del_status || item.del_status !== 0
-        );
-        return activeAddresses;
+        activeAddresses = (response.Items || []).filter(item => !item.del_status || item.del_status !== 0);
       } catch (gsiErr) {
-        // If GSI doesn't exist, fall back to scan (less efficient)
         console.warn('GSI query failed, falling back to scan:', gsiErr.message);
-        
-        // Ensure client is still available
         const scanClient = getDynamoDBClient();
-        if (!scanClient) {
-          throw new Error('DynamoDB client is not initialized');
-        }
-        
+        if (!scanClient) throw new Error('DynamoDB client is not initialized');
         const command = new ScanCommand({
           TableName: TABLE_NAME,
-          FilterExpression: 'customer_id = :customerId AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
-          ExpressionAttributeValues: {
-            ':customerId': typeof customerId === 'string' && !isNaN(customerId) ? parseInt(customerId) : customerId,
-            ':deleted': 0
-          }
+          FilterExpression: 'customer_id = :customerId AND (attribute_not_exists(#del) OR #del <> :deleted)',
+          ExpressionAttributeNames: { '#del': 'del_status' },
+          ExpressionAttributeValues: { ':customerId': cid, ':deleted': 0 }
         });
-
         const response = await scanClient.send(command);
-        // Filter out soft-deleted addresses (del_status = 0) as additional safety
-        const activeAddresses = (response.Items || []).filter(item => 
-          !item.del_status || item.del_status !== 0
-        );
-        return activeAddresses;
+        activeAddresses = (response.Items || []).filter(item => !item.del_status || item.del_status !== 0);
       }
+      await RedisCache.set(cacheKey, activeAddresses, 'orders');
+      return activeAddresses;
     } catch (err) {
       console.error('Address.findByCustomerId error:', err);
       console.error('Error stack:', err.stack);
       throw err;
     }
+  }
+
+  /**
+   * Bulk fetch addresses by customer_ids (and/or user_ids as customer_id) with a single Scan (RCU-optimized).
+   * Use for /admin/customers enrichment instead of N × findByCustomerId.
+   * @param {Set<number>|Array<number>} ids - customer_id or user_id values to match
+   * @returns {Promise<Map<number, Array>>} Map of customerId -> addresses[]
+   */
+  static async findByCustomerIdsBulk(ids) {
+    const map = new Map();
+    const idSet = new Set(Array.isArray(ids) ? ids : [...ids].map(i => typeof i === 'string' && !isNaN(i) ? parseInt(i) : i));
+    if (idSet.size === 0) return map;
+    const client = getDynamoDBClient();
+    let lastKey = null;
+    do {
+      const params = {
+        TableName: TABLE_NAME,
+        FilterExpression: 'attribute_not_exists(#del) OR #del <> :deleted',
+        ExpressionAttributeNames: { '#del': 'del_status' },
+        ExpressionAttributeValues: { ':deleted': 0 }
+      };
+      if (lastKey) params.ExclusiveStartKey = lastKey;
+      const command = new ScanCommand(params);
+      const response = await client.send(command);
+      for (const a of response.Items || []) {
+        if (a.del_status === 0) continue;
+        const cid = a.customer_id != null ? (typeof a.customer_id === 'string' && !isNaN(a.customer_id) ? parseInt(a.customer_id) : a.customer_id) : null;
+        if (cid == null || !idSet.has(cid)) continue;
+        if (!map.has(cid)) map.set(cid, []);
+        map.get(cid).push(a);
+      }
+      lastKey = response.LastEvaluatedKey;
+    } while (lastKey);
+    for (const arr of map.values()) {
+      arr.sort((x, y) => new Date(y.created_at || y.updated_at || 0).getTime() - new Date(x.created_at || x.updated_at || 0).getTime());
+    }
+    return map;
   }
 
   // Create a new address
@@ -163,10 +193,23 @@ class Address {
       });
 
       await client.send(command);
+      if (address.customer_id != null) Address.invalidateAddressCache(address.customer_id).catch(() => {});
       return address;
     } catch (err) {
       console.error('Address.create error:', err);
       throw err;
+    }
+  }
+
+  /** Invalidate Redis cache for addresses by customer (call after create/update/delete). */
+  static async invalidateAddressCache(customerId) {
+    const cid = customerId == null ? null : (typeof customerId === 'string' && !isNaN(customerId) ? parseInt(customerId) : customerId);
+    if (cid == null) return false;
+    try {
+      await RedisCache.delete(`${ADDRESS_BY_CUSTOMER_PREFIX}${cid}`);
+      return true;
+    } catch (e) {
+      return false;
     }
   }
 
@@ -235,7 +278,9 @@ class Address {
       });
 
       const response = await client.send(command);
-      return response.Attributes;
+      const attrs = response.Attributes;
+      if (attrs && attrs.customer_id != null) Address.invalidateAddressCache(attrs.customer_id).catch(() => {});
+      return attrs;
     } catch (err) {
       console.error('Address.update error:', err);
       throw err;
@@ -255,6 +300,7 @@ class Address {
       if (!response.Item) {
         throw new Error('Address not found');
       }
+      const customerId = response.Item.customer_id;
 
       // For soft delete, you might want to add a del_status field
       // For now, we'll do a hard delete
@@ -274,6 +320,7 @@ class Address {
       });
 
       const deleteResponse = await client.send(deleteCommand);
+      if (customerId != null) Address.invalidateAddressCache(customerId).catch(() => {});
       return deleteResponse.Attributes;
     } catch (err) {
       console.error('Address.delete error:', err);

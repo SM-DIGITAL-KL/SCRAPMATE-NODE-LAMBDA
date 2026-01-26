@@ -1055,22 +1055,21 @@ class V2OrderController {
 
       let allOrders = [];
 
-      // Get unassigned orders (status = 1, shop_id = null)
-      const unassignedCommand = new ScanCommand({
-        TableName: 'orders',
-        FilterExpression: '#status = :status1 AND (shop_id = :null OR attribute_not_exists(shop_id))',
-        ExpressionAttributeNames: {
-          '#status': 'status'
-        },
-        ExpressionAttributeValues: {
-          ':status1': 1,
-          ':null': null
+      // OPTIMIZED: Use Order.findByStatus() which uses GSI instead of Scan
+      // Get all orders with status = 1 (available pickup requests)
+      let lastKey = null;
+      let status1Orders = [];
+      do {
+        const result = await Order.findByStatus(1, 1000, lastKey);
+        if (result.items) {
+          status1Orders.push(...result.items);
         }
-      });
+        lastKey = result.lastEvaluatedKey;
+      } while (lastKey);
 
-      const unassignedResponse = await client.send(unassignedCommand);
-      allOrders = unassignedResponse.Items || [];
-      console.log(`📦 Found ${allOrders.length} unassigned orders (status=1, shop_id=null)`);
+      // Filter for unassigned orders (shop_id = null)
+      allOrders = status1Orders.filter(order => !order.shop_id || order.shop_id === null);
+      console.log(`📦 Found ${allOrders.length} unassigned orders (status=1, shop_id=null) out of ${status1Orders.length} total status=1 orders`);
 
       // Safety check: Log any orders that somehow have status != 1 (shouldn't happen with FilterExpression)
       allOrders.forEach(order => {
@@ -1080,35 +1079,24 @@ class V2OrderController {
         }
       });
 
-      // OPTIMIZED: Get orders assigned to this vendor's shop(s) in a single Scan instead of N Scans
+      // OPTIMIZED: Get orders assigned to this vendor's shop(s) using Order.findByShopId()
       // Status 1 with shop_id = auto-assigned but pending acceptance
       // For SR users, check all their shops (B2C + B2B) in one query
       if (vendorShopIds.length > 0) {
         const existingOrderIds = new Set(allOrders.map(o => o.id));
         
-        // OPTIMIZATION: Use IN operator to get all shop orders in a single Scan
-        // Build FilterExpression with IN operator for all shop IDs
-        const shopIdPlaceholders = vendorShopIds.map((_, idx) => `:shopId${idx}`);
-        const shopIdValues = {};
-        vendorShopIds.forEach((shopId, idx) => {
-          shopIdValues[`:shopId${idx}`] = shopId;
-        });
-        
-        // Single Scan for all shop IDs
-        const assignedPendingCommand = new ScanCommand({
-          TableName: 'orders',
-          FilterExpression: `#status = :status1 AND shop_id IN (${shopIdPlaceholders.join(', ')})`,
-          ExpressionAttributeNames: {
-            '#status': 'status'
-          },
-          ExpressionAttributeValues: {
-            ':status1': 1,
-            ...shopIdValues
+        // OPTIMIZATION: Use Order.findByShopId() which uses GSI instead of Scan
+        // Query each shop separately (can be parallelized in future)
+        const assignedPendingOrders = [];
+        for (const shopId of vendorShopIds) {
+          try {
+            const shopOrders = await Order.findByShopId(shopId, 1, 0, 1000); // status=1, no offset, limit 1000
+            assignedPendingOrders.push(...shopOrders);
+          } catch (shopErr) {
+            console.warn(`⚠️  Error fetching orders for shop ${shopId}:`, shopErr.message);
           }
-        });
-
-        const assignedPendingResponse = await client.send(assignedPendingCommand);
-        const assignedPendingOrders = assignedPendingResponse.Items || [];
+        }
+        
         console.log(`📦 Found ${assignedPendingOrders.length} orders assigned to vendor shops (status=1, shop_ids: ${vendorShopIds.join(', ')}) - scheduled, pending acceptance`);
 
         // Safety check: Log any orders that somehow have status != 1

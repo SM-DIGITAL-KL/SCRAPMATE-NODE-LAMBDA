@@ -1,7 +1,10 @@
 const { getDynamoDBClient } = require('../config/dynamodb');
 const { GetCommand, PutCommand, UpdateCommand, ScanCommand, BatchGetCommand, BatchWriteCommand } = require('@aws-sdk/lib-dynamodb');
+const RedisCache = require('../utils/redisCache');
 
 const TABLE_NAME = 'shops';
+const SHOP_BY_USER_PREFIX = 'shop:by_user:';
+const SHOP_ALL_BY_USER_PREFIX = 'shop:all_by_user:';
 
 class Shop {
   static async findById(id) {
@@ -23,63 +26,54 @@ class Shop {
 
   static async findByUserId(userId) {
     try {
-      const client = getDynamoDBClient();
-      // DynamoDB is strict about data types - check if user_id is stored as string or number
-      // Try both string and number formats to handle inconsistent data types
       const uidNum = typeof userId === 'string' && !isNaN(userId) ? parseInt(userId) : userId;
-      const uidStr = String(userId);
+      const cacheKey = `${SHOP_BY_USER_PREFIX}${uidNum}`;
+      const cached = await RedisCache.get(cacheKey);
+      if (cached !== null && cached !== undefined) {
+        if (cached && typeof cached === 'object' && cached.__nil) return null;
+        return Array.isArray(cached) ? (cached[0] ?? null) : cached;
+      }
 
-      // Scan with pagination to find the matching shop - try number first
+      const client = getDynamoDBClient();
+      const uidStr = String(userId);
       let lastKey = null;
 
       do {
         const params = {
           TableName: TABLE_NAME,
           FilterExpression: 'user_id = :userId',
-          ExpressionAttributeValues: {
-            ':userId': uidNum
-          }
+          ExpressionAttributeValues: { ':userId': uidNum }
         };
-
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-        }
-
+        if (lastKey) params.ExclusiveStartKey = lastKey;
         const command = new ScanCommand(params);
         const response = await client.send(command);
-
         if (response.Items && response.Items.length > 0) {
-          return response.Items[0];
+          const shop = response.Items[0];
+          await RedisCache.set(cacheKey, shop, 'orders');
+          return shop;
         }
-
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
 
-      // If not found with number, try string
       lastKey = null;
       do {
         const params = {
           TableName: TABLE_NAME,
           FilterExpression: 'user_id = :userId',
-          ExpressionAttributeValues: {
-            ':userId': uidStr
-          }
+          ExpressionAttributeValues: { ':userId': uidStr }
         };
-
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-        }
-
+        if (lastKey) params.ExclusiveStartKey = lastKey;
         const command = new ScanCommand(params);
         const response = await client.send(command);
-
         if (response.Items && response.Items.length > 0) {
-          return response.Items[0];
+          const shop = response.Items[0];
+          await RedisCache.set(cacheKey, shop, 'orders');
+          return shop;
         }
-
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
 
+      await RedisCache.set(cacheKey, { __nil: true }, 'orders');
       return null;
     } catch (err) {
       console.error('Shop.findByUserId error:', err);
@@ -94,75 +88,57 @@ class Shop {
    */
   static async findAllByUserId(userId) {
     try {
-      const client = getDynamoDBClient();
-      // DynamoDB is strict about data types - check if user_id is stored as string or number
-      // Try both string and number formats to handle inconsistent data types
       const uidNum = typeof userId === 'string' && !isNaN(userId) ? parseInt(userId) : userId;
-      const uidStr = String(userId);
+      const cacheKey = `${SHOP_ALL_BY_USER_PREFIX}${uidNum}`;
+      const cached = await RedisCache.get(cacheKey);
+      if (cached !== null && cached !== undefined && Array.isArray(cached)) {
+        return cached;
+      }
 
+      const client = getDynamoDBClient();
+      const uidStr = String(userId);
       const allShops = [];
       let lastKey = null;
-      const foundShopIds = new Set(); // Track found shop IDs to avoid duplicates
+      const foundShopIds = new Set();
 
-      // First, try querying with number type
       do {
         const params = {
           TableName: TABLE_NAME,
           FilterExpression: 'user_id = :userId',
-          ExpressionAttributeValues: {
-            ':userId': uidNum
-          }
+          ExpressionAttributeValues: { ':userId': uidNum }
         };
-
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-        }
-
+        if (lastKey) params.ExclusiveStartKey = lastKey;
         const command = new ScanCommand(params);
         const response = await client.send(command);
-
-        if (response.Items && response.Items.length > 0) {
-          response.Items.forEach(shop => {
-            if (!foundShopIds.has(shop.id)) {
-              allShops.push(shop);
-              foundShopIds.add(shop.id);
-            }
-          });
-        }
-
+        (response.Items || []).forEach(shop => {
+          if (!foundShopIds.has(shop.id)) {
+            allShops.push(shop);
+            foundShopIds.add(shop.id);
+          }
+        });
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
 
-      // Also try querying with string type (in case user_id is stored as string)
       lastKey = null;
       do {
         const params = {
           TableName: TABLE_NAME,
           FilterExpression: 'user_id = :userId',
-          ExpressionAttributeValues: {
-            ':userId': uidStr
-          }
+          ExpressionAttributeValues: { ':userId': uidStr }
         };
-
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-        }
-
+        if (lastKey) params.ExclusiveStartKey = lastKey;
         const command = new ScanCommand(params);
         const response = await client.send(command);
-
-        if (response.Items && response.Items.length > 0) {
-          response.Items.forEach(shop => {
-            if (!foundShopIds.has(shop.id)) {
-              allShops.push(shop);
-              foundShopIds.add(shop.id);
-            }
-          });
-        }
-
+        (response.Items || []).forEach(shop => {
+          if (!foundShopIds.has(shop.id)) {
+            allShops.push(shop);
+            foundShopIds.add(shop.id);
+          }
+        });
         lastKey = response.LastEvaluatedKey;
       } while (lastKey);
 
+      await RedisCache.set(cacheKey, allShops, 'orders');
       return allShops;
     } catch (err) {
       console.error('Shop.findAllByUserId error:', err);
@@ -375,6 +351,7 @@ class Shop {
       });
 
       await client.send(command);
+      if (cleanedShop.user_id != null) Shop.invalidateShopCache(cleanedShop.user_id).catch(() => {});
       return cleanedShop;
     } catch (err) {
       throw err;
@@ -461,13 +438,29 @@ class Shop {
         Key: { id: shopId },
         UpdateExpression: `SET ${updateExpressions.join(', ')}`,
         ExpressionAttributeNames: expressionAttributeNames,
-        ExpressionAttributeValues: expressionAttributeValues
+        ExpressionAttributeValues: expressionAttributeValues,
+        ReturnValues: 'ALL_OLD'
       });
 
-      await client.send(command);
+      const response = await client.send(command);
+      const attrs = response.Attributes;
+      if (attrs && attrs.user_id != null) Shop.invalidateShopCache(attrs.user_id).catch(() => {});
       return { affectedRows: 1 };
     } catch (err) {
       throw err;
+    }
+  }
+
+  /** Invalidate Redis cache for shop-by-user (call after create/update). */
+  static async invalidateShopCache(userId) {
+    const uid = userId == null ? null : (typeof userId === 'string' && !isNaN(userId) ? parseInt(userId) : userId);
+    if (uid == null) return false;
+    try {
+      await RedisCache.delete(`${SHOP_BY_USER_PREFIX}${uid}`);
+      await RedisCache.delete(`${SHOP_ALL_BY_USER_PREFIX}${uid}`);
+      return true;
+    } catch (e) {
+      return false;
     }
   }
 
@@ -661,6 +654,32 @@ class Shop {
       console.error('Shop.findByUserIds error:', err);
       throw err;
     }
+  }
+
+  /**
+   * Bulk fetch shops by user_ids with a single Scan (RCU-optimized).
+   * Use for B2B/B2C/new/delivery user-list enrichment instead of N × findByUserId.
+   * @param {Array<string|number>} userIds
+   * @returns {Promise<Map<number, object>>} Map of userId -> shop (first per user)
+   */
+  static async findByUserIdsBulk(userIds) {
+    const map = new Map();
+    if (!userIds || userIds.length === 0) return map;
+    const idSet = new Set(userIds.map(uid => typeof uid === 'string' && !isNaN(uid) ? parseInt(uid) : uid));
+    const client = getDynamoDBClient();
+    let lastKey = null;
+    do {
+      const params = { TableName: TABLE_NAME };
+      if (lastKey) params.ExclusiveStartKey = lastKey;
+      const command = new ScanCommand(params);
+      const response = await client.send(command);
+      for (const s of response.Items || []) {
+        const uid = s.user_id != null ? (typeof s.user_id === 'string' && !isNaN(s.user_id) ? parseInt(s.user_id) : s.user_id) : null;
+        if (uid != null && idSet.has(uid) && !map.has(uid)) map.set(uid, s);
+      }
+      lastKey = response.LastEvaluatedKey;
+    } while (lastKey);
+    return map;
   }
 
   static async batchCreate(shops) {
