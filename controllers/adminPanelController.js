@@ -4510,41 +4510,89 @@ class AdminPanelController {
   }
 
   // V2 User Types Dashboard (R, S, SR, D, C)
-  // No caching - always fetch fresh data from database
+  // Optimized for fast loading (< 3 seconds)
   static async v2UserTypesDashboard(req, res) {
-    console.log('✅ AdminPanelController.v2UserTypesDashboard called (no cache)');
+    console.log('✅ AdminPanelController.v2UserTypesDashboard called (fast mode)');
 
     try {
-      // Increased timeout to 60 seconds to allow for GSI queries (which are faster but may need more time for initial setup)
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Query timeout')), 60000);
-      });
+      // Helper function to safely execute promises with timeout
+      const fastPromise = async (promise, defaultValue, label = 'Unknown', timeoutMs = 2500) => {
+        try {
+          const result = await Promise.race([
+            promise,
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error(`${label} timeout`)), timeoutMs)
+            )
+          ]);
+          return result;
+        } catch (error) {
+          // Log errors for debugging (including timeouts)
+          if (error.message.includes('timeout')) {
+            console.error(`⏰ Timeout in dashboard query [${label}] after ${timeoutMs}ms - returning default: ${defaultValue}`);
+          } else {
+            console.error(`⚠️  Error in dashboard query [${label}]:`, error.message);
+          }
+          return defaultValue;
+        }
+      };
 
-      // Get counts for each v2 user type (N, R, S, SR, D, C)
-      // Filter: app_version='v2' AND app_type='vendor_app' for N, R, S, SR, D
-      // Filter: app_version='v2' AND app_type='customer_app' for C
-      // No caching - always fetch fresh data
-      const dataPromise = Promise.all([
-        User.countByUserTypeV2('N'), // New User (v2, vendor_app)
-        User.countByUserTypeV2('R'), // Recycler (v2, vendor_app)
-        User.countByUserTypeV2('S'), // Shop (v2, vendor_app)
-        User.countByUserTypeV2('SR'), // Shop Recycler (v2, vendor_app)
-        User.countByUserTypeV2('D'), // Delivery (v2, vendor_app)
-        User.countByUserTypeV2('C'), // Customer (v2, customer_app)
-        // Get monthly counts for each type (v2 with app_type filter)
-        User.getMonthlyCountByUserTypeV2('N'),
-        User.getMonthlyCountByUserTypeV2('R'),
-        User.getMonthlyCountByUserTypeV2('S'),
-        User.getMonthlyCountByUserTypeV2('SR'),
-        User.getMonthlyCountByUserTypeV2('D'),
-        User.getMonthlyCountByUserTypeV2('C'),
-        // Get order counts
-        Order.countCustomerAppOrdersV2(), // Orders from v2 customer_app users
-        Order.countBulkOrders(), // Bulk orders (buy/sell)
-        // Get recent order details
-        Order.getCustomerAppOrdersV2(10), // Recent customer_app orders
-        Order.getBulkOrders(10) // Recent bulk orders
-      ]);
+      // Check cache first for faster response (unless bypass_cache query param is set)
+      const bypassCache = req.query.bypass_cache === 'true' || req.query.bypass_cache === '1';
+      const cacheKey = RedisCache.adminKey('v2_user_types_dashboard');
+      
+      if (!bypassCache) {
+        try {
+          const cached = await RedisCache.get(cacheKey);
+          if (cached) {
+            console.log('⚡ V2 Dashboard cache hit - returning cached data');
+            return res.json({
+              status: 'success',
+              msg: 'V2 user types dashboard data retrieved',
+              data: cached
+            });
+          }
+        } catch (cacheErr) {
+          // Continue if cache fails
+        }
+      } else {
+        console.log('🔄 Bypassing cache (bypass_cache=true) - fetching fresh data');
+      }
+
+      // Get user counts - check individual caches first for faster response
+      // These methods check cache internally, but we can also check here for even faster response
+      const getUserCount = async (userType, defaultValue) => {
+        // Check cache directly first
+        const cacheKey = `user:count_v2:${userType}:${userType === 'C' ? 'customer_app' : 'vendor_app'}`;
+        try {
+          const cached = await RedisCache.get(cacheKey);
+          if (cached !== null && cached !== undefined && typeof cached === 'number') {
+            console.log(`⚡ Cache hit for ${userType}: ${cached}`);
+            // If cached value is 0, force refresh (might be stale) - don't return 0 immediately
+            if (cached === 0) {
+              console.log(`⚠️  Cached value is 0 for ${userType}, forcing refresh (might be stale)...`);
+              // Force refresh by querying directly (don't return stale 0)
+              try {
+                const result = await fastPromise(User.countByUserTypeV2(userType), defaultValue, `UserCount-${userType}`, 8000);
+                console.log(`✅ ${userType} count result (forced refresh): ${result}`);
+                return result;
+              } catch (err) {
+                console.error(`❌ Forced refresh failed for ${userType}:`, err.message);
+                // If refresh fails, return 0 but log warning
+                return 0;
+              }
+            }
+            return cached;
+          }
+        } catch (err) {
+          // Continue to query if cache fails
+          console.log(`⚠️  Cache check failed for ${userType}, will query:`, err.message);
+        }
+        // If not cached, query with timeout (longer for critical counts)
+        console.log(`🔍 Querying ${userType} count (cache miss)...`);
+        const result = await fastPromise(User.countByUserTypeV2(userType), defaultValue, `UserCount-${userType}`, 8000);
+        console.log(`✅ ${userType} count result: ${result}`);
+        return result;
+      };
 
       const [
         newUserCount,
@@ -4552,30 +4600,87 @@ class AdminPanelController {
         shopCount,
         shopRecyclerCount,
         deliveryCount,
-        customerCount,
+        customerCount
+      ] = await Promise.all([
+        getUserCount('N', 0),
+        getUserCount('R', 0),
+        getUserCount('S', 0),
+        getUserCount('SR', 0),
+        getUserCount('D', 0),
+        getUserCount('C', 0)
+      ]);
+
+      // Get order counts and recent orders in parallel (with longer timeout for accuracy)
+      const [
+        customerAppOrdersCount,
+        bulkOrdersCount,
+        recentCustomerAppOrders,
+        recentBulkOrders
+      ] = await Promise.all([
+        fastPromise(Order.countCustomerAppOrdersV2(), 0, 'OrderCount-CustomerApp', 8000),
+        fastPromise(Order.countBulkOrders(), 0, 'OrderCount-Bulk', 8000),
+        fastPromise(Order.getCustomerAppOrdersV2(10), [], 'RecentOrders-CustomerApp', 5000),
+        fastPromise(Order.getBulkOrders(10), [], 'RecentOrders-Bulk', 5000)
+      ]);
+
+      // Get monthly counts - check cache first, then query with timeout
+      const getMonthlyCount = async (userType, defaultValue) => {
+        const currentYear = new Date().getFullYear();
+        const appType = userType === 'C' ? 'customer_app' : 'vendor_app';
+        const cacheKey = `user:monthly_v2:${userType}:${appType}:${currentYear}`;
+        try {
+          const cached = await RedisCache.get(cacheKey);
+          if (cached !== null && cached !== undefined && Array.isArray(cached) && cached.length === 12) {
+            // Check if cached data has any non-zero values (not empty)
+            const hasData = cached.some(count => count > 0);
+            if (hasData) {
+              console.log(`⚡ Monthly cache hit for ${userType} (has data)`);
+              return cached;
+            } else {
+              console.log(`⚠️  Monthly cache for ${userType} is empty, refreshing...`);
+            }
+          }
+        } catch (err) {
+          // Continue to query if cache fails
+        }
+        // If not cached or empty, query with timeout
+        return fastPromise(User.getMonthlyCountByUserTypeV2(userType), defaultValue, `MonthlyCount-${userType}`, 3000);
+      };
+
+      // Get monthly counts in parallel - wait up to 3 seconds
+      const [
         newUserMonthly,
         recyclerMonthly,
         shopMonthly,
         shopRecyclerMonthly,
         deliveryMonthly,
-        customerMonthly,
-        customerAppOrdersCount,
-        bulkOrdersCount,
-        recentCustomerAppOrders,
-        recentBulkOrders
-      ] = await Promise.race([dataPromise, timeoutPromise]);
+        customerMonthly
+      ] = await Promise.race([
+        Promise.all([
+          getMonthlyCount('N', []),
+          getMonthlyCount('R', []),
+          getMonthlyCount('S', []),
+          getMonthlyCount('SR', []),
+          getMonthlyCount('D', []),
+          getMonthlyCount('C', [])
+        ]),
+        new Promise(resolve => setTimeout(() => {
+          console.log('⏰ Monthly counts timeout - returning empty arrays');
+          resolve([[], [], [], [], [], []]);
+        }, 3000))
+      ]);
 
       // Log the counts for debugging
-      console.log('📊 V2 Dashboard Counts (no cache):');
+      console.log('📊 V2 Dashboard Counts:');
       console.log(`   N (New User, v2, vendor_app): ${newUserCount}`);
-      console.log(`   R (Recycler, v2, vendor_app): ${recyclerCount}`);
+      console.log(`   R (Recycler, v2, vendor_app): ${recyclerCount} ${recyclerCount === 0 ? '⚠️ (check if this is correct)' : ''}`);
       console.log(`   S (Shop, v2, vendor_app): ${shopCount}`);
       console.log(`   SR (Shop Recycler, v2, vendor_app): ${shopRecyclerCount}`);
       console.log(`   D (Delivery, v2, vendor_app): ${deliveryCount}`);
       console.log(`   C (Customer, v2, customer_app): ${customerCount}`);
       console.log(`   Total Users: ${newUserCount + recyclerCount + shopCount + shopRecyclerCount + deliveryCount + customerCount}`);
-      console.log(`   Customer App Orders (v2, excluding bulk): ${customerAppOrdersCount}`);
-      console.log(`   Bulk Orders (all non-customer_app orders): ${bulkOrdersCount}`);
+      console.log(`   Customer App Orders (v2, excluding bulk): ${customerAppOrdersCount} ${customerAppOrdersCount === 0 ? '⚠️ (check if this is correct)' : ''}`);
+      console.log(`   Bulk Orders (all non-customer_app orders): ${bulkOrdersCount} ${bulkOrdersCount === 0 ? '⚠️ (check if this is correct)' : ''}`);
 
       const result = {
         userTypes: {
@@ -4619,7 +4724,14 @@ class AdminPanelController {
         totalUsers: newUserCount + recyclerCount + shopCount + shopRecyclerCount + deliveryCount + customerCount
       };
 
-      // No caching - return fresh data directly
+      // Cache the result for 30 seconds for faster subsequent requests
+      try {
+        await RedisCache.set(cacheKey, result, 30);
+      } catch (cacheErr) {
+        // Ignore cache errors
+      }
+
+      // Return response immediately
       res.json({
         status: 'success',
         msg: 'V2 user types dashboard data retrieved',

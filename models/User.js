@@ -17,33 +17,170 @@ class User {
       const client = getDynamoDBClient();
       const hashedPassword = password ? await bcrypt.hash(password, 10) : await bcrypt.hash(mobNum, 10);
 
+      // CRITICAL: Validate GSI key attributes - DynamoDB doesn't allow empty strings for GSI keys
+      // GSI keys: user_type, app_type (for user_type-app_type-index), created_at (for user_type-created_at-index)
+      if (!userType || userType === '') {
+        throw new Error('user_type cannot be empty - it is required for GSI indexing');
+      }
+      
+      // Validate app_type if provided - must be non-empty string
+      if (appType !== null && appType !== undefined) {
+        if (appType === '') {
+          throw new Error('app_type cannot be empty string - it is required for GSI indexing. Use null instead.');
+        }
+      }
+
       // Generate ID (you might want to use a sequence or UUID)
       // For now, we'll use timestamp + random
       const id = Date.now() + Math.floor(Math.random() * 1000);
 
+      // Ensure created_at is never empty - required for user_type-created_at-index GSI
+      const createdAt = new Date().toISOString();
+      if (!createdAt || createdAt === '') {
+        throw new Error('created_at cannot be empty - it is required for GSI indexing');
+      }
+
+      // CRITICAL: Final validation before creating user object
+      // Ensure user_type is never empty (required for both GSIs)
+      const finalUserType = String(userType || '').trim();
+      if (!finalUserType || finalUserType === '') {
+        throw new Error('user_type cannot be empty or whitespace - it is required for GSI indexing');
+      }
+
       const user = {
         id: id,
-        name: name,
-        email: email,
+        name: name || '', // Non-GSI attribute, can be empty
+        // CRITICAL: email is a GSI key (email-index) - cannot be empty string
+        // Only include email if it's a valid non-empty string
         mob_num: typeof mobNum === 'string' && !isNaN(mobNum) ? parseInt(mobNum) : mobNum,
-        user_type: userType,
+        user_type: finalUserType, // GSI key - validated and trimmed above
         password: hashedPassword,
-        created_at: new Date().toISOString(),
+        created_at: createdAt, // GSI key - validated above
         updated_at: new Date().toISOString(),
-        app_version: appVersion // Default to 'v1' for backward compatibility
+        app_version: appVersion || 'v1' // Default to 'v1' for backward compatibility
       };
-
-      // Add app_type if provided
-      if (appType) {
-        user.app_type = appType;
+      
+      // CRITICAL: Add email ONLY if it's a valid non-empty string (email-index GSI key - cannot be empty)
+      // If email is empty, don't include it - user won't be indexed in email-index GSI
+      if (email && String(email).trim() !== '') {
+        user.email = String(email).trim();
+      } else {
+        // Don't add email field if it's empty - prevents "empty string value" error for email-index GSI
+        console.log(`📧 [User.create] Email is empty - omitting email field to avoid email-index GSI error`);
       }
+
+      // CRITICAL: Add app_type ONLY if it's a valid non-empty string (GSI key - cannot be empty)
+      // If app_type is provided, it MUST be non-empty because user_type-app_type-index GSI requires both
+      // If app_type is not provided (null/undefined), don't add it - user won't be indexed in user_type-app_type-index
+      // This prevents "empty string value" error for user_type-app_type-index GSI
+      if (appType !== null && appType !== undefined) {
+        const finalAppType = String(appType).trim();
+        if (!finalAppType || finalAppType === '') {
+          // If appType was provided but is empty, don't add it to avoid GSI error
+          // Log warning but don't fail - user will be created without app_type (won't be in user_type-app_type-index)
+          console.warn(`⚠️  [User.create] app_type provided but is empty - omitting to avoid GSI error. User will not be indexed in user_type-app_type-index GSI.`);
+        } else {
+          // Only add app_type if it's a valid non-empty string
+          user.app_type = finalAppType;
+        }
+      }
+      // If appType is null/undefined, don't add app_type attribute at all (user won't be in user_type-app_type-index GSI)
+
+      // CRITICAL: Final validation before sending to DynamoDB
+      // Ensure no GSI key attributes are empty strings
+      // user_type-app_type-index GSI requires BOTH user_type AND app_type to be non-empty if app_type is set
+      if (user.user_type === '' || user.user_type === null || user.user_type === undefined) {
+        console.error('❌ [User.create] user_type is empty/null/undefined:', {
+          user_type: user.user_type,
+          userType_param: userType
+        });
+        throw new Error('user_type cannot be empty, null, or undefined - it is required for GSI indexing');
+      }
+      
+      if (user.created_at === '' || !user.created_at) {
+        console.error('❌ [User.create] created_at is empty:', {
+          created_at: user.created_at
+        });
+        throw new Error('created_at cannot be empty - it is required for GSI indexing');
+      }
+      
+      // If app_type is set, it MUST be non-empty (user_type-app_type-index GSI requires both)
+      if (user.app_type !== undefined) {
+        if (user.app_type === '' || user.app_type === null) {
+          console.error('❌ [User.create] app_type is set but empty/null:', {
+            app_type: user.app_type,
+            appType_param: appType,
+            has_app_type: true
+          });
+          throw new Error('app_type cannot be empty or null if set - user_type-app_type-index GSI requires both user_type and app_type to be non-empty');
+        }
+        // Ensure user_type is also valid when app_type is set
+        if (!user.user_type || user.user_type === '') {
+          console.error('❌ [User.create] user_type is invalid when app_type is set:', {
+            user_type: user.user_type,
+            app_type: user.app_type
+          });
+          throw new Error('user_type must be non-empty when app_type is set - user_type-app_type-index GSI requires both');
+        }
+      }
+
+      // Debug logging before sending to DynamoDB (to catch any issues)
+      console.log('📝 [User.create] Creating user with GSI keys:', {
+        user_type: user.user_type,
+        app_type: user.app_type || '(not set - will not be in user_type-app_type-index GSI)',
+        email: user.email || '(not set - will not be in email-index GSI)',
+        created_at: user.created_at ? 'set' : 'missing',
+        has_app_type: user.app_type !== undefined,
+        has_email: user.email !== undefined,
+        user_type_length: user.user_type ? user.user_type.length : 0,
+        app_type_length: user.app_type ? user.app_type.length : 0,
+        email_length: user.email ? user.email.length : 0
+      });
 
       const command = new PutCommand({
         TableName: TABLE_NAME,
         Item: user
       });
 
-      await client.send(command);
+      try {
+        await client.send(command);
+        console.log('✅ [User.create] User created successfully:', {
+          id: user.id,
+          user_type: user.user_type,
+          app_type: user.app_type || '(not set)'
+        });
+      } catch (dynamoError) {
+        // Enhanced error logging for GSI errors
+        if (dynamoError.name === 'ValidationException' && dynamoError.message && dynamoError.message.includes('empty string')) {
+          console.error('❌ [User.create] DynamoDB GSI empty string error:', {
+            error: dynamoError.message,
+            user_object: {
+              id: user.id,
+              user_type: user.user_type,
+              app_type: user.app_type,
+              email: user.email,
+              created_at: user.created_at,
+              has_app_type: user.app_type !== undefined,
+              has_email: user.email !== undefined,
+              app_type_type: typeof user.app_type,
+              app_type_length: user.app_type ? user.app_type.length : 0,
+              user_type_type: typeof user.user_type,
+              user_type_length: user.user_type ? user.user_type.length : 0,
+              email_type: typeof user.email,
+              email_length: user.email ? user.email.length : 0
+            },
+            original_params: {
+              name,
+              email,
+              mobNum,
+              userType,
+              appType,
+              appVersion
+            }
+          });
+        }
+        throw dynamoError;
+      }
 
       // Cache user in Redis
       try {
@@ -745,7 +882,7 @@ class User {
           });
           
           if (lastKey) {
-            queryCommand.ExclusiveStartKey = lastKey;
+            queryCommand.input.ExclusiveStartKey = lastKey;
           }
           
           const response = await client.send(queryCommand);
@@ -817,7 +954,7 @@ class User {
           });
           
           if (lastKey) {
-            queryCommand.ExclusiveStartKey = lastKey;
+            queryCommand.input.ExclusiveStartKey = lastKey;
           }
           
           const response = await client.send(queryCommand);
@@ -923,7 +1060,7 @@ class User {
           });
           
           if (lastKey) {
-            queryCommand.ExclusiveStartKey = lastKey;
+            queryCommand.input.ExclusiveStartKey = lastKey;
           }
           
           const response = await client.send(queryCommand);
@@ -1061,7 +1198,7 @@ class User {
           });
           
           if (lastKey) {
-            queryCommand.ExclusiveStartKey = lastKey;
+            queryCommand.input.ExclusiveStartKey = lastKey;
           }
           
           const response = await client.send(queryCommand);
@@ -2125,7 +2262,7 @@ class User {
           });
           
           if (lastKey) {
-            queryCommand.ExclusiveStartKey = lastKey;
+            queryCommand.input.ExclusiveStartKey = lastKey;
           }
           
           const response = await client.send(queryCommand);
@@ -2218,7 +2355,7 @@ class User {
           });
           
           if (lastKey) {
-            queryCommand.ExclusiveStartKey = lastKey;
+            queryCommand.input.ExclusiveStartKey = lastKey;
           }
           
           const response = await client.send(queryCommand);
@@ -2288,7 +2425,7 @@ class User {
           });
           
           if (lastKey) {
-            queryCommand.ExclusiveStartKey = lastKey;
+            queryCommand.input.ExclusiveStartKey = lastKey;
           }
           
           const response = await client.send(queryCommand);

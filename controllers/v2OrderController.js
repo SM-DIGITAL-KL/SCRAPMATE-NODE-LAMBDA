@@ -1714,7 +1714,8 @@ class V2OrderController {
       // For D type (delivery), set delv_id
       // For R, S, SR types, set shop_id (use vendorShopId if available, otherwise user_id)
       // If order already has shop_id and it matches vendorShopId, keep it; otherwise update it
-      const shopIdToSet = vendorShopId || parseInt(user_id);
+      // Ensure shopIdToSet is always a number (GSI requires number type)
+      const shopIdToSet = vendorShopId ? (typeof vendorShopId === 'number' ? vendorShopId : parseInt(vendorShopId)) : (typeof user_id === 'number' ? user_id : parseInt(user_id));
 
       // Get vendor's custom prices and update orderdetails with vendor prices
       let updatedOrderdetails = order.orderdetails;
@@ -1818,6 +1819,8 @@ class V2OrderController {
       }
 
       // Build update expression - include orderdetails and estim_price if prices were updated
+      // Note: If order was created without shop_id (omitted), SET will add it
+      // If order has shop_id as null, we'll SET it (DynamoDB handles this)
       const hasPriceUpdates = updatedOrderdetails !== order.orderdetails || recalculatedEstimPrice !== order.estim_price;
       const updateExpression = user_type === 'D'
         ? 'SET delv_id = :userId, delv_boy_id = :userId, #status = :status, accepted_at = :acceptedAt, updated_at = :updatedAt'
@@ -1853,7 +1856,7 @@ class V2OrderController {
         : isAutoAssignedToVendor
           ? hasPriceUpdates
             ? {
-              ':shopId': shopIdToSet,
+              ':shopId': shopIdToSet, // Ensure this is a number for GSI
               ':status': 2, // 2 = Accepted
               ':acceptedAt': new Date().toISOString(),
               ':updatedAt': new Date().toISOString(),
@@ -1863,7 +1866,7 @@ class V2OrderController {
               ':currentShopId': shopIdToSet // Used in condition expression for auto-assigned orders
             }
             : {
-              ':shopId': shopIdToSet,
+              ':shopId': shopIdToSet, // Ensure this is a number for GSI
               ':status': 2, // 2 = Accepted
               ':acceptedAt': new Date().toISOString(),
               ':updatedAt': new Date().toISOString(),
@@ -1872,7 +1875,7 @@ class V2OrderController {
             }
           : hasPriceUpdates
             ? {
-              ':shopId': shopIdToSet,
+              ':shopId': shopIdToSet, // Ensure this is a number for GSI
               ':status': 2, // 2 = Accepted
               ':acceptedAt': new Date().toISOString(),
               ':updatedAt': new Date().toISOString(),
@@ -1882,7 +1885,7 @@ class V2OrderController {
               ':nullShopId': null // Used in condition expression for unassigned orders
             }
             : {
-              ':shopId': shopIdToSet,
+              ':shopId': shopIdToSet, // Ensure this is a number for GSI
               ':status': 2, // 2 = Accepted
               ':acceptedAt': new Date().toISOString(),
               ':updatedAt': new Date().toISOString(),
@@ -1957,20 +1960,128 @@ class V2OrderController {
         ExpressionAttributeValues: expressionAttributeValues
       });
 
+      let updateSucceeded = false; // Flag to track if update succeeded (including PutItem workaround)
+      
       try {
         console.log(`🔄 [acceptPickupRequest] Attempting to update order ${order.order_number || order.id}...`);
-        console.log(`   Current order status: ${order.status}, shop_id: ${order.shop_id}`);
-        console.log(`   Updating to status: 2 (Accepted), shop_id: ${shopIdToSet}`);
+        console.log(`   Current order status: ${order.status}, shop_id: ${order.shop_id} (type: ${typeof order.shop_id})`);
+        console.log(`   Updating to status: 2 (Accepted), shop_id: ${shopIdToSet} (type: ${typeof shopIdToSet})`);
+        console.log(`   shopIdToSet value: ${shopIdToSet}, isNumber: ${typeof shopIdToSet === 'number'}`);
+        
+        // Ensure shopIdToSet is a number for GSI compatibility
+        if (typeof shopIdToSet !== 'number' || isNaN(shopIdToSet)) {
+          throw new Error(`Invalid shop_id type: ${typeof shopIdToSet}, value: ${shopIdToSet}. Must be a number for GSI compatibility.`);
+        }
+        
         await client.send(command);
         console.log(`✅ [acceptPickupRequest] Order ${order.order_number || order.id} accepted successfully by user_id ${user_id}`);
         console.log(`   ✅ Order status changed from 1 to 2 (Accepted)`);
         console.log(`   ✅ Order shop_id set to: ${shopIdToSet}`);
+        updateSucceeded = true;
       } catch (updateError) {
         console.error(`❌ [acceptPickupRequest] Error updating order:`, updateError);
         console.error('   Error name:', updateError.name);
         console.error('   Error message:', updateError.message);
+        console.error('   shopIdToSet:', shopIdToSet, 'type:', typeof shopIdToSet);
+        console.error('   order.shop_id:', order.shop_id, 'type:', typeof order.shop_id);
+        
+        // Handle "Schema violation against backfilling index" error
+        // This can happen when GSI is backfilling and we try to SET shop_id on an order that doesn't have it
+        // Workaround: Use PutItem to replace the entire item (works during GSI backfill)
+        if (updateError.message && updateError.message.includes('Schema violation against backfilling index')) {
+          console.error('   ⚠️  GSI backfilling issue detected. Order may have been created without shop_id.');
+          console.error('   💡 Attempting PutItem workaround (replaces entire item, works during GSI backfill)...');
+          
+          try {
+            const { PutCommand } = require('@aws-sdk/lib-dynamodb');
+            
+            // Build the updated order object with all fields preserved
+            // IMPORTANT: Only include GSI key attributes if they have valid values (not null/undefined)
+            // This prevents "Type mismatch" errors during GSI backfill
+            const updatedOrder = {
+              ...order,
+              shop_id: shopIdToSet,
+              status: 2, // Accepted
+              accepted_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            };
+            
+            // Remove GSI key attributes if they are null/undefined to prevent type mismatch errors
+            // Only include them if they have valid numeric values
+            if (updatedOrder.delv_id === null || updatedOrder.delv_id === undefined) {
+              delete updatedOrder.delv_id;
+            }
+            if (updatedOrder.delv_boy_id === null || updatedOrder.delv_boy_id === undefined) {
+              delete updatedOrder.delv_boy_id;
+            }
+            // shop_id is already set to shopIdToSet (a valid number), so we keep it
+            
+            // Update orderdetails and estim_price if prices were updated
+            if (hasPriceUpdates) {
+              updatedOrder.orderdetails = updatedOrderdetails;
+              updatedOrder.estim_price = recalculatedEstimPrice;
+            }
+            
+            // Ensure all required fields are present
+            if (!updatedOrder.created_at) {
+              updatedOrder.created_at = order.created_at || new Date().toISOString();
+            }
+            
+            // Use PutItem with condition to ensure order status is still 1 (atomic check)
+            const putCommand = new PutCommand({
+              TableName: 'orders',
+              Item: updatedOrder,
+              ConditionExpression: '#status = :currentStatus',
+              ExpressionAttributeNames: { '#status': 'status' },
+              ExpressionAttributeValues: { ':currentStatus': 1 }
+            });
+            
+            await client.send(putCommand);
+            console.log(`✅ [acceptPickupRequest] Order ${order.order_number || order.id} accepted successfully (using PutItem workaround for GSI backfill)`);
+            console.log(`   ✅ Order status changed from 1 to 2 (Accepted)`);
+            console.log(`   ✅ Order shop_id set to: ${shopIdToSet}`);
+            
+            // Mark update as succeeded so we can continue with success flow
+            updateSucceeded = true;
+          } catch (putError) {
+            console.error('   ❌ PutItem workaround also failed:', putError.message);
+            console.error('   Error name:', putError.name);
+            
+            // If PutItem fails due to condition check, order might have been accepted
+            if (putError.name === 'ConditionalCheckFailedException') {
+              console.log(`⚠️  PutItem condition check failed - order may have been accepted. Checking current state...`);
+              // Fall through to the ConditionalCheckFailedException handler below
+              updateError = putError; // Replace error so it's handled by the condition check handler
+            } else {
+              // Other PutItem error - return error response
+              return res.status(500).json({
+                status: 'error',
+                msg: 'Unable to accept order at this time due to a temporary system issue. Please try again in a few moments.',
+                data: {
+                  order_id: order.id,
+                  order_number: order.order_number || order.order_no,
+                  error_type: 'gsi_backfilling_putitem_failed',
+                  retry_suggested: true
+                }
+              });
+            }
+          }
+          
+          // If PutItem succeeded, skip the rest of the error handling and continue
+          // We'll break out of the catch block by not returning/throwing
+          // But we need to check if we should continue or return
+          // Actually, if PutItem succeeded, we should continue to the success flow below
+          // Let me check the code structure...
+        }
+        
+        // Skip error handling if update succeeded via PutItem workaround
+        if (updateSucceeded) {
+          // Update succeeded via PutItem workaround, continue with success flow
+          // Break out of catch block - the code after the catch will handle success
+        }
         // Check if error is due to condition not being met (order already accepted)
-        if (updateError.name === 'ConditionalCheckFailedException') {
+        else if (updateError.name === 'ConditionalCheckFailedException' || 
+            (updateError.message && updateError.message.includes('backfilling index') && updateError.message.includes('PutItem'))) {
           console.log(`⚠️  Conditional check failed - checking if order was accepted by current user...`);
 
           // Re-fetch the order to get current status and see who accepted it
@@ -2115,6 +2226,7 @@ class V2OrderController {
         }
       }
 
+      // If update succeeded (either via UpdateCommand or PutItem workaround), continue with success flow
       // Invalidate v2 API caches FIRST to ensure fresh data is available when vendors refetch
       try {
         // Invalidate available pickup requests (order is no longer available - status changed to 2)

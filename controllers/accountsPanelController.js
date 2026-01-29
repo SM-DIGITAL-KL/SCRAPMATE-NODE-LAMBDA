@@ -152,21 +152,42 @@ class AccountsPanelController {
         console.error('Redis get error:', err);
       }
       
-      // Use Invoice model to get all invoices, then join with Shop model
+      // Use Invoice model to get all invoices, then join with Shop and User models
       const Shop = require('../models/Shop');
+      const User = require('../models/User');
       const allInvoices = await Invoice.getAll();
       
-      // Get unique user_ids and fetch shops
+      // Get unique user_ids and fetch shops and users
       const userIds = [...new Set(allInvoices.map(i => i.user_id).filter(Boolean))];
       const shops = await Shop.findByUserIds(userIds);
       const shopMap = {};
       shops.forEach(s => { shopMap[s.user_id] = s; });
       
-      // Combine invoices with shop names
-      const invoices = allInvoices.map(invoice => ({
-        ...invoice,
-        shopname: invoice.user_id && shopMap[invoice.user_id] ? shopMap[invoice.user_id].shopname : null
-      }));
+      // Fetch users for user names
+      const userMap = {};
+      for (const userId of userIds) {
+        try {
+          const user = await User.findById(userId);
+          if (user) {
+            userMap[userId] = user;
+          }
+        } catch (err) {
+          console.warn(`⚠️  Could not fetch user ${userId}:`, err.message);
+        }
+      }
+      
+      // Combine invoices with shop names and user names
+      const invoices = allInvoices.map(invoice => {
+        const user = invoice.user_id ? userMap[invoice.user_id] : null;
+        const shop = invoice.user_id && shopMap[invoice.user_id] ? shopMap[invoice.user_id] : null;
+        return {
+          ...invoice,
+          shopname: shop ? shop.shopname : null,
+          username: user ? user.name : null,
+          user_type: user ? user.user_type : null,
+          mob_num: user ? user.mob_num : null
+        };
+      });
       
       console.log('🟢 Fetched invoices with shop names');
       

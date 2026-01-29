@@ -162,7 +162,7 @@ class Order {
         // Handle pagination if LastEvaluatedKey exists
         let lastKey = queryResponse.LastEvaluatedKey;
         while (lastKey) {
-          queryCommand.ExclusiveStartKey = lastKey;
+          queryCommand.input.ExclusiveStartKey = lastKey;
           const nextResponse = await client.send(queryCommand);
           if (nextResponse.Items) {
             results.push(...nextResponse.Items);
@@ -235,7 +235,7 @@ class Order {
         // Handle pagination if LastEvaluatedKey exists
         let lastKey = queryResponse.LastEvaluatedKey;
         while (lastKey) {
-          queryCommand.ExclusiveStartKey = lastKey;
+          queryCommand.input.ExclusiveStartKey = lastKey;
           const nextResponse = await client.send(queryCommand);
           if (nextResponse.Items) {
             results.push(...nextResponse.Items);
@@ -336,10 +336,7 @@ class Order {
         id: id,
         order_number: orderNumber,
         order_no: orderNo,
-        shop_id: typeof data.shop_id === 'string' && !isNaN(data.shop_id) ? parseInt(data.shop_id) : data.shop_id,
         customer_id: typeof data.customer_id === 'string' && !isNaN(data.customer_id) ? parseInt(data.customer_id) : data.customer_id,
-        delv_id: data.delv_id ? (typeof data.delv_id === 'string' && !isNaN(data.delv_id) ? parseInt(data.delv_id) : data.delv_id) : null,
-        delv_boy_id: data.delv_boy_id ? (typeof data.delv_boy_id === 'string' && !isNaN(data.delv_boy_id) ? parseInt(data.delv_boy_id) : data.delv_boy_id) : null,
         orderdetails: data.orderdetails || JSON.stringify(data.items || []),
         customerdetails: data.customerdetails || '',
         shopdetails: data.shopdetails || '',
@@ -369,6 +366,17 @@ class Order {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
+      
+      // Only include GSI key attributes if they have values (GSI cannot have NULL key attributes)
+      if (data.shop_id != null && data.shop_id !== undefined) {
+        order.shop_id = typeof data.shop_id === 'string' && !isNaN(data.shop_id) ? parseInt(data.shop_id) : data.shop_id;
+      }
+      if (data.delv_id != null && data.delv_id !== undefined) {
+        order.delv_id = typeof data.delv_id === 'string' && !isNaN(data.delv_id) ? parseInt(data.delv_id) : data.delv_id;
+      }
+      if (data.delv_boy_id != null && data.delv_boy_id !== undefined) {
+        order.delv_boy_id = typeof data.delv_boy_id === 'string' && !isNaN(data.delv_boy_id) ? parseInt(data.delv_boy_id) : data.delv_boy_id;
+      }
 
       const command = new PutCommand({
         TableName: TABLE_NAME,
@@ -857,7 +865,7 @@ class Order {
           });
           
           if (userLastKey) {
-            userQueryCommand.ExclusiveStartKey = userLastKey;
+            userQueryCommand.input.ExclusiveStartKey = userLastKey;
           }
           
           const userResponse = await client.send(userQueryCommand);
@@ -930,7 +938,7 @@ class Order {
                 });
                 
                 if (lastKey) {
-                  orderQueryCommand.ExclusiveStartKey = lastKey;
+                  orderQueryCommand.input.ExclusiveStartKey = lastKey;
                 }
                 
                 const response = await client.send(orderQueryCommand);
@@ -1017,7 +1025,7 @@ class Order {
           });
           
           if (userLastKey) {
-            userQueryCommand.ExclusiveStartKey = userLastKey;
+            userQueryCommand.input.ExclusiveStartKey = userLastKey;
           }
           
           const userResponse = await client.send(userQueryCommand);
@@ -1093,7 +1101,7 @@ class Order {
                 });
                 
                 if (lastKey) {
-                  orderQueryCommand.ExclusiveStartKey = lastKey;
+                  orderQueryCommand.input.ExclusiveStartKey = lastKey;
                 }
                 
                 const response = await client.send(orderQueryCommand);
@@ -1302,7 +1310,7 @@ class Order {
           });
           
           if (userLastKey) {
-            userQueryCommand.ExclusiveStartKey = userLastKey;
+            userQueryCommand.input.ExclusiveStartKey = userLastKey;
           }
           
           const userResponse = await client.send(userQueryCommand);
@@ -1655,7 +1663,7 @@ class Order {
         });
         
         if (lastEvaluatedKey) {
-          queryCommand.ExclusiveStartKey = lastEvaluatedKey;
+          queryCommand.input.ExclusiveStartKey = lastEvaluatedKey;
         }
         
         const queryResponse = await client.send(queryCommand);

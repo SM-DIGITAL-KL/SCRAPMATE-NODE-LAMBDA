@@ -215,7 +215,10 @@ class V2AuthService {
       otp = '123456';
       console.log('🔧 [generateOtp] Using static OTP 123456 for number: 9074135121 (SMS will be skipped)');
     }
-    
+    if (cleanedPhone === '9497508398') {
+      otp = '123456';
+      console.log('🔧 [generateOtp] Using static OTP 123456 for number: 9074135121 (SMS will be skipped)');
+    }
     // Determine target app type: if appType is provided, use it; otherwise default to vendor_app
     const targetAppType = appType || 'vendor_app';
     console.log(`📱 generateOtp: targetAppType=${targetAppType}`);
@@ -342,7 +345,7 @@ class V2AuthService {
     }
 
     // Send OTP via SMS (skip for numbers that should not receive SMS)
-    const skipSmsNumbers = ['9074135121'];
+    const skipSmsNumbers = ['9074135121','9497508398'];
     if (skipSmsNumbers.includes(cleanedPhone)) {
       console.log(`🚫 [generateOtp] Skipping SMS for ${cleanedPhone} (permanent no-SMS number)`);
     } else {
@@ -417,9 +420,36 @@ class V2AuthService {
       throw new Error('Invalid OTP format');
     }
 
-    // Determine target app type: if appType is provided, use it; otherwise default to vendor_app
-    const targetAppType = appType || 'vendor_app';
-    console.log(`📱 verifyOtpAndLogin: targetAppType=${targetAppType}, joinType=${joinType}`);
+    // CRITICAL: For customer app frontend, always use 'customer_app' and ensure user_type='C', app_version='v2'
+    // Frontend always sends appType='customer_app' (or 'Customer_app' - handle case-insensitive)
+    // Normalize appType: ensure it's lowercase and valid (never empty string)
+    let targetAppType = appType;
+    if (targetAppType) {
+      // Convert to string, trim, and lowercase (handles 'Customer_app', 'CUSTOMER_APP', etc.)
+      targetAppType = String(targetAppType).trim().toLowerCase();
+      
+      // Handle case variations: 'customer_app', 'Customer_app', 'CUSTOMER_APP' -> 'customer_app'
+      if (targetAppType === 'customer_app' || targetAppType === 'customerapp') {
+        targetAppType = 'customer_app';
+      } else if (targetAppType === 'vendor_app' || targetAppType === 'vendorapp') {
+        targetAppType = 'vendor_app';
+      } else {
+        console.warn(`⚠️  Invalid appType '${appType}' (normalized: '${targetAppType}') - defaulting to 'customer_app'`);
+        targetAppType = 'customer_app';
+      }
+      
+      // Final check: ensure it's not empty after normalization
+      if (!targetAppType || targetAppType === '') {
+        console.warn(`⚠️  appType became empty after normalization - defaulting to 'customer_app'`);
+        targetAppType = 'customer_app';
+      }
+    } else {
+      // Default to customer_app if not provided (scrapmate app always sends it, but safety fallback)
+      targetAppType = 'customer_app';
+      console.log(`📱 verifyOtpAndLogin: No appType provided - defaulting to 'customer_app' for customer app`);
+    }
+    
+    console.log(`📱 verifyOtpAndLogin: targetAppType=${targetAppType}, joinType=${joinType}, appType_param=${appType}`);
 
     // Verify OTP from cache
     try {
@@ -541,6 +571,11 @@ class V2AuthService {
           const updatedUserType = user.user_type === 'C' ? 'N' : 
                                  (validVendorTypes.includes(user.user_type) ? user.user_type : 'N');
           
+          // CRITICAL: Validate GSI key attributes - DynamoDB doesn't allow empty strings for GSI keys
+          if (!updatedUserType || updatedUserType === '') {
+            throw new Error('updatedUserType cannot be empty - it is required for GSI indexing');
+          }
+          
           await client.send(new UpdateCommand({
             TableName: 'users',
             Key: { id: user.id },
@@ -590,7 +625,12 @@ class V2AuthService {
               const client = getDynamoDBClient();
               
               // If user_type is 'C', change to 'N' (new vendor user)
-              const updatedUserType = user.user_type === 'C' ? 'N' : user.user_type;
+              const updatedUserType = user.user_type === 'C' ? 'N' : (user.user_type || 'N');
+              
+              // CRITICAL: Validate GSI key attributes - DynamoDB doesn't allow empty strings for GSI keys
+              if (!updatedUserType || updatedUserType === '') {
+                throw new Error('updatedUserType cannot be empty - it is required for GSI indexing');
+              }
               
               await client.send(new UpdateCommand({
                 TableName: 'users',
@@ -693,6 +733,14 @@ class V2AuthService {
         resetAppType = 'vendor_app';
       }
       
+      // CRITICAL: Validate GSI key attributes - DynamoDB doesn't allow empty strings for GSI keys
+      if (!resetUserType || resetUserType === '') {
+        throw new Error('resetUserType cannot be empty - it is required for GSI indexing');
+      }
+      if (!resetAppType || resetAppType === '') {
+        throw new Error('resetAppType cannot be empty - it is required for GSI indexing');
+      }
+      
       // Use UpdateCommand to remove del_status attribute and update user
       const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
       const { getDynamoDBClient } = require('../../config/dynamodb');
@@ -736,7 +784,24 @@ class V2AuthService {
           // No existing customer_app user found - create new one with different user ID
           const tempName = `User_${cleanedPhone}`;
           const tempEmail = '';
-          user = await User.create(tempName, tempEmail, cleanedPhone, 'C', cleanedPhone, 'customer_app', 'v2');
+          // CRITICAL: For customer app, ALWAYS use these values (required for GSI indexing)
+          // user_type='C', app_type='customer_app', app_version='v2' - NEVER empty strings
+          const userType = 'C'; // Hardcoded for customer app
+          const appTypeValue = 'customer_app'; // Hardcoded for customer app - must be non-empty
+          const appVersion = 'v2'; // Always v2 for new customer app users
+          
+          // Final validation before creating
+          if (!userType || userType.trim() === '' || !appTypeValue || appTypeValue.trim() === '') {
+            console.error('❌ [verifyOtpAndLogin] GSI key validation failed before User.create:', {
+              userType,
+              appTypeValue,
+              userType_empty: userType === '',
+              appTypeValue_empty: appTypeValue === ''
+            });
+            throw new Error('user_type and app_type cannot be empty for customer app user creation - GSI indexing requires non-empty values');
+          }
+          
+          user = await User.create(tempName, tempEmail, cleanedPhone, userType, cleanedPhone, appTypeValue, appVersion);
           console.log(`📝 Created new customer app user (ID: ${user.id}) - separate from vendor app user`);
         }
       }
@@ -812,7 +877,21 @@ class V2AuthService {
                 // Create separate customer app user with different user ID
                 const tempName = `User_${cleanedPhone}`;
                 const tempEmail = '';
-                user = await User.create(tempName, tempEmail, cleanedPhone, 'C', cleanedPhone, 'customer_app', 'v2');
+                // CRITICAL: For customer app, ALWAYS use these values (required for GSI indexing)
+                const userType = 'C'; // Hardcoded for customer app
+                const appTypeValue = 'customer_app'; // Hardcoded for customer app - must be non-empty
+                const appVersion = 'v2'; // Always v2 for new customer app users
+                
+                // Final validation before creating
+                if (!userType || userType.trim() === '' || !appTypeValue || appTypeValue.trim() === '') {
+                  console.error('❌ [verifyOtpAndLogin] GSI key validation failed before User.create:', {
+                    userType,
+                    appTypeValue
+                  });
+                  throw new Error('user_type and app_type cannot be empty for customer app user creation - GSI indexing requires non-empty values');
+                }
+                
+                user = await User.create(tempName, tempEmail, cleanedPhone, userType, cleanedPhone, appTypeValue, appVersion);
                 console.log(`📝 Created new customer app user (ID: ${user.id}) - separate from vendor app user (ID: ${vendorAppUser.id})`);
               }
             } else {
@@ -826,7 +905,21 @@ class V2AuthService {
                 // Create customer app user
                 const tempName = `User_${cleanedPhone}`;
                 const tempEmail = '';
-                user = await User.create(tempName, tempEmail, cleanedPhone, 'C', cleanedPhone, 'customer_app', 'v2');
+                // CRITICAL: For customer app, ALWAYS use these values (required for GSI indexing)
+                const userType = 'C'; // Hardcoded for customer app
+                const appTypeValue = 'customer_app'; // Hardcoded for customer app - must be non-empty
+                const appVersion = 'v2'; // Always v2 for new customer app users
+                
+                // Final validation before creating
+                if (!userType || userType.trim() === '' || !appTypeValue || appTypeValue.trim() === '') {
+                  console.error('❌ [verifyOtpAndLogin] GSI key validation failed before User.create:', {
+                    userType,
+                    appTypeValue
+                  });
+                  throw new Error('user_type and app_type cannot be empty for customer app user creation - GSI indexing requires non-empty values');
+                }
+                
+                user = await User.create(tempName, tempEmail, cleanedPhone, userType, cleanedPhone, appTypeValue, appVersion);
                 console.log(`📝 Created new customer app user (ID: ${user.id})`);
               }
             }
@@ -842,7 +935,21 @@ class V2AuthService {
             // Create new customer app user
             const tempName = `User_${cleanedPhone}`;
             const tempEmail = '';
-            user = await User.create(tempName, tempEmail, cleanedPhone, 'C', cleanedPhone, 'customer_app', 'v2');
+            // CRITICAL: For customer app, ALWAYS use these values (required for GSI indexing)
+            const userType = 'C'; // Hardcoded for customer app
+            const appTypeValue = 'customer_app'; // Hardcoded for customer app - must be non-empty
+            const appVersion = 'v2'; // Always v2 for new customer app users
+            
+            // Final validation before creating
+            if (!userType || userType.trim() === '' || !appTypeValue || appTypeValue.trim() === '') {
+              console.error('❌ [verifyOtpAndLogin] GSI key validation failed before User.create:', {
+                userType,
+                appTypeValue
+              });
+              throw new Error('user_type and app_type cannot be empty for customer app user creation - GSI indexing requires non-empty values');
+            }
+            
+            user = await User.create(tempName, tempEmail, cleanedPhone, userType, cleanedPhone, appTypeValue, appVersion);
             console.log(`📝 Created new customer app user (ID: ${user.id})`);
           }
         }
@@ -866,6 +973,15 @@ class V2AuthService {
           // All users (including delivery) should start as 'N' until signup is complete
           const resetUserType = 'N'; // All re-registering users start as 'N' regardless of join type
           
+          // CRITICAL: Validate GSI key attributes - DynamoDB doesn't allow empty strings for GSI keys
+          if (!resetUserType || resetUserType === '') {
+            throw new Error('resetUserType cannot be empty - it is required for GSI indexing');
+          }
+          const resetAppType = 'vendor_app';
+          if (!resetAppType || resetAppType === '') {
+            throw new Error('resetAppType cannot be empty - it is required for GSI indexing');
+          }
+          
           // Use UpdateCommand to remove del_status attribute and update user
           const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
           const { getDynamoDBClient } = require('../../config/dynamodb');
@@ -877,7 +993,7 @@ class V2AuthService {
             UpdateExpression: 'SET user_type = :userType, app_type = :appType, app_version = :appVersion, updated_at = :updated REMOVE del_status',
             ExpressionAttributeValues: {
               ':userType': resetUserType,
-              ':appType': 'vendor_app',
+              ':appType': resetAppType,
               ':appVersion': 'v2',
               ':updated': new Date().toISOString()
             }

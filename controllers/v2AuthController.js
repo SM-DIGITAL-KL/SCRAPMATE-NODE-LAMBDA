@@ -67,7 +67,42 @@ class V2AuthController {
         });
       }
 
-      const result = await V2AuthService.verifyOtpAndLogin(phoneNumber, otp, joinType, appType, fcm_token);
+      // CRITICAL: Extract appType from body or header (frontend always sends 'customer_app' for scrapmate app)
+      // Frontend sets x-app-type header to 'customer_app' and also sends it in body
+      // Handle case-insensitive: 'Customer_app', 'CUSTOMER_APP', 'customer_app' -> 'customer_app'
+      let finalAppType = appType;
+      if (!finalAppType && req.headers) {
+        finalAppType = req.headers['x-app-type'] || req.headers['X-App-Type'];
+      }
+      
+      // Normalize appType: ensure lowercase, trimmed, and never empty string
+      if (finalAppType) {
+        finalAppType = String(finalAppType).trim().toLowerCase();
+        
+        // Handle case variations
+        if (finalAppType === 'customer_app' || finalAppType === 'customerapp') {
+          finalAppType = 'customer_app';
+        } else if (finalAppType === 'vendor_app' || finalAppType === 'vendorapp') {
+          finalAppType = 'vendor_app';
+        } else {
+          console.warn(`⚠️  [verifyOtp] Invalid appType '${appType}' (normalized: '${finalAppType}') - defaulting to 'customer_app'`);
+          finalAppType = 'customer_app';
+        }
+        
+        // Ensure it's not empty after normalization
+        if (!finalAppType || finalAppType === '') {
+          console.warn(`⚠️  [verifyOtp] appType became empty after normalization - defaulting to 'customer_app'`);
+          finalAppType = 'customer_app';
+        }
+      } else {
+        // Default to customer_app if not provided (scrapmate app always sends it)
+        finalAppType = 'customer_app';
+        console.log(`📱 [verifyOtp] No appType provided - defaulting to 'customer_app' for customer app`);
+      }
+      
+      console.log(`📱 [verifyOtp] Using appType: ${finalAppType} (from body: ${appType}, from header: ${req.headers?.['x-app-type'] || req.headers?.['X-App-Type'] || 'none'})`);
+
+      const result = await V2AuthService.verifyOtpAndLogin(phoneNumber, otp, joinType, finalAppType, fcm_token);
 
       // Log the result to debug
       console.log('📋 V2AuthController.verifyOtp - Result keys:', Object.keys(result));

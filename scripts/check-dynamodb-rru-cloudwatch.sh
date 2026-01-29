@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Fetch DynamoDB ConsumedReadCapacityUnits (RCU) and ConsumedWriteCapacityUnits (WCU)
-# per table from CloudWatch. Use this to see which tables drive high RRU/WRU and billing.
+# per table and Global Secondary Index (GSI) from CloudWatch. Use this to see which
+# tables and GSIs drive high RRU/WRU and billing.
 #
 # Prerequisites: AWS CLI configured (aws configure) with access to DynamoDB + CloudWatch.
 #
@@ -76,7 +77,7 @@ else
 fi
 
 echo "════════════════════════════════════════════════════════════"
-echo "DynamoDB RCU/WCU (ConsumedRead/WriteCapacityUnits) — CloudWatch"
+echo "DynamoDB RCU/WCU (Tables + GSIs) — CloudWatch"
 echo "════════════════════════════════════════════════════════════"
 echo "  Window:  $START → $END  (last $HOURS h)"
 echo "  Period:  ${PERIOD}s"
@@ -113,16 +114,40 @@ IFS=',' read -ra TARR <<< "$TABLES"
 fetch_metric() {
   local tn="$1"
   local metric="$2"
-  aws cloudwatch get-metric-statistics \
-    --namespace AWS/DynamoDB \
-    --metric-name "$metric" \
-    --dimensions "Name=TableName,Value=$tn" \
-    --start-time "$START" \
-    --end-time "$END" \
-    --period "$PERIOD" \
-    --statistics Sum Maximum Average SampleCount \
+  local gsi_name="${3:-}"
+  if [[ -n "$gsi_name" ]]; then
+    aws cloudwatch get-metric-statistics \
+      --namespace AWS/DynamoDB \
+      --metric-name "$metric" \
+      --dimensions "Name=TableName,Value=$tn" "Name=GlobalSecondaryIndexName,Value=$gsi_name" \
+      --start-time "$START" \
+      --end-time "$END" \
+      --period "$PERIOD" \
+      --statistics Sum Maximum Average SampleCount \
+      "${AWS_EXTRA[@]}" \
+      --output json 2>/dev/null || echo '{"Datapoints":[]}'
+  else
+    aws cloudwatch get-metric-statistics \
+      --namespace AWS/DynamoDB \
+      --metric-name "$metric" \
+      --dimensions "Name=TableName,Value=$tn" \
+      --start-time "$START" \
+      --end-time "$END" \
+      --period "$PERIOD" \
+      --statistics Sum Maximum Average SampleCount \
+      "${AWS_EXTRA[@]}" \
+      --output json 2>/dev/null || echo '{"Datapoints":[]}'
+  fi
+}
+
+# Get list of GSIs for a table
+get_table_gsis() {
+  local tn="$1"
+  aws dynamodb describe-table \
+    --table-name "$tn" \
     "${AWS_EXTRA[@]}" \
-    --output json 2>/dev/null || echo '{"Datapoints":[]}'
+    --output json 2>/dev/null | \
+    jq -r '.Table.GlobalSecondaryIndexes[]?.IndexName // empty' 2>/dev/null || echo ""
 }
 
 if command -v jq &>/dev/null; then
@@ -144,6 +169,7 @@ if [[ $READS_ONLY -eq 1 ]]; then
   printf "%-40s %14s %14s %12s\n" "Table" "Total RCU" "Max (period)" "Avg/period"
   echo "--------------------------------------------------------------------------------"
   TOTAL_RCU=0
+  TOTAL_GSI_RCU=0
   for tn in "${TARR[@]}"; do
     tn=$(echo "$tn" | xargs)
     [[ -z "$tn" ]] && continue
@@ -164,16 +190,45 @@ if [[ $READS_ONLY -eq 1 ]]; then
       echo "$out" | jq -r '.Datapoints | sort_by(.Timestamp)[] | "    \(.Timestamp)  Sum=\(.Sum // 0)  Max=\(.Maximum // 0)"'
       echo ""
     fi
+    
+    # Fetch GSI metrics
+    if [[ $HAS_JQ -eq 1 ]]; then
+      gsis=$(get_table_gsis "$tn")
+      if [[ -n "$gsis" ]]; then
+        while IFS= read -r gsi; do
+          [[ -z "$gsi" ]] && continue
+          out_gsi=$(fetch_metric "$tn" "ConsumedReadCapacityUnits" "$gsi")
+          sum_gsi=$(jq_sum "$out_gsi"); sum_gsi=${sum_gsi:-0}
+          max_gsi=$(jq_max "$out_gsi"); max_gsi=${max_gsi:-0}
+          n_gsi=$(echo "$out_gsi" | jq '.Datapoints | length')
+          avg_gsi=0
+          [[ "${n_gsi:-0}" -gt 0 ]] && avg_gsi=$(echo "$out_gsi" | jq '([.Datapoints[].Average // 0] | add / length) | floor')
+          avg_gsi=${avg_gsi:-0}
+          TOTAL_GSI_RCU=$(( TOTAL_GSI_RCU + sum_gsi ))
+          printf "  └─ GSI: %-35s %14d %14d %12d\n" "$gsi" "$sum_gsi" "$max_gsi" "$avg_gsi"
+          if [[ $VERBOSE -eq 1 ]]; then
+            echo "$out_gsi" | jq -r '.Datapoints | sort_by(.Timestamp)[] | "      \(.Timestamp)  Sum=\(.Sum // 0)  Max=\(.Maximum // 0)"'
+            echo ""
+          fi
+        done <<< "$gsis"
+      fi
+    fi
   done
   echo "--------------------------------------------------------------------------------"
   echo ""
   echo "Total RCU (all tables): $TOTAL_RCU"
+  if [[ $TOTAL_GSI_RCU -gt 0 ]]; then
+    echo "Total RCU (all GSIs): $TOTAL_GSI_RCU"
+    echo "Total RCU (tables + GSIs): $(( TOTAL_RCU + TOTAL_GSI_RCU ))"
+  fi
 else
   echo ""
   printf "%-36s %12s %12s %12s %12s\n" "Table" "Total RCU" "Total WCU" "Max RCU" "Max WCU"
   echo "--------------------------------------------------------------------------------------------"
   TOTAL_RCU=0
   TOTAL_WCU=0
+  TOTAL_GSI_RCU=0
+  TOTAL_GSI_WCU=0
   for tn in "${TARR[@]}"; do
     tn=$(echo "$tn" | xargs)
     [[ -z "$tn" ]] && continue
@@ -195,11 +250,41 @@ else
       echo "  WCU:" && echo "$out_w" | jq -r '.Datapoints | sort_by(.Timestamp)[] | "    \(.Timestamp)  Sum=\(.Sum // 0)"'
       echo ""
     fi
+    
+    # Fetch GSI metrics
+    if [[ $HAS_JQ -eq 1 ]]; then
+      gsis=$(get_table_gsis "$tn")
+      if [[ -n "$gsis" ]]; then
+        while IFS= read -r gsi; do
+          [[ -z "$gsi" ]] && continue
+          out_gsi_r=$(fetch_metric "$tn" "ConsumedReadCapacityUnits" "$gsi")
+          out_gsi_w=$(fetch_metric "$tn" "ConsumedWriteCapacityUnits" "$gsi")
+          sum_gsi_r=$(jq_sum "$out_gsi_r"); sum_gsi_r=${sum_gsi_r:-0}
+          max_gsi_r=$(jq_max "$out_gsi_r"); max_gsi_r=${max_gsi_r:-0}
+          sum_gsi_w=$(jq_sum "$out_gsi_w"); sum_gsi_w=${sum_gsi_w:-0}
+          max_gsi_w=$(jq_max "$out_gsi_w"); max_gsi_w=${max_gsi_w:-0}
+          TOTAL_GSI_RCU=$(( TOTAL_GSI_RCU + sum_gsi_r ))
+          TOTAL_GSI_WCU=$(( TOTAL_GSI_WCU + sum_gsi_w ))
+          printf "  └─ GSI: %-31s %12d %12d %12d %12d\n" "$gsi" "$sum_gsi_r" "$sum_gsi_w" "$max_gsi_r" "$max_gsi_w"
+          if [[ $VERBOSE -eq 1 ]]; then
+            echo "    RCU:" && echo "$out_gsi_r" | jq -r '.Datapoints | sort_by(.Timestamp)[] | "      \(.Timestamp)  Sum=\(.Sum // 0)"'
+            echo "    WCU:" && echo "$out_gsi_w" | jq -r '.Datapoints | sort_by(.Timestamp)[] | "      \(.Timestamp)  Sum=\(.Sum // 0)"'
+            echo ""
+          fi
+        done <<< "$gsis"
+      fi
+    fi
   done
   echo "--------------------------------------------------------------------------------------------"
   echo ""
   echo "Total RCU (all tables): $TOTAL_RCU"
   echo "Total WCU (all tables): $TOTAL_WCU"
+  if [[ $TOTAL_GSI_RCU -gt 0 || $TOTAL_GSI_WCU -gt 0 ]]; then
+    echo "Total RCU (all GSIs): $TOTAL_GSI_RCU"
+    echo "Total WCU (all GSIs): $TOTAL_GSI_WCU"
+    echo "Total RCU (tables + GSIs): $(( TOTAL_RCU + TOTAL_GSI_RCU ))"
+    echo "Total WCU (tables + GSIs): $(( TOTAL_WCU + TOTAL_GSI_WCU ))"
+  fi
 fi
 
 echo ""
