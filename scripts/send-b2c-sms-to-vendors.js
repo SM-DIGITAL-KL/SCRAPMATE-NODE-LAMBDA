@@ -310,19 +310,18 @@ async function sendB2CSMSToVendors() {
     
     // Step 1: Get vendors from users table
     console.log('📋 Step 1: Getting vendors from users table...');
-    const vendorTypes = ['S', 'R', 'SR', 'D'];
+    // Filter: Include 'N' (all) and 'R' (only if not approved)
+    const vendorTypes = ['N', 'R'];
     let allVendors = [];
     let lastKey = null;
     
     do {
       const params = {
         TableName: USER_TABLE,
-        FilterExpression: '(user_type = :typeS OR user_type = :typeR OR user_type = :typeSR OR user_type = :typeD) AND (attribute_not_exists(del_status) OR del_status <> :deleted) AND attribute_exists(mob_num)',
+        FilterExpression: '(user_type = :typeN OR user_type = :typeR) AND (attribute_not_exists(del_status) OR del_status <> :deleted) AND attribute_exists(mob_num)',
         ExpressionAttributeValues: {
-          ':typeS': 'S',
+          ':typeN': 'N',
           ':typeR': 'R',
-          ':typeSR': 'SR',
-          ':typeD': 'D',
           ':deleted': 2
         }
       };
@@ -341,7 +340,32 @@ async function sendB2CSMSToVendors() {
       lastKey = response.LastEvaluatedKey;
     } while (lastKey);
     
-    console.log(`   ✅ Found ${allVendors.length} vendors from users table\n`);
+    // Filter vendors:
+    // 1. User type 'N' - include all
+    // 2. User type 'R' - only if approval_status is NOT 'approved' (pending, rejected, or no status)
+    const filteredVendors = allVendors.filter(vendor => {
+      if (vendor.user_type === 'N') {
+        return true; // Include all 'N' type users
+      }
+      if (vendor.user_type === 'R') {
+        // Only include 'R' if approval_status is NOT 'approved'
+        const approvalStatus = vendor.approval_status;
+        if (approvalStatus === 'approved') {
+          return false; // Exclude approved 'R' vendors
+        }
+        return true; // Include pending, rejected, or no status
+      }
+      return false;
+    });
+    
+    // Get list of excluded approved 'R' vendor phone numbers
+    const excludedApprovedRPhones = allVendors
+      .filter(v => v.user_type === 'R' && v.approval_status === 'approved')
+      .map(v => extractPhoneNumber(v.mob_num))
+      .filter(p => p);
+    
+    console.log(`   ✅ Found ${allVendors.length} vendors from users table`);
+    console.log(`   ✅ Filtered to ${filteredVendors.length} vendors (excluded ${excludedApprovedRPhones.length} approved 'R' vendors)\n`);
     
     // Step 2: Get vendors from bulk_message_notifications table
     console.log('📋 Step 2: Getting vendors from bulk_message_notifications table...');
@@ -373,8 +397,8 @@ async function sendB2CSMSToVendors() {
     console.log('📋 Step 3: Combining and deduplicating vendors...');
     const vendorMap = new Map(); // phone_number -> vendor data
     
-    // Add vendors from users table
-    for (const vendor of allVendors) {
+    // Add vendors from users table (using filtered vendors)
+    for (const vendor of filteredVendors) {
       const phone = extractPhoneNumber(vendor.mob_num);
       if (phone) {
         let shop = null;
@@ -397,9 +421,10 @@ async function sendB2CSMSToVendors() {
     }
     
     // Add vendors from bulk_message_notifications (prefer existing if phone exists)
+    // Exclude phone numbers belonging to approved 'R' vendors
     for (const bulk of bulkVendors) {
       const phone = extractPhoneNumber(bulk.phone_number);
-      if (phone && !vendorMap.has(phone)) {
+      if (phone && !vendorMap.has(phone) && !excludedApprovedRPhones.includes(phone)) {
         const businessData = bulk.business_data || {};
         vendorMap.set(phone, {
           phone_number: phone,
@@ -440,7 +465,7 @@ async function sendB2CSMSToVendors() {
     
     console.log(`   ✅ Total unique vendors: ${vendors.length}`);
     if (!isTestMode) {
-      console.log(`      From users table: ${allVendors.length}`);
+      console.log(`      From users table (filtered): ${filteredVendors.length} (excluded ${excludedApprovedRPhones.length} approved 'R')`);
       console.log(`      From bulk_message_notifications: ${bulkVendors.length}`);
       console.log(`      Unique phone numbers: ${vendors.length}`);
     }

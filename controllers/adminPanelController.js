@@ -6520,22 +6520,64 @@ class AdminPanelController {
       // Add vendor to the list
       currentVendorIds.push(vendorIdNum);
       
-      // Update order in database
-      const { getDynamoDBClient } = require('../config/dynamodb');
-      const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
-      const client = getDynamoDBClient();
+      // Check if order has GSI key attributes with wrong types and fix them
+      // This prevents "ValidationException: The update expression attempted to update the secondary index key to unsupported type"
+      const updateData = {
+        notified_vendor_ids: JSON.stringify(currentVendorIds)
+      };
       
-      const updateCommand = new UpdateCommand({
-        TableName: 'orders',
-        Key: { id: parseInt(orderId) },
-        UpdateExpression: 'SET notified_vendor_ids = :notifiedIds, updated_at = :updatedAt',
-        ExpressionAttributeValues: {
-          ':notifiedIds': JSON.stringify(currentVendorIds),
-          ':updatedAt': new Date().toISOString()
-        }
+      // Check GSI key attributes - they must be numbers (or strings that can be converted to numbers)
+      // DynamoDB GSI key attributes cannot be null, objects, or other invalid types
+      const gsiKeyAttributes = ['shop_id', 'delv_boy_id', 'delv_id'];
+      let needsGsiFix = false;
+      
+      console.log(`🔍 Checking GSI key attributes for order ${orderId}:`, {
+        shop_id: order.shop_id,
+        delv_boy_id: order.delv_boy_id,
+        delv_id: order.delv_id,
+        shop_id_type: typeof order.shop_id,
+        delv_boy_id_type: typeof order.delv_boy_id,
+        delv_id_type: typeof order.delv_id
       });
       
-      await client.send(updateCommand);
+      for (const attr of gsiKeyAttributes) {
+        if (order[attr] !== undefined) {
+          const currentValue = order[attr];
+          
+          // Skip null values - Order.updateById will handle them properly with REMOVE
+          if (currentValue === null) {
+            console.log(`ℹ️  ${attr} is null - will be handled by Order.updateById`);
+            continue;
+          }
+          
+          // If the value is a string that should be a number, we need to fix it
+          if (typeof currentValue === 'string' && !isNaN(currentValue) && currentValue.trim() !== '') {
+            const expectedValue = parseInt(currentValue);
+            console.log(`📝 Fixing ${attr} type: "${currentValue}" (string) -> ${expectedValue} (number)`);
+            updateData[attr] = expectedValue;
+            needsGsiFix = true;
+          }
+          // If the value is already a valid number, keep it as is (don't include in updateData)
+          else if (typeof currentValue === 'number' && !isNaN(currentValue)) {
+            // Valid number, no fix needed - DON'T include in update to avoid potential issues
+            continue;
+          }
+          // If the value is any other type (object, boolean, empty string, etc.), we need to remove it
+          else {
+            console.log(`⚠️  ${attr} has invalid type/value: ${typeof currentValue} = ${JSON.stringify(currentValue)} - will be set to null for removal`);
+            updateData[attr] = null;  // This will trigger REMOVE in Order.updateById
+            needsGsiFix = true;
+          }
+        }
+      }
+      
+      if (needsGsiFix) {
+        console.log(`⚠️  Order ${orderId} has GSI key attributes with wrong types. Fixing before update...`);
+      }
+      
+      // Update order in database using Order model to handle GSI keys properly
+      console.log(`📝 Updating order ${orderId} with data:`, Object.keys(updateData));
+      await Order.updateById(orderId, updateData);
       
       // Invalidate order cache
       const RedisCache = require('../utils/redisCache');
@@ -6763,6 +6805,875 @@ class AdminPanelController {
       return res.status(500).json({
         status: 'error',
         msg: 'Failed to add vendor to order',
+        data: null,
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * POST /admin/order/:orderId/status
+   * Update order status by admin
+   * Body: { status: number, notes?: string }
+   * Status codes: 1=Scheduled, 2=Accepted, 3=In Progress, 4=Picked Up, 5=Completed, 6=Accepted by Other, 7=Cancelled
+   */
+  static async adminUpdateOrderStatus(req, res) {
+    try {
+      const { orderId } = req.params;
+      const { status, notes } = req.body;
+      
+      console.log(`🟢 AdminPanelController.adminUpdateOrderStatus called`, { orderId, status, notes });
+      
+      // Validate status
+      const validStatuses = [1, 2, 3, 4, 5, 6, 7];
+      if (!validStatuses.includes(parseInt(status))) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Invalid status value. Must be one of: 1 (Scheduled), 2 (Accepted), 3 (In Progress), 4 (Picked Up), 5 (Completed), 6 (Accepted by Other), 7 (Cancelled)',
+          data: null
+        });
+      }
+      
+      // Get order details
+      const order = await Order.getById(orderId);
+      if (!order) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Order not found',
+          data: null
+        });
+      }
+      
+      const oldStatus = order.status;
+      const newStatus = parseInt(status);
+      
+      // Prepare update data
+      const updateData = {
+        status: newStatus,
+        updated_at: new Date().toISOString()
+      };
+      
+      // Add admin notes if provided
+      if (notes) {
+        updateData.admin_notes = notes;
+      }
+      
+      // Add status change timestamp based on the new status
+      const now = new Date().toISOString();
+      switch (newStatus) {
+        case 1:
+          // When reverting to Scheduled, clear acceptance-related timestamps
+          updateData.accepted_at = null;
+          break;
+        case 2:
+          updateData.accepted_at = now;
+          break;
+        case 3:
+          updateData.in_progress_at = now;
+          break;
+        case 4:
+          updateData.picked_up_at = now;
+          break;
+        case 5:
+          updateData.completed_at = now;
+          break;
+        case 7:
+          updateData.cancelled_at = now;
+          break;
+      }
+      
+      // Special handling for reverting from Accepted (2) to Scheduled (1)
+      // Clear shop_id and delivery assignments to make order available again
+      if (oldStatus === 2 && newStatus === 1) {
+        console.log(`🔄 Reverting order ${orderId} from Accepted to Scheduled - clearing assignments`);
+        updateData.shop_id = null;
+        updateData.delv_id = null;
+        updateData.delv_boy_id = null;
+        updateData.accepted_at = null;
+        updateData.reverted_to_scheduled_at = now;
+        updateData.reverted_from_accepted = true;
+      }
+      
+      // Update order
+      await Order.updateById(orderId, updateData);
+      
+      // Invalidate caches
+      try {
+        await RedisCache.delete(RedisCache.orderKey(orderId));
+        await RedisCache.delete(RedisCache.listKey('orders'));
+        await RedisCache.delete(RedisCache.adminKey('dashboard_recent_orders_8'));
+        await RedisCache.delete(RedisCache.adminKey('dashboard'));
+        console.log('🗑️  Invalidated order caches after status update');
+      } catch (cacheErr) {
+        console.error('Cache invalidation error:', cacheErr);
+      }
+      
+      // If reverting from Accepted (2) to Scheduled (1), send notifications to previously notified vendors
+      let notificationResults = null;
+      if (oldStatus === 2 && newStatus === 1) {
+        console.log(`📤 Sending notifications to previously notified vendors for reverted order ${orderId}`);
+        notificationResults = await AdminPanelController._sendRevertToScheduledNotifications(order, orderId);
+      }
+      
+      const statusLabels = {
+        1: 'Scheduled',
+        2: 'Accepted',
+        3: 'In Progress',
+        4: 'Picked Up',
+        5: 'Completed',
+        6: 'Accepted by Other',
+        7: 'Cancelled'
+      };
+      
+      console.log(`✅ Order ${orderId} status updated from ${oldStatus} (${statusLabels[oldStatus]}) to ${newStatus} (${statusLabels[newStatus]})`);
+      
+      const responseData = {
+        order_id: orderId,
+        old_status: oldStatus,
+        old_status_label: statusLabels[oldStatus],
+        new_status: newStatus,
+        new_status_label: statusLabels[newStatus],
+        updated_at: updateData.updated_at
+      };
+      
+      // Add notification results if vendors were notified
+      if (notificationResults) {
+        responseData.notifications = notificationResults;
+      }
+      
+      return res.json({
+        status: 'success',
+        msg: `Order status updated successfully from ${statusLabels[oldStatus]} to ${statusLabels[newStatus]}`,
+        data: responseData
+      });
+      
+    } catch (error) {
+      console.error('❌ Error updating order status:', error);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Failed to update order status',
+        data: null,
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Helper function to send push notifications and SMS to previously notified vendors
+   * when an order is reverted from Accepted (2) back to Scheduled (1)
+   * Filters vendors to only send to:
+   * - User type 'N' (New users)
+   * - Pending/Rejected user_type 'R' (not approved)
+   * - Phone numbers from bulk_message_notifications not in database
+   */
+  static async _sendRevertToScheduledNotifications(order, orderId) {
+    try {
+      console.log(`📤 [_sendRevertToScheduledNotifications] Starting notification process for order ${orderId}`);
+      
+      // Get notified_vendor_ids from the order
+      let notifiedVendorIds = order.notified_vendor_ids || [];
+      
+      // Parse if it's a string
+      if (typeof notifiedVendorIds === 'string') {
+        try {
+          notifiedVendorIds = JSON.parse(notifiedVendorIds);
+        } catch (e) {
+          console.warn(`⚠️ Could not parse notified_vendor_ids:`, e.message);
+          notifiedVendorIds = [];
+        }
+      }
+      
+      // Ensure it's an array
+      if (!Array.isArray(notifiedVendorIds)) {
+        notifiedVendorIds = [notifiedVendorIds];
+      }
+      
+      // Filter out invalid IDs
+      notifiedVendorIds = notifiedVendorIds
+        .map(id => typeof id === 'string' && !isNaN(id) ? parseInt(id) : id)
+        .filter(id => !isNaN(id) && id > 0);
+      
+      if (notifiedVendorIds.length === 0) {
+        console.log(`ℹ️ No notified vendors found for order ${orderId}`);
+        return { pushSent: 0, smsSent: 0, totalVendors: 0, message: 'No notified vendors found' };
+      }
+      
+      console.log(`📋 Found ${notifiedVendorIds.length} previously notified vendors`);
+      
+      // Parse order details for notification
+      let orderDetailsText = 'New pickup request';
+      let materialName = 'scrap';
+      try {
+        const orderDetailsObj = typeof order.orderdetails === 'string'
+          ? JSON.parse(order.orderdetails)
+          : order.orderdetails;
+
+        if (orderDetailsObj && Array.isArray(orderDetailsObj) && orderDetailsObj.length > 0) {
+          const materialCount = orderDetailsObj.length;
+          const totalQty = orderDetailsObj.reduce((sum, item) => {
+            const qty = parseFloat(item.expected_weight_kg || item.quantity || item.qty || 0);
+            return sum + qty;
+          }, 0);
+          orderDetailsText = `${materialCount} material(s), ${totalQty} kg`;
+          materialName = orderDetailsObj[0].material_name || orderDetailsObj[0].name || orderDetailsObj[0].category_name || 'scrap';
+        }
+      } catch (parseErr) {
+        console.warn('⚠️ Could not parse order details for notification:', parseErr.message);
+      }
+
+      // Create notification content
+      const orderNumber = order.order_number || order.order_no || 'N/A';
+      const notificationTitle = `📦 New Pickup Request #${orderNumber}`;
+      const addressPreview = order.customerdetails || order.address
+        ? ((order.customerdetails || order.address).length > 50
+          ? (order.customerdetails || order.address).substring(0, 50) + '...'
+          : (order.customerdetails || order.address))
+        : 'Address not provided';
+      const notificationBody = `${orderDetailsText} | Weight: ${order.estim_weight || 0} kg | Price: ₹${order.estim_price || 0} | ${addressPreview}`;
+      const payableAmount = Math.round(order.estim_price || order.estimated_price || 0);
+      const smsMessage = `Scrapmate pickup request ${orderNumber} of ${materialName}. Payable amount Rs${payableAmount}. Open B2C dashboard to accept.`;
+
+      console.log(`📤 Notification Title: ${notificationTitle}`);
+      console.log(`📤 SMS Message: ${smsMessage}`);
+      
+      // Fetch user details for all notified vendors
+      const { BatchGetCommand } = require('@aws-sdk/lib-dynamodb');
+      const { getDynamoDBClient } = require('../config/dynamodb');
+      const client = getDynamoDBClient();
+      const User = require('../models/User');
+      
+      // Batch fetch users
+      const usersMap = new Map();
+      const batchSize = 100;
+      for (let i = 0; i < notifiedVendorIds.length; i += batchSize) {
+        const batch = notifiedVendorIds.slice(i, i + batchSize);
+        const keys = batch.map(id => ({ id: parseInt(id) }));
+        
+        try {
+          const batchCommand = new BatchGetCommand({
+            RequestItems: {
+              'users': {
+                Keys: keys,
+                ProjectionExpression: 'id, #name, mob_num, fcm_token',
+                ExpressionAttributeNames: {
+                  '#name': 'name'
+                }
+              }
+            }
+          });
+          const batchResponse = await client.send(batchCommand);
+          
+          if (batchResponse.Responses && batchResponse.Responses['users']) {
+            batchResponse.Responses['users'].forEach(user => {
+              usersMap.set(parseInt(user.id), user);
+            });
+          }
+        } catch (batchErr) {
+          console.error(`❌ Batch get error:`, batchErr.message);
+        }
+      }
+      
+      console.log(`📋 Fetched ${usersMap.size} users from database`);
+      
+      // Send Push Notifications to all notified vendors
+      const { sendVendorNotification } = require('../utils/fcmNotification');
+      let pushSuccessCount = 0;
+      
+      const pushPromises = notifiedVendorIds.map(async (vendorUserId) => {
+        try {
+          const vendorUser = usersMap.get(parseInt(vendorUserId));
+
+          if (vendorUser && vendorUser.fcm_token) {
+            await sendVendorNotification(
+              vendorUser.fcm_token,
+              notificationTitle,
+              notificationBody,
+              {
+                type: 'pickup_request',
+                order_id: order.id.toString(),
+                order_number: orderNumber.toString(),
+                customer_id: (order.customer_id || '').toString(),
+                status: '1',
+                timestamp: new Date().toISOString(),
+                is_reverted: 'true'
+              }
+            );
+            console.log(`✅ Push notification sent to vendor (user_id: ${vendorUserId})`);
+            return { success: true, user_id: vendorUserId, type: 'push' };
+          } else {
+            console.warn(`⚠️ Vendor user (user_id: ${vendorUserId}) has no FCM token`);
+            return { success: false, user_id: vendorUserId, type: 'push', reason: 'no_fcm_token' };
+          }
+        } catch (err) {
+          console.error(`❌ Error sending push notification:`, err.message);
+          return { success: false, user_id: vendorUserId, type: 'push', error: err.message };
+        }
+      });
+
+      const pushResults = await Promise.allSettled(pushPromises);
+      pushSuccessCount = pushResults.filter(r => r.status === 'fulfilled' && r.value?.success).length;
+      console.log(`✅ Push notifications: ${pushSuccessCount}/${notifiedVendorIds.length} sent successfully`);
+      
+      // Send SMS to all notified vendors
+      const http = require('http');
+      const querystring = require('querystring');
+      
+      const SMS_CONFIG = {
+        username: 'scrapmate',
+        sendername: 'SCRPMT',
+        smstype: 'TRANS',
+        apikey: '1bf0131f-d1f2-49ed-9c57-19f1b4400f32',
+        peid: '1701173389563945545',
+        templateid: '1707176812500484578'
+      };
+      
+      const extractPhoneNumber = (phone) => {
+        if (!phone) return null;
+        let phoneStr = String(phone);
+        let cleaned = phoneStr.replace(/\s+/g, '').replace(/[^\d+]/g, '');
+        if (cleaned.startsWith('+91')) {
+          cleaned = cleaned.substring(3);
+        } else if (cleaned.startsWith('91') && cleaned.length === 12) {
+          cleaned = cleaned.substring(2);
+        }
+        if (cleaned.length === 10 && /^[6-9]\d{9}$/.test(cleaned)) {
+          return cleaned;
+        }
+        return null;
+      };
+      
+      const sendSMS = (phoneNumber, message) => {
+        return new Promise((resolve, reject) => {
+          const params = querystring.stringify({
+            username: SMS_CONFIG.username,
+            message: message,
+            sendername: SMS_CONFIG.sendername,
+            smstype: SMS_CONFIG.smstype,
+            numbers: phoneNumber,
+            apikey: SMS_CONFIG.apikey,
+            peid: SMS_CONFIG.peid,
+            templateid: SMS_CONFIG.templateid,
+          });
+          
+          const options = {
+            hostname: 'sms.bulksmsindia.in',
+            path: `/v2/sendSMS?${params}`,
+            method: 'GET',
+            timeout: 30000,
+          };
+          
+          const req = http.request(options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+              try {
+                const response = JSON.parse(data);
+                resolve(response);
+              } catch (e) {
+                resolve({ raw: data });
+              }
+            });
+            res.on('error', (error) => reject(error));
+          });
+          
+          req.on('error', (error) => reject(error));
+          req.on('timeout', () => {
+            req.destroy();
+            reject(new Error('SMS request timeout'));
+          });
+          
+          req.setTimeout(30000);
+          req.end();
+        });
+      };
+      
+      // Prepare SMS recipients (all notified vendors)
+      const smsRecipients = [];
+      for (const vendorId of notifiedVendorIds) {
+        const user = usersMap.get(parseInt(vendorId));
+        if (user && user.mob_num) {
+          const phone = extractPhoneNumber(user.mob_num);
+          if (phone) {
+            smsRecipients.push({
+              phone,
+              user_id: vendorId,
+              name: user.name || 'Vendor'
+            });
+          }
+        }
+      }
+      
+      console.log(`📱 Total SMS recipients: ${smsRecipients.length}`);
+      
+      // Send SMS
+      let smsSuccessCount = 0;
+      const smsPromises = smsRecipients.map(async (recipient) => {
+        try {
+          const smsResult = await sendSMS(recipient.phone, smsMessage);
+          
+          let isSuccess = false;
+          if (Array.isArray(smsResult) && smsResult.length > 0) {
+            isSuccess = smsResult[0].status === 'success';
+          } else if (smsResult && typeof smsResult === 'object') {
+            isSuccess = smsResult.status === 'success' || smsResult.success === true;
+          }
+          
+          if (isSuccess) {
+            console.log(`✅ SMS sent to ${recipient.phone}`);
+            smsSuccessCount++;
+          }
+          
+          return { 
+            success: isSuccess, 
+            phone: recipient.phone, 
+            user_id: recipient.user_id 
+          };
+        } catch (err) {
+          console.error(`❌ Error sending SMS to ${recipient.phone}:`, err.message);
+          return { success: false, phone: recipient.phone, error: err.message };
+        }
+      });
+      
+      await Promise.allSettled(smsPromises);
+      console.log(`✅ SMS notifications: ${smsSuccessCount}/${smsRecipients.length} sent successfully`);
+      
+      // Save notification record
+      try {
+        const BulkMessageNotification = require('../models/BulkMessageNotification');
+        await BulkMessageNotification.save({
+          phone_number: 'multiple',
+          business_data: {
+            order_id: order.id,
+            order_number: orderNumber,
+            vendor_user_ids: notifiedVendorIds,
+            material_name: materialName,
+            amount: payableAmount,
+            notification_type: 'revert_to_scheduled'
+          },
+          message: smsMessage,
+          status: 'sent',
+          language: 'en'
+        });
+      } catch (dbErr) {
+        console.error('❌ Error saving notification record:', dbErr.message);
+      }
+      
+      return {
+        pushSent: pushSuccessCount,
+        smsSent: smsSuccessCount,
+        totalVendors: notifiedVendorIds.length,
+        vendorIds: notifiedVendorIds
+      };
+      
+    } catch (error) {
+      console.error(`❌ [_sendRevertToScheduledNotifications] Error:`, error.message);
+      return { pushSent: 0, smsSent: 0, totalVendors: 0, error: error.message };
+    }
+  }
+
+  /**
+   * POST /admin/order/:orderId/assign-vendor
+   * Assign a vendor to an order (sets shop_id and changes status to Accepted)
+   * Body: { vendor_id: number, vendor_type: 'shop'|'delivery', notify_vendor?: boolean }
+   */
+  static async adminAssignVendorToOrder(req, res) {
+    try {
+      const { orderId } = req.params;
+      const { vendor_id, vendor_type = 'shop', notify_vendor = true } = req.body;
+      
+      console.log(`🟢 AdminPanelController.adminAssignVendorToOrder called`, { orderId, vendor_id, vendor_type, notify_vendor });
+      
+      // Validate required fields
+      if (!orderId || orderId === 'undefined') {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Order ID is required',
+          data: null
+        });
+      }
+      
+      if (!vendor_id) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Vendor ID is required',
+          data: null
+        });
+      }
+      
+      // Get order details
+      const order = await Order.getById(orderId);
+      if (!order) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Order not found',
+          data: null
+        });
+      }
+      
+      // Check if order is already completed or cancelled
+      if (order.status === 5) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Cannot assign vendor to a completed order',
+          data: null
+        });
+      }
+      
+      if (order.status === 7) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Cannot assign vendor to a cancelled order',
+          data: null
+        });
+      }
+      
+      const vendorIdNum = parseInt(vendor_id);
+      const now = new Date().toISOString();
+      
+      // Prepare update data
+      const updateData = {
+        status: 2, // Accepted
+        updated_at: now,
+        accepted_at: now,
+        assigned_by_admin: true,
+        assigned_at: now
+      };
+      
+      let vendorDetails = null;
+      let shopDetails = null;
+      
+      if (vendor_type === 'delivery') {
+        // Assign delivery boy
+        updateData.delv_id = vendorIdNum;
+        updateData.delv_boy_id = vendorIdNum;
+        
+        // Get delivery boy details
+        const DeliveryBoy = require('../models/DeliveryBoy');
+        vendorDetails = await DeliveryBoy.findById(vendorIdNum);
+        
+      } else {
+        // Assign shop/vendor
+        updateData.shop_id = vendorIdNum;
+        
+        // Get vendor user details
+        console.log(`🔍 Fetching vendor details for user ID: ${vendorIdNum}`);
+        vendorDetails = await User.findById(vendorIdNum);
+        console.log(`✅ Vendor details:`, vendorDetails ? 'found' : 'not found');
+        
+        // Get shop details
+        const Shop = require('../models/Shop');
+        console.log(`🔍 Fetching shop details for user ID: ${vendorIdNum}`);
+        shopDetails = await Shop.findByUserId(vendorIdNum);
+        console.log(`✅ Shop details:`, shopDetails ? 'found' : 'not found');
+        
+        if (shopDetails) {
+          updateData.shopdetails = JSON.stringify({
+            shop_id: shopDetails.id,
+            shopname: shopDetails.shopname || shopDetails.shop_name,
+            name: shopDetails.shopname || shopDetails.shop_name,
+            ownername: shopDetails.ownername || shopDetails.owner_name,
+            contact: shopDetails.contact,
+            email: shopDetails.email,
+            address: shopDetails.address,
+            location: shopDetails.location,
+            place: shopDetails.place,
+            state: shopDetails.state,
+            pincode: shopDetails.pincode
+          });
+        }
+      }
+      
+      // Update order
+      console.log(`📝 Updating order ${orderId} with data:`, JSON.stringify(updateData));
+      await Order.updateById(orderId, updateData);
+      console.log(`✅ Order ${orderId} updated successfully`);
+      
+      // Add to notified vendors list
+      let notifiedVendorIds = [];
+      if (order.notified_vendor_ids) {
+        try {
+          notifiedVendorIds = typeof order.notified_vendor_ids === 'string' 
+            ? JSON.parse(order.notified_vendor_ids) 
+            : order.notified_vendor_ids;
+        } catch (e) {
+          notifiedVendorIds = [];
+        }
+      }
+      
+      if (!notifiedVendorIds.includes(vendorIdNum)) {
+        notifiedVendorIds.push(vendorIdNum);
+        await Order.updateById(orderId, {
+          notified_vendor_ids: JSON.stringify(notifiedVendorIds)
+        });
+      }
+      
+      // Send notification to vendor if requested
+      let notificationSent = false;
+      if (notify_vendor && vendorDetails) {
+        try {
+          if (vendorDetails.fcm_token) {
+            const { sendVendorNotification } = require('../utils/fcmNotification');
+            
+            const orderNumber = order.order_number || order.order_no || orderId;
+            const notificationTitle = `📦 Order Assigned by Admin`;
+            const notificationBody = `Order #${orderNumber} has been assigned to you by admin. Please check your dashboard.`;
+            
+            await sendVendorNotification(
+              vendorDetails.fcm_token,
+              notificationTitle,
+              notificationBody,
+              {
+                type: 'order_assigned_by_admin',
+                order_id: orderId.toString(),
+                order_number: orderNumber.toString(),
+                status: '2',
+                timestamp: now
+              }
+            );
+            
+            notificationSent = true;
+            console.log(`✅ FCM notification sent to vendor ${vendorIdNum}`);
+          }
+        } catch (notifError) {
+          console.error(`❌ Error sending notification to vendor ${vendorIdNum}:`, notifError.message);
+        }
+      }
+      
+      // Invalidate caches
+      try {
+        await RedisCache.delete(RedisCache.orderKey(orderId));
+        await RedisCache.delete(RedisCache.listKey('orders'));
+        await RedisCache.delete(RedisCache.adminKey('dashboard_recent_orders_8'));
+        await RedisCache.delete(RedisCache.adminKey('dashboard'));
+        console.log('🗑️  Invalidated order caches after vendor assignment');
+      } catch (cacheErr) {
+        console.error('Cache invalidation error:', cacheErr);
+      }
+      
+      console.log(`✅ Vendor ${vendorIdNum} assigned to order ${orderId} by admin`);
+      
+      return res.json({
+        status: 'success',
+        msg: 'Vendor assigned to order successfully',
+        data: {
+          order_id: orderId,
+          vendor_id: vendorIdNum,
+          vendor_type: vendor_type,
+          vendor_name: vendorDetails?.name || vendorDetails?.shopname || 'N/A',
+          shop_name: shopDetails?.shopname || shopDetails?.shop_name || null,
+          status: 2,
+          status_label: 'Accepted',
+          notification_sent: notificationSent,
+          assigned_at: now
+        }
+      });
+      
+    } catch (error) {
+      console.error('❌ Error assigning vendor to order:', error);
+      console.error('Error stack:', error.stack);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Failed to assign vendor to order',
+        data: null,
+        error: error.message || String(error)
+      });
+    }
+  }
+
+  /**
+   * GET /admin/vendors/search
+   * Search vendors by name, mobile, or shop name for assignment
+   * Query: { q: string, type?: 'R'|'S'|'SR'|'D', limit?: number }
+   */
+  static async searchVendorsForAssignment(req, res) {
+    try {
+      const { q, type, limit = 20 } = req.query;
+      
+      console.log(`🟢 AdminPanelController.searchVendorsForAssignment called`, { q, type, limit });
+      
+      if (!q || q.trim().length < 2) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Search query must be at least 2 characters',
+          data: []
+        });
+      }
+      
+      const searchTerm = q.trim().toLowerCase();
+      const limitNum = parseInt(limit) || 20;
+      
+      // Get users based on type filter
+      let users = [];
+      const validTypes = type ? [type] : ['R', 'S', 'SR', 'D'];
+      
+      for (const userType of validTypes) {
+        const typeUsers = await User.findByUserType(userType);
+        users = users.concat(typeUsers);
+      }
+      
+      // Filter users by search term
+      const filteredUsers = users.filter(user => {
+        const nameMatch = user.name && typeof user.name === 'string' && user.name.toLowerCase().includes(searchTerm);
+        const mobileMatch = user.mob_num && user.mob_num.toString().includes(searchTerm);
+        const emailMatch = user.email && typeof user.email === 'string' && user.email.toLowerCase().includes(searchTerm);
+        return nameMatch || mobileMatch || emailMatch;
+      }).slice(0, limitNum);
+      
+      // Enrich with shop details for vendors
+      const Shop = require('../models/Shop');
+      const enrichedUsers = await Promise.all(filteredUsers.map(async (user) => {
+        let shop = null;
+        if (['R', 'S', 'SR'].includes(user.user_type)) {
+          shop = await Shop.findByUserId(user.id);
+        }
+        
+        return {
+          id: user.id,
+          name: user.name || 'N/A',
+          mobile: user.mob_num || 'N/A',
+          email: user.email || 'N/A',
+          user_type: user.user_type,
+          app_version: user.app_version || 'v1',
+          shop_name: shop?.shopname || shop?.shop_name || null,
+          shop_id: shop?.id || null,
+          shop_address: shop?.address || null,
+          shop_place: shop?.place || null,
+          fcm_token: user.fcm_token || null
+        };
+      }));
+      
+      console.log(`✅ Found ${enrichedUsers.length} vendors matching "${searchTerm}"`);
+      
+      return res.json({
+        status: 'success',
+        msg: 'Vendors retrieved successfully',
+        data: enrichedUsers
+      });
+      
+    } catch (error) {
+      console.error('❌ Error searching vendors:', error);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Failed to search vendors',
+        data: [],
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * GET /admin/order/:orderId/available-vendors
+   * Get list of available vendors for an order based on location
+   * Query: { radius?: number }
+   */
+  static async getAvailableVendorsForOrder(req, res) {
+    try {
+      const { orderId } = req.params;
+      const { radius = 20 } = req.query; // Default 20km radius
+      
+      console.log(`🟢 AdminPanelController.getAvailableVendorsForOrder called`, { orderId, radius });
+      
+      // Get order details
+      const order = await Order.getById(orderId);
+      if (!order) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Order not found',
+          data: null
+        });
+      }
+      
+      if (!order.lat_log) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Order does not have location coordinates',
+          data: null
+        });
+      }
+      
+      const [orderLat, orderLng] = order.lat_log.split(',').map(Number);
+      const radiusKm = parseFloat(radius);
+      
+      // Get all vendor users (R, S, SR types)
+      const vendorTypes = ['R', 'S', 'SR'];
+      let allVendors = [];
+      
+      for (const userType of vendorTypes) {
+        const users = await User.findByUserType(userType);
+        allVendors = allVendors.concat(users);
+      }
+      
+      // Get shops for all vendors
+      const Shop = require('../models/Shop');
+      const vendorsWithDistance = await Promise.all(allVendors.map(async (vendor) => {
+        const shop = await Shop.findByUserId(vendor.id);
+        
+        if (!shop || !shop.lat_log) {
+          return null;
+        }
+        
+        const [shopLat, shopLng] = shop.lat_log.split(',').map(Number);
+        if (!shopLat || !shopLng) {
+          return null;
+        }
+        
+        // Calculate distance using Haversine formula
+        const R = 6371; // Earth's radius in km
+        const dLat = (shopLat - orderLat) * Math.PI / 180;
+        const dLng = (shopLng - orderLng) * Math.PI / 180;
+        const a =
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(orderLat * Math.PI / 180) * Math.cos(shopLat * Math.PI / 180) *
+          Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        const distance = R * c;
+        
+        return {
+          id: vendor.id,
+          name: vendor.name || 'N/A',
+          mobile: vendor.mob_num || 'N/A',
+          email: vendor.email || 'N/A',
+          user_type: vendor.user_type,
+          shop_name: shop?.shopname || shop?.shop_name || 'N/A',
+          shop_id: shop?.id,
+          shop_address: shop?.address,
+          shop_place: shop?.place,
+          shop_type: shop?.shop_type,
+          distance_km: parseFloat(distance.toFixed(2)),
+          within_radius: distance <= radiusKm,
+          fcm_token: vendor.fcm_token || null
+        };
+      }));
+      
+      // Filter out null results and sort by distance
+      const validVendors = vendorsWithDistance
+        .filter(v => v !== null)
+        .sort((a, b) => a.distance_km - b.distance_km);
+      
+      // Separate vendors within radius and outside
+      const withinRadius = validVendors.filter(v => v.within_radius);
+      const outsideRadius = validVendors.filter(v => !v.within_radius);
+      
+      console.log(`✅ Found ${withinRadius.length} vendors within ${radiusKm}km, ${outsideRadius.length} outside radius`);
+      
+      return res.json({
+        status: 'success',
+        msg: 'Available vendors retrieved successfully',
+        data: {
+          order_id: orderId,
+          order_location: { lat: orderLat, lng: orderLng },
+          radius_km: radiusKm,
+          vendors_within_radius: withinRadius,
+          vendors_outside_radius: outsideRadius.slice(0, 10), // Show top 10 outside radius
+          total_vendors: validVendors.length
+        }
+      });
+      
+    } catch (error) {
+      console.error('❌ Error getting available vendors:', error);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Failed to get available vendors',
         data: null,
         error: error.message
       });

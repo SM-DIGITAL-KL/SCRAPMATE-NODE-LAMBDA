@@ -262,6 +262,7 @@ class Order {
         }
         
         results.sort((a, b) => {
+
           const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
           const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
           if (dateB !== dateA) return dateB - dateA;
@@ -458,32 +459,75 @@ class Order {
       const client = getDynamoDBClient();
       const id = typeof orderId === 'string' && !isNaN(orderId) ? parseInt(orderId) : orderId;
       
-      const updateExpressions = [];
+      const setExpressions = [];
+      const removeExpressions = [];
       const expressionAttributeValues = {};
       const expressionAttributeNames = {};
       
+      // GSI key attributes that cannot be set to null - must be removed instead
+      const gsiKeyAttributes = ['shop_id', 'delv_boy_id', 'delv_id'];
+      
       Object.keys(updateData).forEach((key, index) => {
-        if (updateData[key] !== undefined) {
+        if (updateData[key] !== undefined && key !== 'updated_at') {
           const attrName = `#attr${index}`;
-          const attrValue = `:val${index}`;
-          updateExpressions.push(`${attrName} = ${attrValue}`);
           expressionAttributeNames[attrName] = key;
-          expressionAttributeValues[attrValue] = updateData[key];
+          
+          // Check if this is a GSI key attribute being set to null
+          if (gsiKeyAttributes.includes(key) && updateData[key] === null) {
+            // Use REMOVE for GSI key attributes set to null
+            console.log(`🗑️  Order.updateById: Using REMOVE for GSI key ${key}`);
+            removeExpressions.push(attrName);
+          } else {
+            // Use SET for normal attributes
+            const attrValue = `:val${index}`;
+            setExpressions.push(`${attrName} = ${attrValue}`);
+            expressionAttributeValues[attrValue] = updateData[key];
+            console.log(`✏️  Order.updateById: Using SET for ${key} = ${JSON.stringify(updateData[key])}`);
+          }
         }
       });
       
-      if (updateExpressions.length === 0) {
+      if (setExpressions.length === 0 && removeExpressions.length === 0) {
         return { affectedRows: 0 };
       }
       
-      updateExpressions.push('#updated = :updated');
-      expressionAttributeNames['#updated'] = 'updated_at';
-      expressionAttributeValues[':updated'] = new Date().toISOString();
+      // Build the update expression
+      let updateExpression = '';
+      if (setExpressions.length > 0) {
+        setExpressions.push('#updated = :updated');
+        expressionAttributeNames['#updated'] = 'updated_at';
+        expressionAttributeValues[':updated'] = new Date().toISOString();
+        updateExpression += `SET ${setExpressions.join(', ')}`;
+      }
+      if (removeExpressions.length > 0) {
+        if (updateExpression) updateExpression += ' ';
+        updateExpression += `REMOVE ${removeExpressions.join(', ')}`;
+        // Also need to update updated_at when removing
+        if (setExpressions.length === 0) {
+          // If no SET expressions, we need to add one for updated_at
+          expressionAttributeNames['#updated'] = 'updated_at';
+          expressionAttributeValues[':updated'] = new Date().toISOString();
+          updateExpression = `SET #updated = :updated ${updateExpression}`;
+        }
+      }
       
+      // Debug logging for GSI key issues
+      console.log(`🔧 Order.updateById Debug:`, {
+        orderId: id,
+        updateExpression,
+        setExpressions,
+        removeExpressions,
+        expressionAttributeNames,
+        expressionAttributeValues: Object.keys(expressionAttributeValues).reduce((acc, key) => {
+          acc[key] = typeof expressionAttributeValues[key];
+          return acc;
+        }, {})
+      });
+
       const command = new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { id: id },
-        UpdateExpression: `SET ${updateExpressions.join(', ')}`,
+        UpdateExpression: updateExpression,
         ExpressionAttributeNames: expressionAttributeNames,
         ExpressionAttributeValues: expressionAttributeValues,
         ReturnValues: 'ALL_OLD'
@@ -837,140 +881,89 @@ class Order {
 
   // Count orders from v2 customer_app users (excluding bulk orders)
   // Bulk orders are identified by having bulk_request_id attribute
-  // OPTIMIZED: Uses GSIs for faster queries
+  // SIMPLIFIED: Direct scan approach for reliability (no GSIs required)
   static async countCustomerAppOrdersV2() {
     try {
       const client = getDynamoDBClient();
-      let count = 0;
+      
+      console.log('📊 [countCustomerAppOrdersV2] Starting count of orders from v2 customer_app users');
 
-      console.log('📊 [countCustomerAppOrdersV2] Starting optimized count of orders from v2 customer_app users (excluding bulk orders)');
-
-      // OPTIMIZED: Use app_version-app_type-index GSI to get v2 customer_app users
-      const v2CustomerAppUsers = [];
+      // Step 1: Get all v2 customer_app user IDs
+      const v2CustomerAppUsers = new Set();
       let userLastKey = null;
       
-      try {
-        do {
-          const userQueryCommand = new QueryCommand({
-            TableName: 'users',
-            IndexName: 'app_version-app_type-index',
-            KeyConditionExpression: 'app_version = :appVersion AND app_type = :appType',
-            FilterExpression: '(attribute_not_exists(del_status) OR del_status <> :deleted)',
-            ExpressionAttributeValues: {
-              ':appVersion': 'v2',
-              ':appType': 'customer_app',
-              ':deleted': 2
-            },
-            ProjectionExpression: 'id'
+      do {
+        const userParams = {
+          TableName: 'users',
+          FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+          ExpressionAttributeValues: {
+            ':appVersion': 'v2',
+            ':appType': 'customer_app',
+            ':deleted': 2
+          },
+          ProjectionExpression: 'id'
+        };
+        if (userLastKey) userParams.ExclusiveStartKey = userLastKey;
+        
+        const userResponse = await client.send(new ScanCommand(userParams));
+        if (userResponse.Items) {
+          userResponse.Items.forEach(u => {
+            // Store multiple type variations to handle type mismatches
+            const id = u.id;
+            v2CustomerAppUsers.add(id);
+            v2CustomerAppUsers.add(String(id));
+            v2CustomerAppUsers.add(typeof id === 'string' && !isNaN(id) ? parseInt(id) : id);
           });
-          
-          if (userLastKey) {
-            userQueryCommand.input.ExclusiveStartKey = userLastKey;
-          }
-          
-          const userResponse = await client.send(userQueryCommand);
-          if (userResponse.Items) {
-            v2CustomerAppUsers.push(...userResponse.Items.map(u => u.id));
-          }
-          userLastKey = userResponse.LastEvaluatedKey;
-        } while (userLastKey);
-      } catch (gsiError) {
-        console.warn('⚠️  GSI app_version-app_type-index not available for users, using Scan fallback:', gsiError.message);
-        // Fallback to Scan
-        let userLastKey = null;
-        do {
-          const userParams = {
-            TableName: 'users',
-            FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
-            ExpressionAttributeValues: {
-              ':appVersion': 'v2',
-              ':appType': 'customer_app',
-              ':deleted': 2
-            },
-            ProjectionExpression: 'id'
-          };
-          if (userLastKey) userParams.ExclusiveStartKey = userLastKey;
-          const userCommand = new ScanCommand(userParams);
-          const userResponse = await client.send(userCommand);
-          if (userResponse.Items) {
-            v2CustomerAppUsers.push(...userResponse.Items.map(u => u.id));
-          }
-          userLastKey = userResponse.LastEvaluatedKey;
-        } while (userLastKey);
-      }
+        }
+        userLastKey = userResponse.LastEvaluatedKey;
+      } while (userLastKey);
 
-      console.log(`📊 [countCustomerAppOrdersV2] Found ${v2CustomerAppUsers.length} v2 customer_app users`);
+      console.log(`📊 [countCustomerAppOrdersV2] Found ${v2CustomerAppUsers.size / 3} unique v2 customer_app users`);
 
-      if (v2CustomerAppUsers.length === 0) {
+      if (v2CustomerAppUsers.size === 0) {
         console.log(`⚠️ [countCustomerAppOrdersV2] No v2 customer_app users found, returning 0`);
         return 0;
       }
 
-      // OPTIMIZED: Use customer_id-status-index GSI to query orders for each customer
-      // Process in parallel batches for better performance
-      const batchSize = 10; // Process 10 customers in parallel
-      const customerBatches = [];
-      for (let i = 0; i < v2CustomerAppUsers.length; i += batchSize) {
-        customerBatches.push(v2CustomerAppUsers.slice(i, i + batchSize));
-      }
-
-      // Process batches in parallel
-      const batchPromises = customerBatches.map(async (batch) => {
-        let batchCount = 0;
-        const customerPromises = batch.map(async (customerId) => {
-          try {
-            const cid = typeof customerId === 'string' && !isNaN(customerId) ? parseInt(customerId) : customerId;
-            let lastKey = null;
-            let customerOrderCount = 0;
-            
-            // Use customer_id-status-index GSI to query orders
-            try {
-              do {
-                const orderQueryCommand = new QueryCommand({
-                  TableName: TABLE_NAME,
-                  IndexName: 'customer_id-status-index',
-                  KeyConditionExpression: 'customer_id = :customerId',
-                  FilterExpression: 'attribute_not_exists(bulk_request_id)',
-                  ExpressionAttributeValues: {
-                    ':customerId': cid
-                  },
-                  Select: 'COUNT'
-                });
-                
-                if (lastKey) {
-                  orderQueryCommand.input.ExclusiveStartKey = lastKey;
-                }
-                
-                const response = await client.send(orderQueryCommand);
-                customerOrderCount += response.Count || 0;
-                lastKey = response.LastEvaluatedKey;
-              } while (lastKey);
-            } catch (gsiError) {
-              // Fallback: use findByCustomerId and filter
-              const orders = await this.findByCustomerId(cid);
-              customerOrderCount = orders.filter(order => !order.bulk_request_id).length;
-            }
-            
-            return customerOrderCount;
-          } catch (err) {
-            console.warn(`⚠️  Error counting orders for customer ${customerId}:`, err.message);
-            return 0;
-          }
-        });
+      // Step 2: Scan all orders and count those from v2 customer_app users (excluding bulk orders)
+      let count = 0;
+      let lastKey = null;
+      let scannedOrders = 0;
+      
+      do {
+        const orderParams = {
+          TableName: TABLE_NAME,
+          ProjectionExpression: 'customer_id, bulk_request_id',
+          Limit: 1000
+        };
+        if (lastKey) orderParams.ExclusiveStartKey = lastKey;
         
-        const results = await Promise.all(customerPromises);
-        batchCount = results.reduce((sum, count) => sum + count, 0);
-        return batchCount;
-      });
+        const orderResponse = await client.send(new ScanCommand(orderParams));
+        
+        if (orderResponse.Items) {
+          scannedOrders += orderResponse.Items.length;
+          
+          for (const order of orderResponse.Items) {
+            // Check if this order belongs to a v2 customer_app user
+            const customerId = order.customer_id;
+            if (customerId && v2CustomerAppUsers.has(customerId)) {
+              // Exclude bulk orders (orders with bulk_request_id)
+              if (!order.bulk_request_id) {
+                count++;
+              }
+            }
+          }
+        }
+        
+        lastKey = orderResponse.LastEvaluatedKey;
+      } while (lastKey);
 
-      const batchCounts = await Promise.all(batchPromises);
-      count = batchCounts.reduce((sum, batchCount) => sum + batchCount, 0);
-
-      console.log(`✅ [countCustomerAppOrdersV2] Completed: count=${count} (optimized with GSIs)`);
+      console.log(`✅ [countCustomerAppOrdersV2] Completed: scanned ${scannedOrders} orders, found ${count} customer app orders (v2)`);
       return count;
     } catch (err) {
       console.error('❌ [countCustomerAppOrdersV2] Error:', err);
-      throw err;
+      // Return 0 on error to prevent dashboard from crashing
+      return 0;
     }
   }
 
@@ -1000,140 +993,83 @@ class Order {
 
   // Get recent orders from v2 customer_app users with details (excluding bulk orders)
   // Bulk orders are identified by having bulk_request_id attribute
-  // OPTIMIZED: Uses GSIs for faster queries
+  // SIMPLIFIED: Uses direct scan for reliability (no GSIs required)
   static async getCustomerAppOrdersV2(limit = 10) {
     try {
       const client = getDynamoDBClient();
       
-      // OPTIMIZED: Use app_version-app_type-index GSI to get v2 customer_app users
-      const v2CustomerAppUsers = [];
+      console.log('📊 [getCustomerAppOrdersV2] Starting to get orders from v2 customer_app users');
+
+      // Step 1: Get all v2 customer_app user IDs
+      const v2CustomerAppUsers = new Set();
       let userLastKey = null;
       
-      try {
-        do {
-          const userQueryCommand = new QueryCommand({
-            TableName: 'users',
-            IndexName: 'app_version-app_type-index',
-            KeyConditionExpression: 'app_version = :appVersion AND app_type = :appType',
-            FilterExpression: '(attribute_not_exists(del_status) OR del_status <> :deleted)',
-            ExpressionAttributeValues: {
-              ':appVersion': 'v2',
-              ':appType': 'customer_app',
-              ':deleted': 2
-            },
-            ProjectionExpression: 'id'
+      do {
+        const userParams = {
+          TableName: 'users',
+          FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+          ExpressionAttributeValues: {
+            ':appVersion': 'v2',
+            ':appType': 'customer_app',
+            ':deleted': 2
+          },
+          ProjectionExpression: 'id'
+        };
+        if (userLastKey) userParams.ExclusiveStartKey = userLastKey;
+        
+        const userResponse = await client.send(new ScanCommand(userParams));
+        if (userResponse.Items) {
+          userResponse.Items.forEach(u => {
+            // Store multiple type variations to handle type mismatches
+            const id = u.id;
+            v2CustomerAppUsers.add(id);
+            v2CustomerAppUsers.add(String(id));
+            v2CustomerAppUsers.add(typeof id === 'string' && !isNaN(id) ? parseInt(id) : id);
           });
-          
-          if (userLastKey) {
-            userQueryCommand.input.ExclusiveStartKey = userLastKey;
-          }
-          
-          const userResponse = await client.send(userQueryCommand);
-          if (userResponse.Items) {
-            v2CustomerAppUsers.push(...userResponse.Items.map(u => u.id));
-          }
-          userLastKey = userResponse.LastEvaluatedKey;
-        } while (userLastKey);
-      } catch (gsiError) {
-        console.warn('⚠️  GSI app_version-app_type-index not available for users, using Scan fallback:', gsiError.message);
-        // Fallback to Scan
-        let userLastKey = null;
-        do {
-          const userParams = {
-            TableName: 'users',
-            FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
-            ExpressionAttributeValues: {
-              ':appVersion': 'v2',
-              ':appType': 'customer_app',
-              ':deleted': 2
-            },
-            ProjectionExpression: 'id'
-          };
-          if (userLastKey) userParams.ExclusiveStartKey = userLastKey;
-          const userCommand = new ScanCommand(userParams);
-          const userResponse = await client.send(userCommand);
-          if (userResponse.Items) {
-            v2CustomerAppUsers.push(...userResponse.Items.map(u => u.id));
-          }
-          userLastKey = userResponse.LastEvaluatedKey;
-        } while (userLastKey);
-      }
+        }
+        userLastKey = userResponse.LastEvaluatedKey;
+      } while (userLastKey);
 
-      console.log(`📊 [getCustomerAppOrdersV2] Found ${v2CustomerAppUsers.length} v2 customer_app users`);
+      console.log(`📊 [getCustomerAppOrdersV2] Found ${v2CustomerAppUsers.size / 3} unique v2 customer_app users`);
 
-      if (v2CustomerAppUsers.length === 0) {
+      if (v2CustomerAppUsers.size === 0) {
         console.log(`⚠️ [getCustomerAppOrdersV2] No v2 customer_app users found, returning empty array`);
         return [];
       }
 
-      // OPTIMIZED: Use customer_id-status-index GSI to query orders for each customer in parallel
-      // Collect orders from top customers first (to get recent orders faster)
+      // Step 2: Scan all orders and collect those from v2 customer_app users (excluding bulk orders)
       const allOrders = [];
-      const batchSize = 5; // Process 5 customers in parallel
-      const customerBatches = [];
-      for (let i = 0; i < v2CustomerAppUsers.length; i += batchSize) {
-        customerBatches.push(v2CustomerAppUsers.slice(i, i + batchSize));
-      }
-
-      // Process batches in parallel, but stop early if we have enough orders
-      for (const batch of customerBatches) {
-        if (allOrders.length >= limit * 2) break; // Stop if we have enough for sorting
+      let lastKey = null;
+      let scannedOrders = 0;
+      
+      do {
+        const orderParams = {
+          TableName: TABLE_NAME,
+          Limit: 1000
+        };
+        if (lastKey) orderParams.ExclusiveStartKey = lastKey;
         
-        const batchPromises = batch.map(async (customerId) => {
-          try {
-            const cid = typeof customerId === 'string' && !isNaN(customerId) ? parseInt(customerId) : customerId;
-            let lastKey = null;
-            const customerOrders = [];
-            
-            // Use customer_id-status-index GSI to query orders (limit to recent orders)
-            try {
-              do {
-                const orderQueryCommand = new QueryCommand({
-                  TableName: TABLE_NAME,
-                  IndexName: 'customer_id-status-index',
-                  KeyConditionExpression: 'customer_id = :customerId',
-                  FilterExpression: 'attribute_not_exists(bulk_request_id)',
-                  ExpressionAttributeValues: {
-                    ':customerId': cid
-                  },
-                  ScanIndexForward: false, // Sort descending by created_at
-                  Limit: 20 // Limit per customer to get recent orders
-                });
-                
-                if (lastKey) {
-                  orderQueryCommand.input.ExclusiveStartKey = lastKey;
-                }
-                
-                const response = await client.send(orderQueryCommand);
-                if (response.Items) {
-                  customerOrders.push(...response.Items);
-                }
-                lastKey = response.LastEvaluatedKey;
-                
-                // Stop if we have enough orders from this customer
-                if (customerOrders.length >= 20) break;
-              } while (lastKey);
-            } catch (gsiError) {
-              // Fallback: use findByCustomerId and filter
-              const orders = await this.findByCustomerId(cid);
-              customerOrders.push(...orders.filter(order => !order.bulk_request_id));
+        const orderResponse = await client.send(new ScanCommand(orderParams));
+        
+        if (orderResponse.Items) {
+          scannedOrders += orderResponse.Items.length;
+          
+          for (const order of orderResponse.Items) {
+            // Check if this order belongs to a v2 customer_app user
+            const customerId = order.customer_id;
+            if (customerId && v2CustomerAppUsers.has(customerId)) {
+              // Exclude bulk orders (orders with bulk_request_id)
+              if (!order.bulk_request_id) {
+                allOrders.push(order);
+              }
             }
-            
-            return customerOrders;
-          } catch (err) {
-            console.warn(`⚠️  Error getting orders for customer ${customerId}:`, err.message);
-            return [];
           }
-        });
+        }
         
-        const batchResults = await Promise.all(batchPromises);
-        allOrders.push(...batchResults.flat());
-        
-        // Early exit if we have enough orders
-        if (allOrders.length >= limit * 2) break;
-      }
+        lastKey = orderResponse.LastEvaluatedKey;
+      } while (lastKey);
 
-      console.log(`📊 [getCustomerAppOrdersV2] Total orders found: ${allOrders.length}`);
+      console.log(`📊 [getCustomerAppOrdersV2] Scanned ${scannedOrders} orders, found ${allOrders.length} customer app orders`);
       
       // Sort by created_at DESC (newest first), then by id DESC
       allOrders.sort((a, b) => {
@@ -1144,11 +1080,11 @@ class Order {
       });
       
       const result = allOrders.slice(0, limit);
-      console.log(`✅ [getCustomerAppOrdersV2] Returning ${result.length} customer app orders (optimized with GSIs)`);
+      console.log(`✅ [getCustomerAppOrdersV2] Returning ${result.length} customer app orders`);
       return result;
     } catch (err) {
       console.error('❌ [getCustomerAppOrdersV2] Error:', err);
-      throw err;
+      return []; // Return empty array on error
     }
   }
 
@@ -1285,110 +1221,78 @@ class Order {
 
   // Get recent orders that are NOT from customer_app users (includes vendor orders, bulk orders, etc.)
   // This shows all "other" orders that should appear in bulk orders section
-  // OPTIMIZED: Uses getRecent() and filters efficiently
+  // SIMPLIFIED: Uses direct scan for reliability (no GSIs required)
   static async getBulkOrders(limit = 10) {
     try {
       const client = getDynamoDBClient();
       
-      // OPTIMIZED: Use app_version-app_type-index GSI to get v2 customer_app users (for filtering)
+      console.log('📊 [getBulkOrders] Starting to get bulk orders (non-customer_app orders)');
+
+      // Step 1: Get all v2 customer_app user IDs to exclude
       const v2CustomerAppUsers = new Set();
       let userLastKey = null;
       
-      try {
-        do {
-          const userQueryCommand = new QueryCommand({
-            TableName: 'users',
-            IndexName: 'app_version-app_type-index',
-            KeyConditionExpression: 'app_version = :appVersion AND app_type = :appType',
-            FilterExpression: '(attribute_not_exists(del_status) OR del_status <> :deleted)',
-            ExpressionAttributeValues: {
-              ':appVersion': 'v2',
-              ':appType': 'customer_app',
-              ':deleted': 2
-            },
-            ProjectionExpression: 'id'
-          });
-          
-          if (userLastKey) {
-            userQueryCommand.input.ExclusiveStartKey = userLastKey;
-          }
-          
-          const userResponse = await client.send(userQueryCommand);
-          if (userResponse.Items) {
-            userResponse.Items.forEach(u => {
-              const id = typeof u.id === 'string' && !isNaN(u.id) ? parseInt(u.id) : u.id;
-              v2CustomerAppUsers.add(id);
-            });
-          }
-          userLastKey = userResponse.LastEvaluatedKey;
-        } while (userLastKey);
-      } catch (gsiError) {
-        console.warn('⚠️  GSI app_version-app_type-index not available for users, using Scan fallback:', gsiError.message);
-        // Fallback to Scan
-        let userLastKey = null;
-        do {
-          const userParams = {
-            TableName: 'users',
-            FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
-            ExpressionAttributeValues: {
-              ':appVersion': 'v2',
-              ':appType': 'customer_app',
-              ':deleted': 2
-            },
-            ProjectionExpression: 'id'
-          };
-          if (userLastKey) userParams.ExclusiveStartKey = userLastKey;
-          const userCommand = new ScanCommand(userParams);
-          const userResponse = await client.send(userCommand);
-          if (userResponse.Items) {
-            userResponse.Items.forEach(u => {
-              const id = typeof u.id === 'string' && !isNaN(u.id) ? parseInt(u.id) : u.id;
-              v2CustomerAppUsers.add(id);
-            });
-          }
-          userLastKey = userResponse.LastEvaluatedKey;
-        } while (userLastKey);
-      }
-
-      console.log(`📊 [getBulkOrders] Found ${v2CustomerAppUsers.size} v2 customer_app users to exclude`);
-
-      // OPTIMIZED: Get recent orders (limited scan) and filter
-      // Since we only need a few orders, scan a limited set and filter
-      const allOrders = [];
-      const maxScan = limit * 5; // Scan up to 5x the limit to find enough bulk orders
-      let scanned = 0;
-      let lastKey = null;
-
       do {
-        const params = {
-          TableName: TABLE_NAME,
-          Limit: Math.min(100, maxScan - scanned)
+        const userParams = {
+          TableName: 'users',
+          FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
+          ExpressionAttributeValues: {
+            ':appVersion': 'v2',
+            ':appType': 'customer_app',
+            ':deleted': 2
+          },
+          ProjectionExpression: 'id'
         };
-
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-        }
-
-        const command = new ScanCommand(params);
-        const response = await client.send(command);
-
-        if (response.Items) {
-          allOrders.push(...response.Items);
-          scanned += response.Items.length;
-        }
-
-        lastKey = response.LastEvaluatedKey;
+        if (userLastKey) userParams.ExclusiveStartKey = userLastKey;
         
-        // Stop early if we have enough orders or scanned enough
-        if (allOrders.length >= maxScan || scanned >= maxScan) break;
-      } while (lastKey && scanned < maxScan);
+        const userResponse = await client.send(new ScanCommand(userParams));
+        if (userResponse.Items) {
+          userResponse.Items.forEach(u => {
+            // Store multiple type variations to handle type mismatches
+            const id = u.id;
+            v2CustomerAppUsers.add(id);
+            v2CustomerAppUsers.add(String(id));
+            v2CustomerAppUsers.add(typeof id === 'string' && !isNaN(id) ? parseInt(id) : id);
+          });
+        }
+        userLastKey = userResponse.LastEvaluatedKey;
+      } while (userLastKey);
 
-      // Filter out customer_app orders (where customer_id is in customer_app users AND no bulk_request_id)
-      const bulkOrders = allOrders.filter(order => {
-        const customerId = order.customer_id ? (typeof order.customer_id === 'string' && !isNaN(order.customer_id) ? parseInt(order.customer_id) : order.customer_id) : null;
-        const isCustomerAppOrder = customerId && v2CustomerAppUsers.has(customerId) && !order.bulk_request_id;
-        return !isCustomerAppOrder; // Return orders that are NOT customer_app orders
-      });
+      console.log(`📊 [getBulkOrders] Found ${v2CustomerAppUsers.size / 3} unique v2 customer_app users to exclude`);
+
+      // Step 2: Scan all orders and filter out customer_app orders
+      const bulkOrders = [];
+      let lastKey = null;
+      let scannedOrders = 0;
+      
+      do {
+        const orderParams = {
+          TableName: TABLE_NAME,
+          Limit: 1000
+        };
+        if (lastKey) orderParams.ExclusiveStartKey = lastKey;
+        
+        const orderResponse = await client.send(new ScanCommand(orderParams));
+        
+        if (orderResponse.Items) {
+          scannedOrders += orderResponse.Items.length;
+          
+          for (const order of orderResponse.Items) {
+            // Check if this order belongs to a v2 customer_app user
+            const customerId = order.customer_id;
+            const isCustomerAppOrder = customerId && v2CustomerAppUsers.has(customerId) && !order.bulk_request_id;
+            
+            // If it's NOT a customer_app order, it's a bulk order
+            if (!isCustomerAppOrder) {
+              bulkOrders.push(order);
+            }
+          }
+        }
+        
+        lastKey = orderResponse.LastEvaluatedKey;
+      } while (lastKey);
+
+      console.log(`📊 [getBulkOrders] Scanned ${scannedOrders} orders, found ${bulkOrders.length} bulk orders`);
 
       // Sort by created_at DESC (newest first), then by id DESC
       bulkOrders.sort((a, b) => {
@@ -1398,11 +1302,11 @@ class Order {
         return (b.id || 0) - (a.id || 0);
       });
       
-      console.log(`✅ [getBulkOrders] Found ${bulkOrders.length} bulk orders (non-customer_app orders, optimized)`);
+      console.log(`✅ [getBulkOrders] Returning ${Math.min(bulkOrders.length, limit)} bulk orders`);
       return bulkOrders.slice(0, limit);
     } catch (err) {
       console.error('❌ [getBulkOrders] Error:', err);
-      throw err;
+      return []; // Return empty array on error
     }
   }
 

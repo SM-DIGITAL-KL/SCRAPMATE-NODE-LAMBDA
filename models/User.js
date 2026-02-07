@@ -1121,6 +1121,78 @@ class User {
     }
   }
 
+  // Find users by user_type
+  static async findByUserType(userType) {
+    try {
+      const client = getDynamoDBClient();
+      
+      // Try using GSI first (user_type-created_at-index)
+      try {
+        let lastKey = null;
+        const users = [];
+        
+        do {
+          const queryCommand = new QueryCommand({
+            TableName: TABLE_NAME,
+            IndexName: 'user_type-created_at-index',
+            KeyConditionExpression: 'user_type = :userType',
+            ExpressionAttributeValues: {
+              ':userType': userType
+            }
+          });
+          
+          if (lastKey) {
+            queryCommand.input.ExclusiveStartKey = lastKey;
+          }
+          
+          const response = await client.send(queryCommand);
+          
+          if (response.Items) {
+            users.push(...response.Items);
+          }
+          
+          lastKey = response.LastEvaluatedKey;
+        } while (lastKey);
+        
+        return users;
+      } catch (gsiError) {
+        // GSI might not exist yet, fall back to Scan
+        console.warn('⚠️  GSI user_type-created_at-index not available, using Scan fallback:', gsiError.message);
+      }
+      
+      // Fallback to Scan if GSI doesn't exist
+      let lastKey = null;
+      const users = [];
+
+      do {
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: 'user_type = :userType',
+          ExpressionAttributeValues: {
+            ':userType': userType
+          }
+        };
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+
+        if (response.Items) {
+          users.push(...response.Items);
+        }
+
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      return users;
+    } catch (err) {
+      throw err;
+    }
+  }
+
   // Get monthly count by user_type
   static async getMonthlyCountByUserType(userType) {
     try {

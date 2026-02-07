@@ -159,6 +159,16 @@ router.post('/admin/order/:orderId/add-bulk-notified-vendors', AdminController.a
 // Add a single vendor to order's notified_vendor_ids
 router.post('/admin/order/:orderId/add-vendor/:vendorId', AdminController.addVendorToOrder);
 
+// ==================== ORDER MANAGEMENT ROUTES (Admin) ====================
+// Update order status
+router.post('/admin/order/:orderId/status', AdminController.adminUpdateOrderStatus);
+// Assign vendor to order
+router.post('/admin/order/:orderId/assign-vendor', AdminController.adminAssignVendorToOrder);
+// Search vendors for assignment
+router.get('/admin/vendors/search', AdminController.searchVendorsForAssignment);
+// Get available vendors for an order based on location
+router.get('/admin/order/:orderId/available-vendors', AdminController.getAvailableVendorsForOrder);
+
 // Parameterized routes (:id) must come LAST
 router.get('/customer/:id', CustomerController.getCustomerById);
 
