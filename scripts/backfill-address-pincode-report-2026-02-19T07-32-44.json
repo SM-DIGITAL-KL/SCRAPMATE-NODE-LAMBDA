@@ -1,0 +1,1679 @@
+{
+  "generated_at": "2026-02-19T07:32:44.785Z",
+  "summary": {
+    "table": "addresses",
+    "mode": "apply",
+    "force_overwrite": false,
+    "scanned": 993,
+    "has_coords": 993,
+    "has_existing_pincode": 645,
+    "inferred": 977,
+    "updated": 332,
+    "would_update": 0,
+    "unresolved": 16,
+    "failed": 0,
+    "unique_geo_queries_cached": 759
+  },
+  "updates": [
+    {
+      "id": 1771484562671,
+      "old_pincode": "",
+      "new_pincode": "600099"
+    },
+    {
+      "id": 1770728131195,
+      "old_pincode": "",
+      "new_pincode": "600086"
+    },
+    {
+      "id": 1768797632519,
+      "old_pincode": "",
+      "new_pincode": "627651"
+    },
+    {
+      "id": 1767780423647,
+      "old_pincode": "",
+      "new_pincode": "600066"
+    },
+    {
+      "id": 1770179204227,
+      "old_pincode": "",
+      "new_pincode": "679589"
+    },
+    {
+      "id": 1767883924228,
+      "old_pincode": "",
+      "new_pincode": "641001"
+    },
+    {
+      "id": 1770214297865,
+      "old_pincode": "",
+      "new_pincode": "313300"
+    },
+    {
+      "id": 1766462862561,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1768403469290,
+      "old_pincode": "",
+      "new_pincode": "624001"
+    },
+    {
+      "id": 1768793806671,
+      "old_pincode": "",
+      "new_pincode": "625004"
+    },
+    {
+      "id": 1767744166445,
+      "old_pincode": "",
+      "new_pincode": "600084"
+    },
+    {
+      "id": 1769096671998,
+      "old_pincode": "",
+      "new_pincode": "422001"
+    },
+    {
+      "id": 1769669150760,
+      "old_pincode": "",
+      "new_pincode": "624001"
+    },
+    {
+      "id": 1770627030185,
+      "old_pincode": "",
+      "new_pincode": "600116"
+    },
+    {
+      "id": 1767701115470,
+      "old_pincode": "",
+      "new_pincode": "600115"
+    },
+    {
+      "id": 1767917859066,
+      "old_pincode": "",
+      "new_pincode": "602025"
+    },
+    {
+      "id": 1767909870595,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1769079436946,
+      "old_pincode": "",
+      "new_pincode": "682306"
+    },
+    {
+      "id": 1770156440569,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1769404592181,
+      "old_pincode": "",
+      "new_pincode": "603044"
+    },
+    {
+      "id": 1769069604785,
+      "old_pincode": "",
+      "new_pincode": "602001"
+    },
+    {
+      "id": 1768903571953,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1770442714712,
+      "old_pincode": "",
+      "new_pincode": "121001"
+    },
+    {
+      "id": 1767955064056,
+      "old_pincode": "",
+      "new_pincode": "600115"
+    },
+    {
+      "id": 1767805031962,
+      "old_pincode": "",
+      "new_pincode": "629001"
+    },
+    {
+      "id": 1768994505361,
+      "old_pincode": "",
+      "new_pincode": "602002"
+    },
+    {
+      "id": 1768557356620,
+      "old_pincode": "",
+      "new_pincode": "560099"
+    },
+    {
+      "id": 1770450091700,
+      "old_pincode": "",
+      "new_pincode": "361001"
+    },
+    {
+      "id": 1767872129439,
+      "old_pincode": "",
+      "new_pincode": "600118"
+    },
+    {
+      "id": 1769780841843,
+      "old_pincode": "",
+      "new_pincode": "560064"
+    },
+    {
+      "id": 1769666368985,
+      "old_pincode": "",
+      "new_pincode": "676556"
+    },
+    {
+      "id": 1770521448183,
+      "old_pincode": "",
+      "new_pincode": "600128"
+    },
+    {
+      "id": 1769666488566,
+      "old_pincode": "",
+      "new_pincode": "394212"
+    },
+    {
+      "id": 1766063837913,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1768067012534,
+      "old_pincode": "",
+      "new_pincode": "607105"
+    },
+    {
+      "id": 1767805029262,
+      "old_pincode": "",
+      "new_pincode": "629001"
+    },
+    {
+      "id": 1768010097460,
+      "old_pincode": "",
+      "new_pincode": "627117"
+    },
+    {
+      "id": 1766645315854,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1771044478443,
+      "old_pincode": "",
+      "new_pincode": "680596"
+    },
+    {
+      "id": 1770631265761,
+      "old_pincode": "",
+      "new_pincode": "700141"
+    },
+    {
+      "id": 1770820425865,
+      "old_pincode": "",
+      "new_pincode": "410500"
+    },
+    {
+      "id": 1769582453127,
+      "old_pincode": "",
+      "new_pincode": "141013"
+    },
+    {
+      "id": 1769262717429,
+      "old_pincode": "",
+      "new_pincode": "680507"
+    },
+    {
+      "id": 1771347799582,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1770663566940,
+      "old_pincode": "",
+      "new_pincode": "411051"
+    },
+    {
+      "id": 1767966890404,
+      "old_pincode": "",
+      "new_pincode": "624001"
+    },
+    {
+      "id": 1771315380787,
+      "old_pincode": "",
+      "new_pincode": "110017"
+    },
+    {
+      "id": 1771150951266,
+      "old_pincode": "",
+      "new_pincode": "673008"
+    },
+    {
+      "id": 1769607135337,
+      "old_pincode": "",
+      "new_pincode": "400022"
+    },
+    {
+      "id": 1766067886413,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1768549818895,
+      "old_pincode": "",
+      "new_pincode": "521108"
+    },
+    {
+      "id": 1770454442451,
+      "old_pincode": "",
+      "new_pincode": "680618"
+    },
+    {
+      "id": 1768119432991,
+      "old_pincode": "",
+      "new_pincode": "680722"
+    },
+    {
+      "id": 1767872114940,
+      "old_pincode": "",
+      "new_pincode": "600118"
+    },
+    {
+      "id": 1768647309142,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1769185817941,
+      "old_pincode": "",
+      "new_pincode": "600091"
+    },
+    {
+      "id": 1769641499003,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1770289968590,
+      "old_pincode": "",
+      "new_pincode": "600070"
+    },
+    {
+      "id": 1768071543296,
+      "old_pincode": "",
+      "new_pincode": "600118"
+    },
+    {
+      "id": 1768143991538,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768148329738,
+      "old_pincode": "",
+      "new_pincode": "600101"
+    },
+    {
+      "id": 1766390118990,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1767970327170,
+      "old_pincode": "",
+      "new_pincode": "625002"
+    },
+    {
+      "id": 1769833121634,
+      "old_pincode": "",
+      "new_pincode": "226010"
+    },
+    {
+      "id": 1769624971857,
+      "old_pincode": "",
+      "new_pincode": "562123"
+    },
+    {
+      "id": 1771130327353,
+      "old_pincode": "",
+      "new_pincode": "421204"
+    },
+    {
+      "id": 1770392341119,
+      "old_pincode": "",
+      "new_pincode": "302006"
+    },
+    {
+      "id": 1769097972542,
+      "old_pincode": "",
+      "new_pincode": "688550"
+    },
+    {
+      "id": 1771072742265,
+      "old_pincode": "",
+      "new_pincode": "416002"
+    },
+    {
+      "id": 1768456403891,
+      "old_pincode": "",
+      "new_pincode": "636700"
+    },
+    {
+      "id": 1770016579771,
+      "old_pincode": "",
+      "new_pincode": "600054"
+    },
+    {
+      "id": 1768144120030,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1770387848658,
+      "old_pincode": "",
+      "new_pincode": "110064"
+    },
+    {
+      "id": 1767870381125,
+      "old_pincode": "",
+      "new_pincode": "600078"
+    },
+    {
+      "id": 1768999793962,
+      "old_pincode": "",
+      "new_pincode": "607001"
+    },
+    {
+      "id": 1768921312489,
+      "old_pincode": "",
+      "new_pincode": "600038"
+    },
+    {
+      "id": 1769864478401,
+      "old_pincode": "",
+      "new_pincode": "682315"
+    },
+    {
+      "id": 1767954462501,
+      "old_pincode": "",
+      "new_pincode": "600115"
+    },
+    {
+      "id": 1768148348279,
+      "old_pincode": "",
+      "new_pincode": "638151"
+    },
+    {
+      "id": 1768144119578,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768996803448,
+      "old_pincode": "",
+      "new_pincode": "682033"
+    },
+    {
+      "id": 1767968645796,
+      "old_pincode": "",
+      "new_pincode": "691526"
+    },
+    {
+      "id": 1770525189070,
+      "old_pincode": "",
+      "new_pincode": "500070"
+    },
+    {
+      "id": 1771481251859,
+      "old_pincode": "",
+      "new_pincode": "600001"
+    },
+    {
+      "id": 1770442416570,
+      "old_pincode": "",
+      "new_pincode": "676501"
+    },
+    {
+      "id": 1769153406354,
+      "old_pincode": "",
+      "new_pincode": "502325"
+    },
+    {
+      "id": 1768978312373,
+      "old_pincode": "",
+      "new_pincode": "208020"
+    },
+    {
+      "id": 1770615031012,
+      "old_pincode": "",
+      "new_pincode": "600053"
+    },
+    {
+      "id": 1769064989844,
+      "old_pincode": "",
+      "new_pincode": "560045"
+    },
+    {
+      "id": 1766460123045,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1767582658723,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1770220186201,
+      "old_pincode": "",
+      "new_pincode": "686676"
+    },
+    {
+      "id": 1766407750444,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1768136122699,
+      "old_pincode": "",
+      "new_pincode": "638600"
+    },
+    {
+      "id": 1767780421559,
+      "old_pincode": "",
+      "new_pincode": "600066"
+    },
+    {
+      "id": 1766101047099,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1766460363853,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768491682117,
+      "old_pincode": "",
+      "new_pincode": "673653"
+    },
+    {
+      "id": 1766063879542,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1767713480574,
+      "old_pincode": "",
+      "new_pincode": "641103"
+    },
+    {
+      "id": 1768988358062,
+      "old_pincode": "",
+      "new_pincode": "533229"
+    },
+    {
+      "id": 1768040307369,
+      "old_pincode": "",
+      "new_pincode": "621722"
+    },
+    {
+      "id": 1769940724648,
+      "old_pincode": "",
+      "new_pincode": "600126"
+    },
+    {
+      "id": 1767713491935,
+      "old_pincode": "",
+      "new_pincode": "641103"
+    },
+    {
+      "id": 1770608272642,
+      "old_pincode": "",
+      "new_pincode": "600037"
+    },
+    {
+      "id": 1766428002466,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1766069566481,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1767701847379,
+      "old_pincode": "",
+      "new_pincode": "670593"
+    },
+    {
+      "id": 1768800114307,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1770380823189,
+      "old_pincode": "",
+      "new_pincode": "638001"
+    },
+    {
+      "id": 1771451260926,
+      "old_pincode": "",
+      "new_pincode": "110070"
+    },
+    {
+      "id": 1768647261039,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1767954441113,
+      "old_pincode": "",
+      "new_pincode": "600115"
+    },
+    {
+      "id": 1770563515651,
+      "old_pincode": "",
+      "new_pincode": "626001"
+    },
+    {
+      "id": 1767924021689,
+      "old_pincode": "",
+      "new_pincode": "628502"
+    },
+    {
+      "id": 1767805014836,
+      "old_pincode": "",
+      "new_pincode": "629001"
+    },
+    {
+      "id": 1768976985785,
+      "old_pincode": "",
+      "new_pincode": "600059"
+    },
+    {
+      "id": 1768148735949,
+      "old_pincode": "",
+      "new_pincode": "636501"
+    },
+    {
+      "id": 1768322072447,
+      "old_pincode": "",
+      "new_pincode": "636015"
+    },
+    {
+      "id": 1771237862301,
+      "old_pincode": "",
+      "new_pincode": "682022"
+    },
+    {
+      "id": 1771481006302,
+      "old_pincode": "",
+      "new_pincode": "400062"
+    },
+    {
+      "id": 1770799774024,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1769233226503,
+      "old_pincode": "",
+      "new_pincode": "627001"
+    },
+    {
+      "id": 1771303712658,
+      "old_pincode": "",
+      "new_pincode": "600040"
+    },
+    {
+      "id": 1768144036183,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1769222875545,
+      "old_pincode": "",
+      "new_pincode": "680021"
+    },
+    {
+      "id": 1769050092041,
+      "old_pincode": "",
+      "new_pincode": "673636"
+    },
+    {
+      "id": 1768195666557,
+      "old_pincode": "",
+      "new_pincode": "641042"
+    },
+    {
+      "id": 1769182823631,
+      "old_pincode": "",
+      "new_pincode": "600039"
+    },
+    {
+      "id": 1767853214545,
+      "old_pincode": "",
+      "new_pincode": "600095"
+    },
+    {
+      "id": 1767809247182,
+      "old_pincode": "",
+      "new_pincode": "560076"
+    },
+    {
+      "id": 1770634593154,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1767744147833,
+      "old_pincode": "",
+      "new_pincode": "600084"
+    },
+    {
+      "id": 1769091493805,
+      "old_pincode": "",
+      "new_pincode": "679313"
+    },
+    {
+      "id": 1767968735641,
+      "old_pincode": "",
+      "new_pincode": "691526"
+    },
+    {
+      "id": 1769152298893,
+      "old_pincode": "",
+      "new_pincode": "641001"
+    },
+    {
+      "id": 1768316001386,
+      "old_pincode": "",
+      "new_pincode": "636810"
+    },
+    {
+      "id": 1768144015565,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1769596306663,
+      "old_pincode": "",
+      "new_pincode": "110076"
+    },
+    {
+      "id": 1768973478696,
+      "old_pincode": "",
+      "new_pincode": "601102"
+    },
+    {
+      "id": 1768884162546,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1768299374546,
+      "old_pincode": "",
+      "new_pincode": "600014"
+    },
+    {
+      "id": 1770189196376,
+      "old_pincode": "",
+      "new_pincode": "673025"
+    },
+    {
+      "id": 1768223067828,
+      "old_pincode": "",
+      "new_pincode": "600021"
+    },
+    {
+      "id": 1768796737085,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768748624054,
+      "old_pincode": "",
+      "new_pincode": "625012"
+    },
+    {
+      "id": 1768889691564,
+      "old_pincode": "",
+      "new_pincode": "600106"
+    },
+    {
+      "id": 1771410533354,
+      "old_pincode": "",
+      "new_pincode": "620019"
+    },
+    {
+      "id": 1769001714835,
+      "old_pincode": "",
+      "new_pincode": "416002"
+    },
+    {
+      "id": 1770392397757,
+      "old_pincode": "",
+      "new_pincode": "600101"
+    },
+    {
+      "id": 1770369515946,
+      "old_pincode": "",
+      "new_pincode": "600042"
+    },
+    {
+      "id": 1768916322179,
+      "old_pincode": "",
+      "new_pincode": "636115"
+    },
+    {
+      "id": 1768120724176,
+      "old_pincode": "",
+      "new_pincode": "600070"
+    },
+    {
+      "id": 1766405713413,
+      "old_pincode": "",
+      "new_pincode": "691526"
+    },
+    {
+      "id": 1769312293662,
+      "old_pincode": "",
+      "new_pincode": "673647"
+    },
+    {
+      "id": 1767967912508,
+      "old_pincode": "",
+      "new_pincode": "600084"
+    },
+    {
+      "id": 1769947446586,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1770621369521,
+      "old_pincode": "",
+      "new_pincode": "602002"
+    },
+    {
+      "id": 1768148340405,
+      "old_pincode": "",
+      "new_pincode": "600101"
+    },
+    {
+      "id": 1771055015457,
+      "old_pincode": "",
+      "new_pincode": "600022"
+    },
+    {
+      "id": 1769161073246,
+      "old_pincode": "",
+      "new_pincode": "680583"
+    },
+    {
+      "id": 1769145176965,
+      "old_pincode": "",
+      "new_pincode": "688526"
+    },
+    {
+      "id": 1769767768083,
+      "old_pincode": "",
+      "new_pincode": "560058"
+    },
+    {
+      "id": 1769621342760,
+      "old_pincode": "",
+      "new_pincode": "603103"
+    },
+    {
+      "id": 1770358876748,
+      "old_pincode": "",
+      "new_pincode": "641001"
+    },
+    {
+      "id": 1767780360198,
+      "old_pincode": "",
+      "new_pincode": "600066"
+    },
+    {
+      "id": 1768403445860,
+      "old_pincode": "",
+      "new_pincode": "624001"
+    },
+    {
+      "id": 1767805539469,
+      "old_pincode": "",
+      "new_pincode": "600003"
+    },
+    {
+      "id": 1768563770838,
+      "old_pincode": "",
+      "new_pincode": "201307"
+    },
+    {
+      "id": 1768376974521,
+      "old_pincode": "",
+      "new_pincode": "625011"
+    },
+    {
+      "id": 1767701112103,
+      "old_pincode": "",
+      "new_pincode": "600115"
+    },
+    {
+      "id": 1768618442821,
+      "old_pincode": "",
+      "new_pincode": "614603"
+    },
+    {
+      "id": 1769914508471,
+      "old_pincode": "",
+      "new_pincode": "695584"
+    },
+    {
+      "id": 1768992393143,
+      "old_pincode": "",
+      "new_pincode": "603204"
+    },
+    {
+      "id": 1767937167431,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1768144118724,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768123794037,
+      "old_pincode": "",
+      "new_pincode": "641001"
+    },
+    {
+      "id": 1769754923402,
+      "old_pincode": "",
+      "new_pincode": "524314"
+    },
+    {
+      "id": 1768796732679,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768897060772,
+      "old_pincode": "",
+      "new_pincode": "600127"
+    },
+    {
+      "id": 1767946120732,
+      "old_pincode": "",
+      "new_pincode": "627106"
+    },
+    {
+      "id": 1767954488871,
+      "old_pincode": "",
+      "new_pincode": "600115"
+    },
+    {
+      "id": 1769094022874,
+      "old_pincode": "",
+      "new_pincode": "679313"
+    },
+    {
+      "id": 1767744164645,
+      "old_pincode": "",
+      "new_pincode": "600084"
+    },
+    {
+      "id": 1767553284296,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1770572287523,
+      "old_pincode": "",
+      "new_pincode": "600054"
+    },
+    {
+      "id": 1766406394099,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1768647260141,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768063570326,
+      "old_pincode": "",
+      "new_pincode": "600078"
+    },
+    {
+      "id": 1768040276762,
+      "old_pincode": "",
+      "new_pincode": "621722"
+    },
+    {
+      "id": 1767910890229,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1769001184902,
+      "old_pincode": "",
+      "new_pincode": "560001"
+    },
+    {
+      "id": 1769190229316,
+      "old_pincode": "",
+      "new_pincode": "600053"
+    },
+    {
+      "id": 1769685600414,
+      "old_pincode": "",
+      "new_pincode": "600106"
+    },
+    {
+      "id": 1766990007849,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768758295603,
+      "old_pincode": "",
+      "new_pincode": "560066"
+    },
+    {
+      "id": 1770870060372,
+      "old_pincode": "",
+      "new_pincode": "600034"
+    },
+    {
+      "id": 1767883917015,
+      "old_pincode": "",
+      "new_pincode": "641001"
+    },
+    {
+      "id": 1770693836224,
+      "old_pincode": "",
+      "new_pincode": "680001"
+    },
+    {
+      "id": 1771073562991,
+      "old_pincode": "",
+      "new_pincode": "323802"
+    },
+    {
+      "id": 1768796782257,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1769540527237,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1768931478574,
+      "old_pincode": "",
+      "new_pincode": "600054"
+    },
+    {
+      "id": 1767868653499,
+      "old_pincode": "",
+      "new_pincode": "605411"
+    },
+    {
+      "id": 1769490253847,
+      "old_pincode": "",
+      "new_pincode": "642109"
+    },
+    {
+      "id": 1767744178804,
+      "old_pincode": "",
+      "new_pincode": "600084"
+    },
+    {
+      "id": 1768040279532,
+      "old_pincode": "",
+      "new_pincode": "621722"
+    },
+    {
+      "id": 1768584285636,
+      "old_pincode": "",
+      "new_pincode": "607803"
+    },
+    {
+      "id": 1771121469847,
+      "old_pincode": "",
+      "new_pincode": "560060"
+    },
+    {
+      "id": 1767701110738,
+      "old_pincode": "",
+      "new_pincode": "600115"
+    },
+    {
+      "id": 1769182491435,
+      "old_pincode": "",
+      "new_pincode": "110058"
+    },
+    {
+      "id": 1767870522240,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1771144432375,
+      "old_pincode": "",
+      "new_pincode": "210205"
+    },
+    {
+      "id": 1769316627133,
+      "old_pincode": "",
+      "new_pincode": "603103"
+    },
+    {
+      "id": 1767909877630,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1769732707058,
+      "old_pincode": "",
+      "new_pincode": "562125"
+    },
+    {
+      "id": 1767954459624,
+      "old_pincode": "",
+      "new_pincode": "600115"
+    },
+    {
+      "id": 1769107773309,
+      "old_pincode": "",
+      "new_pincode": "560043"
+    },
+    {
+      "id": 1768028831301,
+      "old_pincode": "",
+      "new_pincode": "641603"
+    },
+    {
+      "id": 1768985014984,
+      "old_pincode": "",
+      "new_pincode": "641001"
+    },
+    {
+      "id": 1769355436780,
+      "old_pincode": "",
+      "new_pincode": "603103"
+    },
+    {
+      "id": 1766427945892,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1769073413284,
+      "old_pincode": "",
+      "new_pincode": "603044"
+    },
+    {
+      "id": 1768800021162,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1767805019647,
+      "old_pincode": "",
+      "new_pincode": "629001"
+    },
+    {
+      "id": 1768884917742,
+      "old_pincode": "",
+      "new_pincode": "690504"
+    },
+    {
+      "id": 1768144016244,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768134467742,
+      "old_pincode": "",
+      "new_pincode": "625001"
+    },
+    {
+      "id": 1767909885624,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1769231753198,
+      "old_pincode": "",
+      "new_pincode": "380023"
+    },
+    {
+      "id": 1770277286154,
+      "old_pincode": "",
+      "new_pincode": "680006"
+    },
+    {
+      "id": 1768549543068,
+      "old_pincode": "",
+      "new_pincode": "635602"
+    },
+    {
+      "id": 1768963105565,
+      "old_pincode": "",
+      "new_pincode": "643214"
+    },
+    {
+      "id": 1769072273327,
+      "old_pincode": "",
+      "new_pincode": "601302"
+    },
+    {
+      "id": 1768040235704,
+      "old_pincode": "",
+      "new_pincode": "621722"
+    },
+    {
+      "id": 1769083123921,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1769668148253,
+      "old_pincode": "",
+      "new_pincode": "679321"
+    },
+    {
+      "id": 1770038882089,
+      "old_pincode": "",
+      "new_pincode": "682019"
+    },
+    {
+      "id": 1769267287086,
+      "old_pincode": "",
+      "new_pincode": "690505"
+    },
+    {
+      "id": 1770376941452,
+      "old_pincode": "",
+      "new_pincode": "626001"
+    },
+    {
+      "id": 1770272223887,
+      "old_pincode": "",
+      "new_pincode": "625533"
+    },
+    {
+      "id": 1768144165519,
+      "old_pincode": "",
+      "new_pincode": "635109"
+    },
+    {
+      "id": 1767963280433,
+      "old_pincode": "",
+      "new_pincode": "695002"
+    },
+    {
+      "id": 1766063863220,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1768040253688,
+      "old_pincode": "",
+      "new_pincode": "621722"
+    },
+    {
+      "id": 1768385401673,
+      "old_pincode": "",
+      "new_pincode": "641666"
+    },
+    {
+      "id": 1766118622689,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1767617764249,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1766427817389,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1770890865398,
+      "old_pincode": "",
+      "new_pincode": "121013"
+    },
+    {
+      "id": 1771249483487,
+      "old_pincode": "",
+      "new_pincode": "110017"
+    },
+    {
+      "id": 1770384194495,
+      "old_pincode": "",
+      "new_pincode": "639002"
+    },
+    {
+      "id": 1768040264499,
+      "old_pincode": "",
+      "new_pincode": "621722"
+    },
+    {
+      "id": 1766119035431,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768500110053,
+      "old_pincode": "",
+      "new_pincode": "627851"
+    },
+    {
+      "id": 1768112587333,
+      "old_pincode": "",
+      "new_pincode": "641666"
+    },
+    {
+      "id": 1771222158010,
+      "old_pincode": "",
+      "new_pincode": "673639"
+    },
+    {
+      "id": 1769594266293,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1769682549643,
+      "old_pincode": "",
+      "new_pincode": "573201"
+    },
+    {
+      "id": 1769964602372,
+      "old_pincode": "",
+      "new_pincode": "600117"
+    },
+    {
+      "id": 1768796789482,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1766690471315,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1768758286941,
+      "old_pincode": "",
+      "new_pincode": "560066"
+    },
+    {
+      "id": 1768280414323,
+      "old_pincode": "",
+      "new_pincode": "678601"
+    },
+    {
+      "id": 1768011125511,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768040254801,
+      "old_pincode": "",
+      "new_pincode": "621722"
+    },
+    {
+      "id": 1768886767778,
+      "old_pincode": "",
+      "new_pincode": "600095"
+    },
+    {
+      "id": 1771080658969,
+      "old_pincode": "",
+      "new_pincode": "678631"
+    },
+    {
+      "id": 1768796738517,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768784367049,
+      "old_pincode": "",
+      "new_pincode": "628653"
+    },
+    {
+      "id": 1768227364705,
+      "old_pincode": "",
+      "new_pincode": "625531"
+    },
+    {
+      "id": 1767872126863,
+      "old_pincode": "",
+      "new_pincode": "600118"
+    },
+    {
+      "id": 1769012880411,
+      "old_pincode": "",
+      "new_pincode": "600116"
+    },
+    {
+      "id": 1770016723302,
+      "old_pincode": "",
+      "new_pincode": "110094"
+    },
+    {
+      "id": 1770212879489,
+      "old_pincode": "",
+      "new_pincode": "695317"
+    },
+    {
+      "id": 1768791063948,
+      "old_pincode": "",
+      "new_pincode": "636119"
+    },
+    {
+      "id": 1768136455560,
+      "old_pincode": "",
+      "new_pincode": "600116"
+    },
+    {
+      "id": 1768494152454,
+      "old_pincode": "",
+      "new_pincode": "607001"
+    },
+    {
+      "id": 1767805020699,
+      "old_pincode": "",
+      "new_pincode": "629001"
+    },
+    {
+      "id": 1767713485969,
+      "old_pincode": "",
+      "new_pincode": "641103"
+    },
+    {
+      "id": 1769841480998,
+      "old_pincode": "",
+      "new_pincode": "814112"
+    },
+    {
+      "id": 1767582693808,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1770434710579,
+      "old_pincode": "",
+      "new_pincode": "272192"
+    },
+    {
+      "id": 1768884510252,
+      "old_pincode": "",
+      "new_pincode": "600001"
+    },
+    {
+      "id": 1766404157032,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1770724251577,
+      "old_pincode": "",
+      "new_pincode": "689696"
+    },
+    {
+      "id": 1768037390552,
+      "old_pincode": "",
+      "new_pincode": "613001"
+    },
+    {
+      "id": 1770666273177,
+      "old_pincode": "",
+      "new_pincode": "411035"
+    },
+    {
+      "id": 1769097795691,
+      "old_pincode": "",
+      "new_pincode": "628202"
+    },
+    {
+      "id": 1769096711815,
+      "old_pincode": "",
+      "new_pincode": "600021"
+    },
+    {
+      "id": 1771243198319,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768292816662,
+      "old_pincode": "",
+      "new_pincode": "639001"
+    },
+    {
+      "id": 1768985362069,
+      "old_pincode": "",
+      "new_pincode": "602123"
+    },
+    {
+      "id": 1767989231700,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768148560242,
+      "old_pincode": "",
+      "new_pincode": "600101"
+    },
+    {
+      "id": 1769142564976,
+      "old_pincode": "",
+      "new_pincode": "626123"
+    },
+    {
+      "id": 1767582674010,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1770585091644,
+      "old_pincode": "",
+      "new_pincode": "148027"
+    },
+    {
+      "id": 1768840924216,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1769164990920,
+      "old_pincode": "",
+      "new_pincode": "682315"
+    },
+    {
+      "id": 1769270210805,
+      "old_pincode": "",
+      "new_pincode": "623551"
+    },
+    {
+      "id": 1768298479556,
+      "old_pincode": "",
+      "new_pincode": "698701"
+    },
+    {
+      "id": 1768542994837,
+      "old_pincode": "",
+      "new_pincode": "641666"
+    },
+    {
+      "id": 1768647297427,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768580244928,
+      "old_pincode": "",
+      "new_pincode": "614603"
+    },
+    {
+      "id": 1768057525743,
+      "old_pincode": "",
+      "new_pincode": "642100"
+    },
+    {
+      "id": 1767963269248,
+      "old_pincode": "",
+      "new_pincode": "695002"
+    },
+    {
+      "id": 1768148583040,
+      "old_pincode": "",
+      "new_pincode": "600101"
+    },
+    {
+      "id": 1768022987163,
+      "old_pincode": "",
+      "new_pincode": "482004"
+    },
+    {
+      "id": 1768628504060,
+      "old_pincode": "",
+      "new_pincode": "605006"
+    },
+    {
+      "id": 1768744773822,
+      "old_pincode": "",
+      "new_pincode": "627659"
+    },
+    {
+      "id": 1768446297607,
+      "old_pincode": "",
+      "new_pincode": "600081"
+    },
+    {
+      "id": 1767861169544,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768108217038,
+      "old_pincode": "",
+      "new_pincode": "600094"
+    },
+    {
+      "id": 1768009010339,
+      "old_pincode": "",
+      "new_pincode": "624622"
+    },
+    {
+      "id": 1766645201997,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1768023933548,
+      "old_pincode": "",
+      "new_pincode": "600045"
+    },
+    {
+      "id": 1767909876429,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1770014439646,
+      "old_pincode": "",
+      "new_pincode": "600059"
+    },
+    {
+      "id": 1768984571924,
+      "old_pincode": "",
+      "new_pincode": "411035"
+    },
+    {
+      "id": 1770299231698,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1767806269995,
+      "old_pincode": "",
+      "new_pincode": "641021"
+    },
+    {
+      "id": 1767856578504,
+      "old_pincode": "",
+      "new_pincode": "625018"
+    },
+    {
+      "id": 1767909881334,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1770799782628,
+      "old_pincode": "",
+      "new_pincode": "440008"
+    },
+    {
+      "id": 1768144116884,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1768143976319,
+      "old_pincode": "",
+      "new_pincode": "695001"
+    },
+    {
+      "id": 1769072219736,
+      "old_pincode": "",
+      "new_pincode": "576552"
+    },
+    {
+      "id": 1768580222605,
+      "old_pincode": "",
+      "new_pincode": "614603"
+    },
+    {
+      "id": 1766069631108,
+      "old_pincode": "",
+      "new_pincode": "691558"
+    },
+    {
+      "id": 1768327713064,
+      "old_pincode": "",
+      "new_pincode": "600054"
+    },
+    {
+      "id": 1767868486234,
+      "old_pincode": "",
+      "new_pincode": "625107"
+    }
+  ]
+}

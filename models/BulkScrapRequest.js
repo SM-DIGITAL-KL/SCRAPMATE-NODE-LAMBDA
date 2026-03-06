@@ -16,6 +16,9 @@ class BulkScrapRequest {
     try {
       const client = getDynamoDBClient();
       const requestId = data.id || (Date.now() + Math.floor(Math.random() * 1000));
+      const nowIso = new Date().toISOString();
+      const statusValue = data.status || 'pending';
+      const createdAtValue = data.created_at || nowIso;
       
       // Ensure proper data types for DynamoDB
       const item = {
@@ -32,14 +35,21 @@ class BulkScrapRequest {
         preferred_distance: typeof data.preferred_distance === 'string' ? parseFloat(data.preferred_distance) : (typeof data.preferred_distance === 'number' ? data.preferred_distance : parseFloat(String(data.preferred_distance || 50))), // in km
         when_needed: data.when_needed || null,
         location: data.location || null,
+        state: data.state || null,
+        state_key: data.state_key || null,
         additional_notes: data.additional_notes || null,
         documents: data.documents || null, // Should be JSON string if provided
+        post_star: data.post_star ? (typeof data.post_star === 'string' ? parseInt(data.post_star) : data.post_star) : 0,
         accepted_vendors: data.accepted_vendors || JSON.stringify([]), // JSON string
         rejected_vendors: data.rejected_vendors || JSON.stringify([]), // JSON string
         total_committed_quantity: data.total_committed_quantity || 0, // Total quantity committed by all vendors
-        status: 'active', // active, completed, cancelled
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        status: statusValue, // pending, active, completed, cancelled
+        status_created_at: data.status_created_at || `${statusValue}#${createdAtValue}`,
+        review_status: data.review_status || 'pending', // pending, approved, rejected
+        review_reason: data.review_reason || null,
+        reviewed_at: data.reviewed_at || null,
+        created_at: createdAtValue,
+        updated_at: nowIso
       };
 
       const command = new PutCommand({
@@ -216,6 +226,7 @@ class BulkScrapRequest {
             location: request.location || null,
             additional_notes: request.additional_notes || null,
             documents: parsedDocuments,
+            post_star: request.post_star ? (typeof request.post_star === 'string' ? parseInt(request.post_star) : request.post_star) : 0,
             status: request.status || 'active',
             accepted_vendors: parsedAcceptedVendors,
             rejected_vendors: request.rejected_vendors ? (typeof request.rejected_vendors === 'string' ? JSON.parse(request.rejected_vendors) : request.rejected_vendors) : [],
@@ -539,4 +550,3 @@ class BulkScrapRequest {
 }
 
 module.exports = BulkScrapRequest;
-

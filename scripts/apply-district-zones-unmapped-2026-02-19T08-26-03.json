@@ -1,0 +1,23 @@
+{
+  "generated_at": "2026-02-19T08:26:03.554Z",
+  "summary": {
+    "table": "district_pincode_prefixes",
+    "mode": "dry_run",
+    "scanned": 755,
+    "matched": 753,
+    "updated": 9,
+    "unmapped": 2
+  },
+  "unmapped_rows": [
+    {
+      "id": "odisha#kendujhar",
+      "state_name": "ODISHA",
+      "district_name": "KENDUJHAR"
+    },
+    {
+      "id": "na#na",
+      "state_name": "NA",
+      "district_name": "NA"
+    }
+  ]
+}

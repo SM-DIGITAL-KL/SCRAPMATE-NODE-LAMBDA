@@ -64,6 +64,7 @@ class SubscriptionPackage {
       isActive: packageData.isActive !== undefined ? packageData.isActive : true,
       pricePercentage: packageData.pricePercentage || null, // For percentage-based pricing (e.g., 0.5 for 0.5%)
       isPercentageBased: packageData.isPercentageBased || false, // Flag to indicate if pricing is percentage-based
+      zonePrices: packageData.zonePrices || {},
       createdAt: packageData.createdAt || now,
       updatedAt: now,
     };
@@ -94,7 +95,7 @@ class SubscriptionPackage {
     const expressionAttributeNames = {};
     const expressionAttributeValues = {};
 
-    const allowedFields = ['name', 'price', 'duration', 'description', 'features', 'popular', 'userType', 'upiId', 'merchantName', 'isActive', 'pricePercentage', 'isPercentageBased'];
+    const allowedFields = ['name', 'price', 'duration', 'description', 'features', 'popular', 'userType', 'upiId', 'merchantName', 'isActive', 'pricePercentage', 'isPercentageBased', 'zonePrices'];
     
     allowedFields.forEach(field => {
       if (updateData[field] !== undefined) {

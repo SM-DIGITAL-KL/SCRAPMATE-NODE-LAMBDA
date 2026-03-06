@@ -1,0 +1,68 @@
+{
+  "generated_at": "2026-02-19T08:24:53.789Z",
+  "summary": {
+    "table": "district_pincode_prefixes",
+    "mode": "dry_run",
+    "scanned": 755,
+    "matched": 744,
+    "updated": 0,
+    "unmapped": 11
+  },
+  "unmapped_rows": [
+    {
+      "id": "gujarat#vadodara",
+      "state_name": "GUJARAT",
+      "district_name": "VADODARA"
+    },
+    {
+      "id": "bihar#aurangabad",
+      "state_name": "BIHAR",
+      "district_name": "AURANGABAD"
+    },
+    {
+      "id": "haryana#charki-dadri",
+      "state_name": "HARYANA",
+      "district_name": "CHARKI DADRI"
+    },
+    {
+      "id": "karnataka#bidar",
+      "state_name": "KARNATAKA",
+      "district_name": "BIDAR"
+    },
+    {
+      "id": "tamil-nadu#mayiladuthurai",
+      "state_name": "TAMIL NADU",
+      "district_name": "MAYILADUTHURAI"
+    },
+    {
+      "id": "gujarat#panch-mahals",
+      "state_name": "GUJARAT",
+      "district_name": "PANCH MAHALS"
+    },
+    {
+      "id": "odisha#kendujhar",
+      "state_name": "ODISHA",
+      "district_name": "KENDUJHAR"
+    },
+    {
+      "id": "odisha#sonepur",
+      "state_name": "ODISHA",
+      "district_name": "SONEPUR"
+    },
+    {
+      "id": "na#na",
+      "state_name": "NA",
+      "district_name": "NA"
+    },
+    {
+      "id": "gujarat#dohad",
+      "state_name": "GUJARAT",
+      "district_name": "DOHAD"
+    },
+    {
+      "id": "gujarat#chhotaudepur",
+      "state_name": "GUJARAT",
+      "district_name": "CHHOTAUDEPUR"
+    }
+  ]
+}

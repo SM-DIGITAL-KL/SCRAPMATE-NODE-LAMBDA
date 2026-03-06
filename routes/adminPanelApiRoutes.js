@@ -51,10 +51,13 @@ router.get('/admin/dashboard/recent-orders', AdminController.dashboardRecentOrde
 router.get('/admin/dashboard/call-logs', AdminController.dashboardCallLogs);
 router.get('/admin/dashboard/v2-user-types', AdminController.v2UserTypesDashboard);
 router.get('/admin/dashboard/customer-app-orders', AdminController.getCustomerAppOrdersPaginated);
+router.get('/admin/dashboard/order/:orderId/notified-vendors', AdminController.getOrderDetailsWithNotifiedVendors);
+router.get('/admin/dashboard/bulk-order/:orderId', AdminController.getBulkOrderDetails);
 // Legacy dashboard endpoint (kept for backward compatibility)
 router.get('/admin/dashboard', AdminController.dashboard);
 router.get('/admin/b2b-users', AdminController.b2bUsers);
 router.get('/admin/customers', AdminController.customers);
+router.get('/admin/customer-autofill/:userId', AdminController.customerAutofillByUserId);
 router.get('/admin/b2b-users/:userId', AdminController.getB2BUserDetails);
 router.post('/admin/b2b-users/:userId/approval-status', AdminController.updateB2BApprovalStatus);
 router.get('/admin/b2c-users', AdminController.b2cUsers);
@@ -162,6 +165,8 @@ router.post('/admin/order/:orderId/add-vendor/:vendorId', AdminController.addVen
 // ==================== ORDER MANAGEMENT ROUTES (Admin) ====================
 // Update order status
 router.post('/admin/order/:orderId/status', AdminController.adminUpdateOrderStatus);
+// Reschedule a scheduled order and re-notify already notified vendors
+router.post('/admin/order/:orderId/reschedule-scheduled', AdminController.adminRescheduleScheduledOrder);
 // Assign vendor to order
 router.post('/admin/order/:orderId/assign-vendor', AdminController.adminAssignVendorToOrder);
 // Search vendors for assignment
@@ -248,6 +253,16 @@ router.get('/accounts/paid-subscriptions', AccountsController.getPaidSubscriptio
 router.post('/accounts/subscription-approval', AccountsController.updateSubscriptionApproval);
 router.get('/accounts/pending-bulk-buy-orders', AccountsController.getPendingBulkBuyOrders);
 router.post('/accounts/pending-bulk-buy-order-approval', AccountsController.updatePendingBulkBuyOrderApproval);
+
+// Pending Bulk Sell Orders Routes
+router.get('/accounts/pending-bulk-sell-orders', AccountsController.getPendingBulkSellOrders);
+router.post('/accounts/pending-bulk-sell-order-cancel', AccountsController.cancelPendingBulkSellOrder);
+router.post('/accounts/pending-bulk-sell-order-status', AccountsController.updatePendingBulkSellOrderStatus);
+router.post('/accounts/marketplace-post-review', AccountsController.updateMarketplacePostReview);
+router.post('/accounts/tenders-existing-check', AccountsController.checkExistingTenders);
+router.post('/accounts/tenders-sync', AccountsController.syncTendersToAws);
+router.get('/accounts/tenders-fetch-kerala-scraps', AccountsController.fetchKeralaScrapTenders);
+router.get('/accounts/tenders-saved', AccountsController.getSavedTenders);
 
 router.get('/accounts/subscribers', AccountsController.subscribersList);
 router.get('/accounts/view-subscribers', AccountsController.viewSubscribersList);

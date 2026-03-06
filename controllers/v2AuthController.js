@@ -41,7 +41,7 @@ class V2AuthController {
   /**
    * POST /api/v2/auth/verify-otp
    * Verify OTP and complete login
-   * Body: { phoneNumber: string, otp: string, joinType?: 'b2b' | 'b2c' | 'delivery' }
+   * Body: { phoneNumber: string, otp: string, joinType?: 'b2b' | 'b2c' | 'delivery' | 'marketplace' }
    * Response: { status, message, data: { user, token, dashboardType } }
    */
   static async verifyOtp(req, res) {
@@ -128,4 +128,3 @@ class V2AuthController {
 }
 
 module.exports = V2AuthController;
-

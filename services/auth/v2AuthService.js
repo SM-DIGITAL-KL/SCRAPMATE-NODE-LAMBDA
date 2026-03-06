@@ -12,6 +12,38 @@ const { UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 const { getDynamoDBClient } = require('../../config/dynamodb');
 
 class V2AuthService {
+  static isVendorEligibleUser(user) {
+    if (!user || user.del_status === 2) return false;
+    const validVendorTypes = ['R', 'S', 'SR', 'D', 'N', 'M'];
+    const appTypeOk = user.app_type === 'vendor_app' || (!user.app_type && user.user_type !== 'C');
+    return appTypeOk && validVendorTypes.includes(user.user_type);
+  }
+
+  static pickBestVendorUser(users = []) {
+    const candidates = (users || []).filter(u => this.isVendorEligibleUser(u));
+    if (candidates.length === 0) return null;
+    const completed = candidates.filter(u => u.user_type && u.user_type !== 'N');
+    const pool = completed.length > 0 ? completed : candidates;
+    pool.sort((a, b) => {
+      const dateA = new Date(a.updated_at || a.created_at || 0);
+      const dateB = new Date(b.updated_at || b.created_at || 0);
+      return dateB - dateA;
+    });
+    return pool[0];
+  }
+
+  static pickMostRecentByTypes(users = [], preferredTypes = []) {
+    const typeSet = new Set(preferredTypes || []);
+    const candidates = (users || []).filter((u) => typeSet.has(String(u.user_type || '').trim()));
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => {
+      const dateA = new Date(a.updated_at || a.created_at || 0);
+      const dateB = new Date(b.updated_at || b.created_at || 0);
+      return dateB - dateA;
+    });
+    return candidates[0];
+  }
+
   /**
    * Find or update existing 'N' user instead of creating duplicate
    * @param {string} phoneNumber - Phone number
@@ -122,6 +154,54 @@ class V2AuthService {
   }
 
   /**
+   * Find existing marketplace user (user_type='M') for vendor_app, or create a new one.
+   * IMPORTANT: This must NOT mutate existing R/S/SR/D/N users.
+   */
+  static async findOrCreateMarketplaceUser(phoneNumber) {
+    const cleanedPhone = String(phoneNumber || '').replace(/\D/g, '');
+    const allUsers = await User.findAllByMobile(cleanedPhone);
+    const activeUsers = (allUsers || []).filter((u) => (u.del_status !== 2 || !u.del_status));
+
+    const existingMarketplaceUsers = activeUsers
+      .filter((u) =>
+        (u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C')) &&
+        u.user_type === 'M'
+      )
+      .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+
+    if (existingMarketplaceUsers.length > 0) {
+      console.log(`♻️  Reusing existing marketplace user (ID: ${existingMarketplaceUsers[0].id})`);
+      if (existingMarketplaceUsers[0].isMarketPlaceSubscribed === undefined) {
+        const client = getDynamoDBClient();
+        await client.send(new UpdateCommand({
+          TableName: 'users',
+          Key: { id: existingMarketplaceUsers[0].id },
+          UpdateExpression: 'SET isMarketPlaceSubscribed = :subscribed, updated_at = :updated',
+          ExpressionAttributeValues: {
+            ':subscribed': false,
+            ':updated': new Date().toISOString(),
+          },
+        }));
+        existingMarketplaceUsers[0].isMarketPlaceSubscribed = false;
+      }
+      return existingMarketplaceUsers[0];
+    }
+
+    const baseVendorUser = activeUsers
+      .filter((u) => (u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C')))
+      .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))[0];
+
+    const tempName = baseVendorUser?.name && String(baseVendorUser.name).trim() !== ''
+      ? baseVendorUser.name
+      : `User_${cleanedPhone}`;
+    const tempEmail = ''; // keep aligned with existing vendor account creation pattern
+
+    const created = await User.create(tempName, tempEmail, cleanedPhone, 'M', cleanedPhone, 'vendor_app', 'v2');
+    console.log(`📝 Created separate marketplace user (ID: ${created.id}) without changing existing vendor user types`);
+    return created;
+  }
+
+  /**
    * Find or reuse existing customer_app user with user_type='C' to prevent duplicates
    * IMPORTANT: ONLY returns users with user_type='C' and app_type='customer_app'
    * If no user with user_type='C' exists, returns null (so a new account can be created)
@@ -215,6 +295,7 @@ class V2AuthService {
       otp = '123456';
       console.log('🔧 [generateOtp] Using static OTP 123456 for number: 9074135121 (SMS will be skipped)');
     }
+  
     if (cleanedPhone === '9497508398') {
       otp = '123456';
       console.log('🔧 [generateOtp] Using static OTP 123456 for number: 9074135121 (SMS will be skipped)');
@@ -268,30 +349,9 @@ class V2AuthService {
             const allUsers = await User.findAllByMobile(cleanedPhone);
             
             if (allUsers && allUsers.length > 0) {
-              // IMPORTANT: Prioritize users with completed user types (not 'N')
-              // Filter out deleted users first
-              const activeUsers = allUsers.filter(u => (u.del_status !== 2 || !u.del_status));
-              
-              // Find vendor app users with completed types first (not 'N')
-              const completedVendorUsers = activeUsers.filter(u => 
-                (u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C')) &&
-                u.user_type && u.user_type !== 'N'
-              );
-              
-              if (completedVendorUsers.length > 0) {
-                // Use the most recently updated completed user
-                completedVendorUsers.sort((a, b) => {
-                  const dateA = new Date(a.updated_at || a.created_at || 0);
-                  const dateB = new Date(b.updated_at || b.created_at || 0);
-                  return dateB - dateA;
-                });
-                user = completedVendorUsers[0];
-                console.log(`✅ generateOtp: Found completed vendor app user (ID: ${user.id}, type: ${user.user_type})`);
-              } else {
-                // If no completed users, find any vendor app user (including 'N')
-                user = activeUsers.find(u => 
-                  (u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C'))
-              );
+              user = this.pickBestVendorUser(allUsers);
+              if (user) {
+                console.log(`✅ generateOtp: Found vendor app user (ID: ${user.id}, type: ${user.user_type})`);
               }
             }
           } catch (err) {
@@ -303,22 +363,9 @@ class V2AuthService {
           try {
             const allUsers = await User.findAllByMobile(cleanedPhone);
             if (allUsers && allUsers.length > 0) {
-              const activeUsers = allUsers.filter(u => (u.del_status !== 2 || !u.del_status));
-              const completedVendorUsers = activeUsers.filter(u => 
-                (u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C')) &&
-                u.user_type && u.user_type !== 'N' &&
-                u.id !== user.id // Exclude the already found user
-              );
-              
-              if (completedVendorUsers.length > 0) {
-                // Use the most recently updated completed user
-                completedVendorUsers.sort((a, b) => {
-                  const dateA = new Date(a.updated_at || a.created_at || 0);
-                  const dateB = new Date(b.updated_at || b.created_at || 0);
-                  return dateB - dateA;
-                });
-                const betterUser = completedVendorUsers[0];
-                console.log(`✅ generateOtp: Found better completed vendor app user (ID: ${betterUser.id}, type: ${betterUser.user_type}) - switching from ID: ${user.id}`);
+              const betterUser = this.pickBestVendorUser(allUsers);
+              if (betterUser && betterUser.id !== user.id) {
+                console.log(`✅ generateOtp: Found better vendor app user (ID: ${betterUser.id}, type: ${betterUser.user_type}) - switching from ID: ${user.id}`);
                 user = betterUser;
               }
             }
@@ -370,6 +417,20 @@ class V2AuthService {
     }
 
     if (user) {
+      // For vendor app, if selected user is admin type, try picking a vendor-eligible profile for same phone.
+      if (targetAppType === 'vendor_app' && (user.user_type === 'A' || user.user_type === 'U')) {
+        try {
+          const allUsers = await User.findAllByMobile(cleanedPhone);
+          const vendorUser = this.pickBestVendorUser(allUsers || []);
+          if (vendorUser) {
+            console.log(`♻️  generateOtp: Switched from admin-type user ${user.id} to vendor user ${vendorUser.id}`);
+            user = vendorUser;
+          }
+        } catch (e) {
+          console.warn('⚠️ generateOtp: failed fallback lookup for vendor user:', e.message);
+        }
+      }
+
       // User exists - check if admin/user type (not allowed for mobile app)
       if (user.user_type === 'A' || user.user_type === 'U') {
         throw new Error('This number is registered as admin. Please use web login.');
@@ -399,7 +460,7 @@ class V2AuthService {
    * Verify OTP and complete login
    * @param {string} phoneNumber - Phone number
    * @param {string} otp - OTP code
-   * @param {string} joinType - Join type for new users ('b2b' | 'b2c' | 'delivery')
+   * @param {string} joinType - Join type for new users ('b2b' | 'b2c' | 'delivery' | 'marketplace')
    * @param {string} appType - App type ('customer_app' | 'vendor_app')
    * @param {string} fcmToken - FCM token for push notifications (optional)
    * @returns {Promise<{user: object, token: string, dashboardType: string}>}
@@ -410,6 +471,14 @@ class V2AuthService {
 
     if (cleanedPhone.length !== 10) {
       throw new Error('Invalid phone number');
+    }
+
+    // Normalize joinType
+    const normalizedJoinType = String(joinType || '').trim().toLowerCase().replace(/\s+/g, '');
+    if (normalizedJoinType === 'marketplace' || normalizedJoinType === 'market_place') {
+      joinType = 'marketplace';
+    } else if (normalizedJoinType === 'b2b' || normalizedJoinType === 'b2c' || normalizedJoinType === 'delivery') {
+      joinType = normalizedJoinType;
     }
 
     // Normalize OTP: trim whitespace and extract only digits (handle SMS auto-fill issues)
@@ -555,7 +624,7 @@ class V2AuthService {
       // Ensure vendor_app users have correct app_type and valid user_type (R, S, SR, D, or N)
       // Vendor app users should NEVER have user_type='C' - that's only for customer_app
       if (user) {
-        const validVendorTypes = ['R', 'S', 'SR', 'D', 'N'];
+        const validVendorTypes = ['R', 'S', 'SR', 'D', 'N', 'M'];
         const needsUpdate = user.app_type !== 'vendor_app' || 
                            user.user_type === 'C' || 
                            !validVendorTypes.includes(user.user_type);
@@ -822,6 +891,40 @@ class V2AuthService {
           // Set user to null so registration logic handles it
           user = null;
           console.log(`📝 Will create new vendor app user - separate from customer app user`);
+        }
+      }
+
+      // For non-marketplace joins, never continue with marketplace ('M') user by mistake.
+      // Prefer join-type aligned vendor users.
+      if (joinType && joinType !== 'marketplace') {
+        const allUsersForJoin = await User.findAllByMobile(cleanedPhone);
+        const activeVendorUsers = (allUsersForJoin || []).filter((u) =>
+          (u.del_status !== 2 || !u.del_status) &&
+          (u.app_type === 'vendor_app' || (!u.app_type && u.user_type !== 'C')) &&
+          ['R', 'S', 'SR', 'D', 'N', 'M'].includes(String(u.user_type || '').trim())
+        );
+
+        let preferredTypes = ['N'];
+        if (joinType === 'b2c') preferredTypes = ['R', 'SR', 'N'];
+        if (joinType === 'b2b') preferredTypes = ['S', 'SR', 'N'];
+        if (joinType === 'delivery') preferredTypes = ['D', 'N'];
+
+        const preferredUser = this.pickMostRecentByTypes(activeVendorUsers, preferredTypes);
+        if (preferredUser && (!user || preferredUser.id !== user.id)) {
+          console.log(`♻️  Switching vendor user for ${joinType}: ${user?.id || 'none'} -> ${preferredUser.id} (${preferredUser.user_type})`);
+          user = preferredUser;
+        }
+
+        if (user && user.user_type === 'M') {
+          const nonMarketplaceUser = activeVendorUsers
+            .filter((u) => String(u.user_type || '').trim() !== 'M')
+            .sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0))[0];
+          if (nonMarketplaceUser) {
+            console.log(`♻️  Avoiding marketplace profile for ${joinType}, switching to user ${nonMarketplaceUser.id} (${nonMarketplaceUser.user_type})`);
+            user = nonMarketplaceUser;
+          } else {
+            user = null;
+          }
         }
       }
     }
@@ -1193,11 +1296,11 @@ class V2AuthService {
           throw new Error('Delivery partners cannot login or register as B2B or B2C users. Please use your delivery account.');
         }
       }
-      
+
       // Handle B2B <-> B2C registration/upgrade for vendor app users
       // Allow users to switch between B2B and B2C signup screens until signup is complete
       // IMPORTANT: Do NOT change user_type during OTP - only after signup completion
-      if (joinType && joinType !== userDashboardType && user.user_type !== 'C') {
+      if (joinType && joinType !== 'marketplace' && joinType !== userDashboardType && user.user_type !== 'C') {
         // Check if user has completed signup for their current type
         const Shop = require('../../models/Shop');
         const shop = await Shop.findByUserId(user.id);
@@ -1253,6 +1356,26 @@ class V2AuthService {
             console.log(`⚠️  WARNING: User type is ${user.user_type} but B2C signup is incomplete`);
           }
         }
+      }
+    }
+
+    // Marketplace login has no user-type restriction.
+    // Create/reuse a separate M user; do not mutate existing R/S/SR/D/N users.
+    if (targetAppType === 'vendor_app' && joinType === 'marketplace') {
+      user = await this.findOrCreateMarketplaceUser(cleanedPhone);
+    }
+
+    // For vendor app, if selected user is admin type, try picking a vendor-eligible profile for same phone.
+    if (targetAppType === 'vendor_app' && (user.user_type === 'A' || user.user_type === 'U')) {
+      try {
+        const allUsers = await User.findAllByMobile(cleanedPhone);
+        const vendorUser = this.pickBestVendorUser(allUsers || []);
+        if (vendorUser) {
+          console.log(`♻️  verifyOtpAndLogin: Switched from admin-type user ${user.id} to vendor user ${vendorUser.id}`);
+          user = vendorUser;
+        }
+      } catch (e) {
+        console.warn('⚠️ verifyOtpAndLogin: failed fallback lookup for vendor user:', e.message);
       }
     }
 
@@ -1518,6 +1641,8 @@ class V2AuthService {
    */
   static mapUserTypeToDashboard(userType, preferredDashboard = null) {
     switch (userType) {
+      case 'M': // Marketplace user
+        return 'marketplace';
       case 'N': // New user - not yet registered, use preferred dashboard or default to b2c
         return preferredDashboard && (preferredDashboard === 'b2b' || preferredDashboard === 'b2c') 
           ? preferredDashboard 
@@ -1543,12 +1668,14 @@ class V2AuthService {
 
   /**
    * Map joinType to user_type
-   * @param {string} joinType - Join type ('b2b', 'b2c', 'delivery')
-   * @returns {string} User type ('S', 'R', 'D')
+   * @param {string} joinType - Join type ('b2b', 'b2c', 'delivery', 'marketplace')
+   * @returns {string} User type ('S', 'R', 'D', 'M')
    * Note: 'C' is reserved for customer app (Flutter), 'R' is for B2C in vendor app
    */
   static mapJoinTypeToUserType(joinType) {
     switch (joinType) {
+      case 'marketplace':
+        return 'M'; // Marketplace user (vendor app)
       case 'b2b':
         return 'S'; // Shop owner (B2B)
       case 'delivery':
@@ -1561,4 +1688,3 @@ class V2AuthService {
 }
 
 module.exports = V2AuthService;
-

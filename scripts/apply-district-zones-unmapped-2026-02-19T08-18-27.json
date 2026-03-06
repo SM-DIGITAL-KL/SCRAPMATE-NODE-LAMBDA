@@ -1,0 +1,658 @@
+{
+  "generated_at": "2026-02-19T08:18:27.093Z",
+  "summary": {
+    "table": "district_pincode_prefixes",
+    "mode": "dry_run",
+    "scanned": 755,
+    "matched": 626,
+    "updated": 626,
+    "unmapped": 129
+  },
+  "unmapped_rows": [
+    {
+      "id": "uttar-pradesh#kaushambi",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "KAUSHAMBI"
+    },
+    {
+      "id": "odisha#sambalpur",
+      "state_name": "ODISHA",
+      "district_name": "SAMBALPUR"
+    },
+    {
+      "id": "andhra-pradesh#ntr",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "NTR"
+    },
+    {
+      "id": "jharkhand#east-singhbum",
+      "state_name": "JHARKHAND",
+      "district_name": "EAST SINGHBUM"
+    },
+    {
+      "id": "uttar-pradesh#fatehpur",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "FATEHPUR"
+    },
+    {
+      "id": "andhra-pradesh#kakinada",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "Kakinada"
+    },
+    {
+      "id": "odisha#jajapur",
+      "state_name": "ODISHA",
+      "district_name": "JAJAPUR"
+    },
+    {
+      "id": "gujarat#vadodara",
+      "state_name": "GUJARAT",
+      "district_name": "VADODARA"
+    },
+    {
+      "id": "andaman-and-nicobar-islands#north-and-middle-andaman",
+      "state_name": "ANDAMAN AND NICOBAR ISLANDS",
+      "district_name": "NORTH AND MIDDLE ANDAMAN"
+    },
+    {
+      "id": "andhra-pradesh#palnadu",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "Palnadu"
+    },
+    {
+      "id": "jharkhand#saraikela-kharsawan",
+      "state_name": "JHARKHAND",
+      "district_name": "SARAIKELA KHARSAWAN"
+    },
+    {
+      "id": "andhra-pradesh#sri-sathya-sai",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "Sri Sathya Sai"
+    },
+    {
+      "id": "bihar#aurangabad",
+      "state_name": "BIHAR",
+      "district_name": "AURANGABAD"
+    },
+    {
+      "id": "karnataka#bengaluru-rural",
+      "state_name": "KARNATAKA",
+      "district_name": "BENGALURU RURAL"
+    },
+    {
+      "id": "haryana#karnal",
+      "state_name": "HARYANA",
+      "district_name": "KARNAL"
+    },
+    {
+      "id": "maharashtra#mumbai",
+      "state_name": "MAHARASHTRA",
+      "district_name": "MUMBAI"
+    },
+    {
+      "id": "punjab#fazilka",
+      "state_name": "PUNJAB",
+      "district_name": "FAZILKA"
+    },
+    {
+      "id": "uttar-pradesh#mahoba",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "MAHOBA"
+    },
+    {
+      "id": "haryana#nuh",
+      "state_name": "HARYANA",
+      "district_name": "NUH"
+    },
+    {
+      "id": "haryana#charki-dadri",
+      "state_name": "HARYANA",
+      "district_name": "CHARKI DADRI"
+    },
+    {
+      "id": "uttar-pradesh#budaun",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "BUDAUN"
+    },
+    {
+      "id": "odisha#anugul",
+      "state_name": "ODISHA",
+      "district_name": "ANUGUL"
+    },
+    {
+      "id": "odisha#bargarh",
+      "state_name": "ODISHA",
+      "district_name": "BARGARH"
+    },
+    {
+      "id": "andhra-pradesh#tirupati",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "Tirupati"
+    },
+    {
+      "id": "odisha#baleshwar",
+      "state_name": "ODISHA",
+      "district_name": "BALESHWAR"
+    },
+    {
+      "id": "haryana#panchkula",
+      "state_name": "HARYANA",
+      "district_name": "PANCHKULA"
+    },
+    {
+      "id": "gujarat#kachchh",
+      "state_name": "GUJARAT",
+      "district_name": "KACHCHH"
+    },
+    {
+      "id": "uttar-pradesh#ambedkar-nagar",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "AMBEDKAR NAGAR"
+    },
+    {
+      "id": "puducherry#yanam",
+      "state_name": "PUDUCHERRY",
+      "district_name": "YANAM"
+    },
+    {
+      "id": "punjab#fatehgarh-sahib",
+      "state_name": "PUNJAB",
+      "district_name": "FATEHGARH SAHIB"
+    },
+    {
+      "id": "odisha#jagatsinghapur",
+      "state_name": "ODISHA",
+      "district_name": "JAGATSINGHAPUR"
+    },
+    {
+      "id": "andhra-pradesh#visakhapatanam",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "VISAKHAPATANAM"
+    },
+    {
+      "id": "odisha#malkangiri",
+      "state_name": "ODISHA",
+      "district_name": "MALKANGIRI"
+    },
+    {
+      "id": "tamil-nadu#villupuram",
+      "state_name": "TAMIL NADU",
+      "district_name": "VILLUPURAM"
+    },
+    {
+      "id": "jharkhand#sahebganj",
+      "state_name": "JHARKHAND",
+      "district_name": "SAHEBGANJ"
+    },
+    {
+      "id": "goa#north-goa",
+      "state_name": "GOA",
+      "district_name": "NORTH GOA"
+    },
+    {
+      "id": "uttar-pradesh#jalaun",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "JALAUN"
+    },
+    {
+      "id": "haryana#gurugram",
+      "state_name": "HARYANA",
+      "district_name": "GURUGRAM"
+    },
+    {
+      "id": "gujarat#ahmadabad",
+      "state_name": "GUJARAT",
+      "district_name": "AHMADABAD"
+    },
+    {
+      "id": "andhra-pradesh#spsr-nellore",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "SPSR NELLORE"
+    },
+    {
+      "id": "bihar#pashchim-champaran",
+      "state_name": "BIHAR",
+      "district_name": "PASHCHIM CHAMPARAN"
+    },
+    {
+      "id": "uttar-pradesh#lalitpur",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "LALITPUR"
+    },
+    {
+      "id": "uttar-pradesh#pratapgarh",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "PRATAPGARH"
+    },
+    {
+      "id": "haryana#mahendragarh",
+      "state_name": "HARYANA",
+      "district_name": "MAHENDRAGARH"
+    },
+    {
+      "id": "tamil-nadu#kanniyakumari",
+      "state_name": "TAMIL NADU",
+      "district_name": "KANNIYAKUMARI"
+    },
+    {
+      "id": "uttar-pradesh#prayagraj",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "PRAYAGRAJ"
+    },
+    {
+      "id": "punjab#mansa",
+      "state_name": "PUNJAB",
+      "district_name": "MANSA"
+    },
+    {
+      "id": "uttar-pradesh#jhansi",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "JHANSI"
+    },
+    {
+      "id": "punjab#patiala",
+      "state_name": "PUNJAB",
+      "district_name": "PATIALA"
+    },
+    {
+      "id": "punjab#malerkotla",
+      "state_name": "PUNJAB",
+      "district_name": "MALERKOTLA"
+    },
+    {
+      "id": "uttar-pradesh#bhadohi",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "BHADOHI"
+    },
+    {
+      "id": "chandigarh#chandigarh",
+      "state_name": "CHANDIGARH",
+      "district_name": "CHANDIGARH"
+    },
+    {
+      "id": "goa#south-goa",
+      "state_name": "GOA",
+      "district_name": "SOUTH GOA"
+    },
+    {
+      "id": "karnataka#bidar",
+      "state_name": "KARNATAKA",
+      "district_name": "BIDAR"
+    },
+    {
+      "id": "odisha#deogarh",
+      "state_name": "ODISHA",
+      "district_name": "DEOGARH"
+    },
+    {
+      "id": "andhra-pradesh#nandyal",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "Nandyal"
+    },
+    {
+      "id": "odisha#gajapati",
+      "state_name": "ODISHA",
+      "district_name": "GAJAPATI"
+    },
+    {
+      "id": "andhra-pradesh#y-s-r",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "Y.S.R."
+    },
+    {
+      "id": "west-bengal#medinipur-east",
+      "state_name": "WEST BENGAL",
+      "district_name": "MEDINIPUR EAST"
+    },
+    {
+      "id": "odisha#jharsuguda",
+      "state_name": "ODISHA",
+      "district_name": "JHARSUGUDA"
+    },
+    {
+      "id": "odisha#sundargarh",
+      "state_name": "ODISHA",
+      "district_name": "SUNDARGARH"
+    },
+    {
+      "id": "andhra-pradesh#konaseema",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "Konaseema"
+    },
+    {
+      "id": "tamil-nadu#mayiladuthurai",
+      "state_name": "TAMIL NADU",
+      "district_name": "MAYILADUTHURAI"
+    },
+    {
+      "id": "odisha#balangir",
+      "state_name": "ODISHA",
+      "district_name": "BALANGIR"
+    },
+    {
+      "id": "punjab#sri-muktsar-sahib",
+      "state_name": "PUNJAB",
+      "district_name": "SRI MUKTSAR SAHIB"
+    },
+    {
+      "id": "uttar-pradesh#sant-kabeer-nagar",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "SANT KABEER NAGAR"
+    },
+    {
+      "id": "madhya-pradesh#guna",
+      "state_name": "MADHYA PRADESH",
+      "district_name": "GUNA"
+    },
+    {
+      "id": "punjab#hoshiarpur",
+      "state_name": "PUNJAB",
+      "district_name": "HOSHIARPUR"
+    },
+    {
+      "id": "punjab#sangrur",
+      "state_name": "PUNJAB",
+      "district_name": "SANGRUR"
+    },
+    {
+      "id": "haryana#fatehabad",
+      "state_name": "HARYANA",
+      "district_name": "FATEHABAD"
+    },
+    {
+      "id": "uttar-pradesh#kanpur-nagar",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "KANPUR NAGAR"
+    },
+    {
+      "id": "odisha#nabarangpur",
+      "state_name": "ODISHA",
+      "district_name": "NABARANGPUR"
+    },
+    {
+      "id": "west-bengal#medinipur-west",
+      "state_name": "WEST BENGAL",
+      "district_name": "MEDINIPUR WEST"
+    },
+    {
+      "id": "punjab#bathinda",
+      "state_name": "PUNJAB",
+      "district_name": "BATHINDA"
+    },
+    {
+      "id": "puducherry#pondicherry",
+      "state_name": "PUDUCHERRY",
+      "district_name": "PONDICHERRY"
+    },
+    {
+      "id": "andhra-pradesh#anakapalli",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "Anakapalli"
+    },
+    {
+      "id": "karnataka#chamarajanagara",
+      "state_name": "KARNATAKA",
+      "district_name": "CHAMARAJANAGARA"
+    },
+    {
+      "id": "uttar-pradesh#kheri",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "KHERI"
+    },
+    {
+      "id": "puducherry#karaikal",
+      "state_name": "PUDUCHERRY",
+      "district_name": "KARAIKAL"
+    },
+    {
+      "id": "west-bengal#dinajpur-dakshin",
+      "state_name": "WEST BENGAL",
+      "district_name": "DINAJPUR DAKSHIN"
+    },
+    {
+      "id": "uttar-pradesh#chitrakoot",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "CHITRAKOOT"
+    },
+    {
+      "id": "gujarat#mahesana",
+      "state_name": "GUJARAT",
+      "district_name": "MAHESANA"
+    },
+    {
+      "id": "odisha#kandhamal",
+      "state_name": "ODISHA",
+      "district_name": "KANDHAMAL"
+    },
+    {
+      "id": "gujarat#panch-mahals",
+      "state_name": "GUJARAT",
+      "district_name": "PANCH MAHALS"
+    },
+    {
+      "id": "odisha#nuapada",
+      "state_name": "ODISHA",
+      "district_name": "NUAPADA"
+    },
+    {
+      "id": "karnataka#vijaynagar",
+      "state_name": "KARNATAKA",
+      "district_name": "VIJAYNAGAR"
+    },
+    {
+      "id": "tamil-nadu#thiruvarur",
+      "state_name": "TAMIL NADU",
+      "district_name": "THIRUVARUR"
+    },
+    {
+      "id": "punjab#shahid-bhagat-singh-nagar",
+      "state_name": "PUNJAB",
+      "district_name": "Shahid Bhagat Singh Nagar"
+    },
+    {
+      "id": "the-dadra-and-nagar-haveli-and-daman-and-diu#diu",
+      "state_name": "THE DADRA AND NAGAR HAVELI AND DAMAN AND DIU",
+      "district_name": "DIU"
+    },
+    {
+      "id": "punjab#s-a-s-nagar",
+      "state_name": "PUNJAB",
+      "district_name": "S.A.S Nagar"
+    },
+    {
+      "id": "odisha#kendujhar",
+      "state_name": "ODISHA",
+      "district_name": "KENDUJHAR"
+    },
+    {
+      "id": "the-dadra-and-nagar-haveli-and-daman-and-diu#dadra-and-nagar-haveli",
+      "state_name": "THE DADRA AND NAGAR HAVELI AND DAMAN AND DIU",
+      "district_name": "DADRA AND NAGAR HAVELI"
+    },
+    {
+      "id": "west-bengal#maldah",
+      "state_name": "WEST BENGAL",
+      "district_name": "MALDAH"
+    },
+    {
+      "id": "madhya-pradesh#east-nimar",
+      "state_name": "MADHYA PRADESH",
+      "district_name": "EAST NIMAR"
+    },
+    {
+      "id": "odisha#sonepur",
+      "state_name": "ODISHA",
+      "district_name": "SONEPUR"
+    },
+    {
+      "id": "punjab#moga",
+      "state_name": "PUNJAB",
+      "district_name": "MOGA"
+    },
+    {
+      "id": "andaman-and-nicobar-islands#nicobars",
+      "state_name": "ANDAMAN AND NICOBAR ISLANDS",
+      "district_name": "NICOBARS"
+    },
+    {
+      "id": "andhra-pradesh#eluru",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "Eluru"
+    },
+    {
+      "id": "andhra-pradesh#annamayya",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "Annamayya"
+    },
+    {
+      "id": "punjab#rupnagar",
+      "state_name": "PUNJAB",
+      "district_name": "RUPNAGAR"
+    },
+    {
+      "id": "west-bengal#dinajpur-uttar",
+      "state_name": "WEST BENGAL",
+      "district_name": "DINAJPUR UTTAR"
+    },
+    {
+      "id": "andhra-pradesh#alluri-sitharama-raju",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "Alluri Sitharama Raju"
+    },
+    {
+      "id": "tamil-nadu#thiruvallur",
+      "state_name": "TAMIL NADU",
+      "district_name": "THIRUVALLUR"
+    },
+    {
+      "id": "andhra-pradesh#parvathipuram-manyam",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "Parvathipuram Manyam"
+    },
+    {
+      "id": "na#na",
+      "state_name": "NA",
+      "district_name": "NA"
+    },
+    {
+      "id": "west-bengal#24-paraganas-north",
+      "state_name": "WEST BENGAL",
+      "district_name": "24 PARAGANAS NORTH"
+    },
+    {
+      "id": "punjab#firozepur",
+      "state_name": "PUNJAB",
+      "district_name": "FIROZEPUR"
+    },
+    {
+      "id": "bihar#purbi-champaran",
+      "state_name": "BIHAR",
+      "district_name": "PURBI CHAMPARAN"
+    },
+    {
+      "id": "uttar-pradesh#hamirpur",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "HAMIRPUR"
+    },
+    {
+      "id": "karnataka#chikkaballapura",
+      "state_name": "KARNATAKA",
+      "district_name": "CHIKKABALLAPURA"
+    },
+    {
+      "id": "punjab#barnala",
+      "state_name": "PUNJAB",
+      "district_name": "BARNALA"
+    },
+    {
+      "id": "uttar-pradesh#banda",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "BANDA"
+    },
+    {
+      "id": "karnataka#davangere",
+      "state_name": "KARNATAKA",
+      "district_name": "DAVANGERE"
+    },
+    {
+      "id": "tamil-nadu#the-nilgiris",
+      "state_name": "TAMIL NADU",
+      "district_name": "THE NILGIRIS"
+    },
+    {
+      "id": "punjab#faridkot",
+      "state_name": "PUNJAB",
+      "district_name": "FARIDKOT"
+    },
+    {
+      "id": "andhra-pradesh#bapatla",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "Bapatla"
+    },
+    {
+      "id": "west-bengal#24-paraganas-south",
+      "state_name": "WEST BENGAL",
+      "district_name": "24 PARAGANAS SOUTH"
+    },
+    {
+      "id": "haryana#jind",
+      "state_name": "HARYANA",
+      "district_name": "JIND"
+    },
+    {
+      "id": "gujarat#arvalli",
+      "state_name": "GUJARAT",
+      "district_name": "ARVALLI"
+    },
+    {
+      "id": "andaman-and-nicobar-islands#south-andamans",
+      "state_name": "ANDAMAN AND NICOBAR ISLANDS",
+      "district_name": "SOUTH ANDAMANS"
+    },
+    {
+      "id": "the-dadra-and-nagar-haveli-and-daman-and-diu#daman",
+      "state_name": "THE DADRA AND NAGAR HAVELI AND DAMAN AND DIU",
+      "district_name": "DAMAN"
+    },
+    {
+      "id": "odisha#boudh",
+      "state_name": "ODISHA",
+      "district_name": "BOUDH"
+    },
+    {
+      "id": "gujarat#dohad",
+      "state_name": "GUJARAT",
+      "district_name": "DOHAD"
+    },
+    {
+      "id": "odisha#ganjam",
+      "state_name": "ODISHA",
+      "district_name": "GANJAM"
+    },
+    {
+      "id": "bihar#kaimur-bhabua",
+      "state_name": "BIHAR",
+      "district_name": "KAIMUR (BHABUA)"
+    },
+    {
+      "id": "odisha#rayagada",
+      "state_name": "ODISHA",
+      "district_name": "RAYAGADA"
+    },
+    {
+      "id": "puducherry#mahe",
+      "state_name": "PUDUCHERRY",
+      "district_name": "MAHE"
+    },
+    {
+      "id": "odisha#kendrapara",
+      "state_name": "ODISHA",
+      "district_name": "KENDRAPARA"
+    },
+    {
+      "id": "gujarat#chhotaudepur",
+      "state_name": "GUJARAT",
+      "district_name": "CHHOTAUDEPUR"
+    }
+  ]
+}

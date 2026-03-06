@@ -28,6 +28,9 @@ class V2ProfileController {
       }
 
       const userIdNum = parseInt(userId);
+      const forceDb = ['1', 'true', 'yes'].includes(
+        String(req.query.fresh || req.query.no_cache || '').toLowerCase()
+      );
 
       // Get app_type from query parameter or header to filter cache appropriately
       // This ensures customer_app users don't get vendor data from cache
@@ -37,9 +40,10 @@ class V2ProfileController {
 
       // Check Redis cache first (but we'll validate app_type after retrieval)
       const cacheKey = RedisCache.userKey(userIdNum, 'profile');
-      try {
-        const cached = await RedisCache.get(cacheKey);
-        if (cached !== null && cached !== undefined) {
+      if (!forceDb) {
+        try {
+          const cached = await RedisCache.get(cacheKey);
+          if (cached !== null && cached !== undefined) {
           // Safety check: Remove vendor data if this is a customer_app request
           let cachedProfile = cached;
           if (appType === 'customer_app' || (cachedProfile.app_type && cachedProfile.app_type === 'customer_app')) {
@@ -69,16 +73,19 @@ class V2ProfileController {
             }
           }
           
-          console.log('⚡ Profile cache hit');
-          return res.json({
-            status: 'success',
-            msg: 'Profile retrieved successfully',
-            data: cachedProfile,
-            hitBy: 'Redis'
-          });
+            console.log('⚡ Profile cache hit');
+            return res.json({
+              status: 'success',
+              msg: 'Profile retrieved successfully',
+              data: cachedProfile,
+              hitBy: 'Redis'
+            });
+          }
+        } catch (err) {
+          console.error('Redis get error:', err);
         }
-      } catch (err) {
-        console.error('Redis get error:', err);
+      } else {
+        console.log(`🗄️  Profile request with fresh/no_cache flag - bypassing Redis for user ${userIdNum}`);
       }
 
       // Pass requesting app_type to service so it can filter data appropriately

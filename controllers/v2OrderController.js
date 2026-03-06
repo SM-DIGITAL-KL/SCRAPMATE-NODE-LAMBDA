@@ -375,6 +375,73 @@ class V2OrderController {
           notifiedVendorIds = [];
           notifiedShopIds = [];
 
+          // Special routing rule:
+          // If customer phone is 7736068251, notify only non-subscribed vendors
+          // (exclude vendors having active paid monthly/yearly subscriptions).
+          const normalizePhone = (phone) => {
+            if (!phone && phone !== 0) return '';
+            let cleaned = String(phone).replace(/[^\d]/g, '');
+            if (cleaned.startsWith('91') && cleaned.length > 10) {
+              cleaned = cleaned.substring(cleaned.length - 10);
+            }
+            if (cleaned.startsWith('0') && cleaned.length > 10) {
+              cleaned = cleaned.substring(cleaned.length - 10);
+            }
+            return cleaned;
+          };
+
+          const customerPhoneNormalized = normalizePhone(user.mob_num || user.mobile || user.phone || '');
+          const specialCustomerPhone = '7736068251';
+
+          if (customerPhoneNormalized === specialCustomerPhone && allVendors.length > 0) {
+            try {
+              console.log(`🎯 Special routing active for customer ${specialCustomerPhone} - excluding subscribed vendors`);
+              const Invoice = require('../models/Invoice');
+              const candidateVendorIds = new Set(
+                allVendors.map(v => parseInt(v.user_id)).filter(id => !isNaN(id))
+              );
+
+              const allInvoices = await Invoice.getAll();
+              const now = new Date();
+              const subscribedVendorIds = new Set();
+
+              allInvoices.forEach((invoice) => {
+                const vendorUserId = parseInt(invoice.user_id);
+                if (isNaN(vendorUserId) || !candidateVendorIds.has(vendorUserId)) {
+                  return;
+                }
+
+                const invoiceType = String(invoice.type || '').toLowerCase();
+                if (invoiceType !== 'paid') {
+                  return;
+                }
+
+                const approvalStatus = String(invoice.approval_status || 'pending').toLowerCase();
+                if (approvalStatus === 'rejected') {
+                  return;
+                }
+
+                if (!invoice.to_date) {
+                  return;
+                }
+
+                const toDate = new Date(invoice.to_date);
+                if (isNaN(toDate.getTime()) || toDate <= now) {
+                  return;
+                }
+
+                subscribedVendorIds.add(vendorUserId);
+              });
+
+              const beforeCount = allVendors.length;
+              allVendors = allVendors.filter(v => !subscribedVendorIds.has(parseInt(v.user_id)));
+              console.log(`🎯 Special routing applied: ${beforeCount - allVendors.length} subscribed vendor(s) excluded, ${allVendors.length} non-subscribed vendor(s) remaining`);
+            } catch (subscriptionFilterError) {
+              console.error('⚠️  Error applying special subscription filter:', subscriptionFilterError);
+              console.error('   Falling back to default vendor list');
+            }
+          }
+
           for (const vendor of allVendors) {
             if (vendor.user_id) {
               notifiedVendorIds.push(parseInt(vendor.user_id));

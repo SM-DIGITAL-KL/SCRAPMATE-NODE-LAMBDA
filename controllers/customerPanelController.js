@@ -4,9 +4,26 @@ const User = require('../models/User');
 const RedisCache = require('../utils/redisCache');
 
 class CustomerPanelController {
+  static _isZoneUser(req) {
+    const email = String(
+      req.user?.email ||
+      req.session?.userEmail ||
+      req.headers['x-user-email'] ||
+      ''
+    ).trim().toLowerCase();
+    return /^zone/i.test(email);
+  }
+
   static async customers(req, res) {
     try {
       console.log('🟢 CustomerPanelController.customers called');
+      if (CustomerPanelController._isZoneUser(req)) {
+        return res.status(403).json({
+          status: 'error',
+          msg: 'Access denied for zone users',
+          data: null
+        });
+      }
       res.json({
         status: 'success',
         msg: 'Customers page data',
@@ -76,6 +93,13 @@ class CustomerPanelController {
   static async viewCustomers(req, res) {
     try {
       console.log('🟢 CustomerPanelController.viewCustomers called');
+      if (CustomerPanelController._isZoneUser(req)) {
+        return res.status(403).json({
+          status: 'error',
+          msg: 'Access denied for zone users',
+          data: []
+        });
+      }
       
       // Check Redis cache first
       const cacheKey = RedisCache.listKey('customer_list');
@@ -1048,4 +1072,3 @@ class CustomerPanelController {
 }
 
 module.exports = CustomerPanelController;
-

@@ -33,6 +33,7 @@
     "cloudwatch:all": "./scripts/cloudwatch-logs.sh all",
     "aws:mfa:deactivate": "node scripts/aws-console-mfa-automation.js",
     "seed:subscription-packages": "node scripts/seed-subscription-packages.js",
+    "scrape:bidassist:sync": "node scripts/scrape-and-sync-bidassist-tenders.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {

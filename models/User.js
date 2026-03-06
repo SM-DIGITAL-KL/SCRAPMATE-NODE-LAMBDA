@@ -54,6 +54,7 @@ class User {
         // Only include email if it's a valid non-empty string
         mob_num: typeof mobNum === 'string' && !isNaN(mobNum) ? parseInt(mobNum) : mobNum,
         user_type: finalUserType, // GSI key - validated and trimmed above
+        isMarketPlaceSubscribed: finalUserType === 'M' ? false : undefined,
         password: hashedPassword,
         created_at: createdAt, // GSI key - validated above
         updated_at: new Date().toISOString(),
@@ -399,9 +400,23 @@ class User {
       } while (lastKey);
 
       if (allMatchingUsers.length > 0) {
+        // Enforce app-type specific user_type filtering before choosing most recent user.
+        let eligibleUsers = allMatchingUsers;
+        if (appType === 'vendor_app') {
+          const vendorTypes = new Set(['R', 'S', 'SR', 'D', 'N', 'M']);
+          eligibleUsers = allMatchingUsers.filter(u => vendorTypes.has(String(u.user_type || '').trim()));
+        } else if (appType === 'customer_app') {
+          eligibleUsers = allMatchingUsers.filter(u => String(u.user_type || '').trim() === 'C');
+        }
+
+        if (eligibleUsers.length === 0) {
+          console.log(`   ⚠️ No eligible ${appType} users found after user_type filtering`);
+          return null;
+        }
+
         // Prioritize users with FCM tokens (for customer_app, this ensures notifications work)
-        const usersWithToken = allMatchingUsers.filter(u => u.fcm_token);
-        const usersWithoutToken = allMatchingUsers.filter(u => !u.fcm_token);
+        const usersWithToken = eligibleUsers.filter(u => u.fcm_token);
+        const usersWithoutToken = eligibleUsers.filter(u => !u.fcm_token);
 
         // If there are users with FCM tokens, prefer the most recently updated one
         if (usersWithToken.length > 0) {

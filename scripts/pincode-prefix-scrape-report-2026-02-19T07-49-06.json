@@ -1,0 +1,11 @@
+{
+  "summary": {
+    "mode": "apply",
+    "table": "district_pincode_prefixes",
+    "states_processed": 0,
+    "districts_processed": 0,
+    "saved": 0,
+    "empty": 0
+  },
+  "results": []
+}

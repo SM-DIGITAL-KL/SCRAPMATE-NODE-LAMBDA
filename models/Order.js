@@ -882,25 +882,36 @@ class Order {
   // Count orders from v2 customer_app users (excluding bulk orders)
   // Bulk orders are identified by having bulk_request_id attribute
   // SIMPLIFIED: Direct scan approach for reliability (no GSIs required)
-  static async countCustomerAppOrdersV2() {
+  // includeDeleted: if true, includes orders from deleted users (for admin dashboard)
+  static async countCustomerAppOrdersV2(includeDeleted = false) {
     try {
       const client = getDynamoDBClient();
       
-      console.log('📊 [countCustomerAppOrdersV2] Starting count of orders from v2 customer_app users');
+      console.log(`📊 [countCustomerAppOrdersV2] Starting count (includeDeleted=${includeDeleted})`);
 
-      // Step 1: Get all v2 customer_app user IDs
+      // Step 1: Get all v2 customer user IDs (customer_app and customer user_type)
       const v2CustomerAppUsers = new Set();
       let userLastKey = null;
       
       do {
+        // Build filter expression based on includeDeleted flag
+        let filterExpression = 'app_version = :appVersion AND ((app_type = :appType) OR (user_type = :customerType))';
+        let expressionValues = {
+          ':appVersion': 'v2',
+          ':appType': 'customer_app',
+          ':customerType': 'C'
+        };
+        
+        // Only exclude deleted users if includeDeleted is false
+        if (!includeDeleted) {
+          filterExpression += ' AND (attribute_not_exists(del_status) OR del_status <> :deleted)';
+          expressionValues[':deleted'] = 2;
+        }
+        
         const userParams = {
           TableName: 'users',
-          FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
-          ExpressionAttributeValues: {
-            ':appVersion': 'v2',
-            ':appType': 'customer_app',
-            ':deleted': 2
-          },
+          FilterExpression: filterExpression,
+          ExpressionAttributeValues: expressionValues,
           ProjectionExpression: 'id'
         };
         if (userLastKey) userParams.ExclusiveStartKey = userLastKey;
@@ -918,7 +929,7 @@ class Order {
         userLastKey = userResponse.LastEvaluatedKey;
       } while (userLastKey);
 
-      console.log(`📊 [countCustomerAppOrdersV2] Found ${v2CustomerAppUsers.size / 3} unique v2 customer_app users`);
+      console.log(`📊 [countCustomerAppOrdersV2] Found ${v2CustomerAppUsers.size / 3} unique v2 customer users`);
 
       if (v2CustomerAppUsers.size === 0) {
         console.log(`⚠️ [countCustomerAppOrdersV2] No v2 customer_app users found, returning 0`);
@@ -933,7 +944,7 @@ class Order {
       do {
         const orderParams = {
           TableName: TABLE_NAME,
-          ProjectionExpression: 'customer_id, bulk_request_id',
+          ProjectionExpression: 'customer_id, bulk_request_id, app_version, app_type',
           Limit: 1000
         };
         if (lastKey) orderParams.ExclusiveStartKey = lastKey;
@@ -944,13 +955,15 @@ class Order {
           scannedOrders += orderResponse.Items.length;
           
           for (const order of orderResponse.Items) {
-            // Check if this order belongs to a v2 customer_app user
             const customerId = order.customer_id;
-            if (customerId && v2CustomerAppUsers.has(customerId)) {
-              // Exclude bulk orders (orders with bulk_request_id)
-              if (!order.bulk_request_id) {
-                count++;
-              }
+            const belongsByUserSet = customerId && v2CustomerAppUsers.has(customerId);
+            const orderAppVersion = String(order.app_version || '').toLowerCase();
+            const orderAppType = String(order.app_type || '').toLowerCase();
+            const belongsByOrderMeta = orderAppVersion === 'v2' && (!orderAppType || orderAppType === 'customer_app');
+
+            // Exclude bulk orders (orders with bulk_request_id)
+            if (!order.bulk_request_id && (belongsByUserSet || belongsByOrderMeta)) {
+              count++;
             }
           }
         }
@@ -967,53 +980,175 @@ class Order {
     }
   }
 
-  // Count all orders that are NOT from customer_app users (includes vendor orders, bulk orders, etc.)
-  // This shows all "other" orders that should appear in bulk orders section
-  // OPTIMIZED: Uses count() and countCustomerAppOrdersV2() which are now optimized
-  static async countBulkOrders() {
+  // Count B2B bulk orders from all tables
+  static async countBulkOrders(filters = {}) {
     try {
-      console.log('📊 [countBulkOrders] Starting optimized count of all non-customer_app orders');
+      const Address = require('./Address');
+      const zoneFilter = Address.normalizeZone(filters && filters.zone ? filters.zone : '');
+      console.log('📊 [countBulkOrders] Starting count of bulk orders from all tables', { zoneFilter });
 
-      // Get total count of all orders (already optimized with Select: COUNT)
-      const totalOrders = await this.count();
+      const client = getDynamoDBClient();
+      let totalCount = 0;
 
-      // Get count of customer_app orders (now optimized with GSIs)
-      const customerAppOrdersCount = await this.countCustomerAppOrdersV2();
+      if (zoneFilter) {
+        const zoneCustomerIds = await Address.findCustomerIdsByZone(zoneFilter);
+        const zoneCustomerSet = new Set(zoneCustomerIds);
+        const countByTableWithZone = async (tableName, userIdField) => {
+          let count = 0;
+          let lastKey = null;
+          do {
+            const params = {
+              TableName: tableName,
+              ProjectionExpression: '#uid',
+              ExpressionAttributeNames: { '#uid': userIdField }
+            };
+            if (lastKey) params.ExclusiveStartKey = lastKey;
+            const response = await client.send(new ScanCommand(params));
+            for (const item of response.Items || []) {
+              const rawUserId = item[userIdField];
+              const userId = typeof rawUserId === 'string' && !isNaN(rawUserId) ? parseInt(rawUserId, 10) : rawUserId;
+              if (userId !== null && userId !== undefined && zoneCustomerSet.has(userId)) {
+                count += 1;
+              }
+            }
+            lastKey = response.LastEvaluatedKey;
+          } while (lastKey);
+          return count;
+        };
 
-      // Bulk orders = Total orders - Customer app orders
-      const count = totalOrders - customerAppOrdersCount;
+        try {
+          const c1 = await countByTableWithZone('bulk_scrap_requests', 'buyer_id');
+          console.log(`📊 [countBulkOrders] bulk_scrap_requests (zone): ${c1}`);
+          totalCount += c1;
+        } catch (err) {
+          console.log('⚠️ [countBulkOrders] bulk_scrap_requests zone error:', err.message);
+        }
 
-      console.log(`✅ [countBulkOrders] Completed: total_orders=${totalOrders}, customer_app_orders=${customerAppOrdersCount}, bulk_orders=${count}`);
-      return count;
+        try {
+          const c2 = await countByTableWithZone('bulk_sell_requests', 'seller_id');
+          console.log(`📊 [countBulkOrders] bulk_sell_requests (zone): ${c2}`);
+          totalCount += c2;
+        } catch (err) {
+          console.log('⚠️ [countBulkOrders] bulk_sell_requests zone error:', err.message);
+        }
+
+        try {
+          const c3 = await countByTableWithZone('pending_bulk_buy_orders', 'buyer_id');
+          console.log(`📊 [countBulkOrders] pending_bulk_buy_orders (zone): ${c3}`);
+          totalCount += c3;
+        } catch (err) {
+          console.log('⚠️ [countBulkOrders] pending_bulk_buy_orders zone error:', err.message);
+        }
+
+        console.log(`✅ [countBulkOrders] Total (zone ${zoneFilter}): ${totalCount} bulk orders`);
+        return totalCount;
+      }
+      
+      // Count from bulk_scrap_requests
+      try {
+        let count = 0;
+        let lastKey = null;
+        do {
+          const params = {
+            TableName: 'bulk_scrap_requests',
+            Select: 'COUNT'
+          };
+          if (lastKey) params.ExclusiveStartKey = lastKey;
+          
+          const response = await client.send(new ScanCommand(params));
+          count += response.Count || 0;
+          lastKey = response.LastEvaluatedKey;
+        } while (lastKey);
+        console.log(`📊 [countBulkOrders] bulk_scrap_requests: ${count}`);
+        totalCount += count;
+      } catch (err) {
+        console.log('⚠️ [countBulkOrders] bulk_scrap_requests error:', err.message);
+      }
+
+      // Count from bulk_sell_requests
+      try {
+        let count = 0;
+        let lastKey = null;
+        do {
+          const params = {
+            TableName: 'bulk_sell_requests',
+            Select: 'COUNT'
+          };
+          if (lastKey) params.ExclusiveStartKey = lastKey;
+          
+          const response = await client.send(new ScanCommand(params));
+          count += response.Count || 0;
+          lastKey = response.LastEvaluatedKey;
+        } while (lastKey);
+        console.log(`📊 [countBulkOrders] bulk_sell_requests: ${count}`);
+        totalCount += count;
+      } catch (err) {
+        console.log('⚠️ [countBulkOrders] bulk_sell_requests error:', err.message);
+      }
+
+      // Count from pending_bulk_buy_orders
+      try {
+        let count = 0;
+        let lastKey = null;
+        do {
+          const params = {
+            TableName: 'pending_bulk_buy_orders',
+            Select: 'COUNT'
+          };
+          if (lastKey) params.ExclusiveStartKey = lastKey;
+          
+          const response = await client.send(new ScanCommand(params));
+          count += response.Count || 0;
+          lastKey = response.LastEvaluatedKey;
+        } while (lastKey);
+        console.log(`📊 [countBulkOrders] pending_bulk_buy_orders: ${count}`);
+        totalCount += count;
+      } catch (err) {
+        console.log('⚠️ [countBulkOrders] pending_bulk_buy_orders error:', err.message);
+      }
+
+      console.log(`✅ [countBulkOrders] Total: ${totalCount} bulk orders`);
+      return totalCount;
     } catch (err) {
       console.error('❌ [countBulkOrders] Error:', err);
-      throw err;
+      return 0;
     }
   }
 
   // Get recent orders from v2 customer_app users with details (excluding bulk orders)
   // Bulk orders are identified by having bulk_request_id attribute
   // SIMPLIFIED: Uses direct scan for reliability (no GSIs required)
-  static async getCustomerAppOrdersV2(limit = 10) {
+  // includeDeleted: if true, includes orders from deleted users (for admin dashboard)
+  static async getCustomerAppOrdersV2(limit = 10, includeDeleted = false) {
     try {
       const client = getDynamoDBClient();
       
-      console.log('📊 [getCustomerAppOrdersV2] Starting to get orders from v2 customer_app users');
+      console.log(`📊 [getCustomerAppOrdersV2] Starting to get orders from v2 customer_app users (includeDeleted=${includeDeleted})`);
 
-      // Step 1: Get all v2 customer_app user IDs
+      // Step 1: Get all v2 customer user IDs (customer_app and customer user_type)
       const v2CustomerAppUsers = new Set();
       let userLastKey = null;
       
       do {
+        // Build filter expression based on includeDeleted flag
+        let filterExpression = 'app_version = :appVersion AND ((app_type = :appType) OR (user_type = :customerType))';
+        let expressionValues = {
+          ':appVersion': 'v2',
+          ':appType': 'customer_app',
+          ':customerType': 'C'
+        };
+        
+        // Only exclude deleted users if includeDeleted is false
+        if (!includeDeleted) {
+          filterExpression += ' AND (attribute_not_exists(del_status) OR del_status <> :deleted)';
+          expressionValues[':deleted'] = 2;
+        }
+        
         const userParams = {
           TableName: 'users',
-          FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
-          ExpressionAttributeValues: {
-            ':appVersion': 'v2',
-            ':appType': 'customer_app',
-            ':deleted': 2
-          },
-          ProjectionExpression: 'id'
+          FilterExpression: filterExpression,
+          ExpressionAttributeValues: expressionValues,
+          ProjectionExpression: 'id, del_status'
         };
         if (userLastKey) userParams.ExclusiveStartKey = userLastKey;
         
@@ -1030,7 +1165,7 @@ class Order {
         userLastKey = userResponse.LastEvaluatedKey;
       } while (userLastKey);
 
-      console.log(`📊 [getCustomerAppOrdersV2] Found ${v2CustomerAppUsers.size / 3} unique v2 customer_app users`);
+      console.log(`📊 [getCustomerAppOrdersV2] Found ${v2CustomerAppUsers.size / 3} unique v2 customer users`);
 
       if (v2CustomerAppUsers.size === 0) {
         console.log(`⚠️ [getCustomerAppOrdersV2] No v2 customer_app users found, returning empty array`);
@@ -1055,13 +1190,15 @@ class Order {
           scannedOrders += orderResponse.Items.length;
           
           for (const order of orderResponse.Items) {
-            // Check if this order belongs to a v2 customer_app user
             const customerId = order.customer_id;
-            if (customerId && v2CustomerAppUsers.has(customerId)) {
-              // Exclude bulk orders (orders with bulk_request_id)
-              if (!order.bulk_request_id) {
-                allOrders.push(order);
-              }
+            const belongsByUserSet = customerId && v2CustomerAppUsers.has(customerId);
+            const orderAppVersion = String(order.app_version || '').toLowerCase();
+            const orderAppType = String(order.app_type || '').toLowerCase();
+            const belongsByOrderMeta = orderAppVersion === 'v2' && (!orderAppType || orderAppType === 'customer_app');
+
+            // Exclude bulk orders (orders with bulk_request_id)
+            if (!order.bulk_request_id && (belongsByUserSet || belongsByOrderMeta)) {
+              allOrders.push(order);
             }
           }
         }
@@ -1089,24 +1226,42 @@ class Order {
   }
 
   // Get customer app orders v2 with pagination support
-  static async getCustomerAppOrdersV2Paginated(page = 1, limit = 10, search = '') {
+  // includeDeleted: if true, includes orders from deleted users (for admin dashboard)
+  static async getCustomerAppOrdersV2Paginated(page = 1, limit = 10, search = '', includeDeleted = false, filters = {}) {
     try {
       const client = getDynamoDBClient();
-      const User = require('./User');
+      const Address = require('./Address');
+      const zoneFilterRaw = filters && filters.zone ? String(filters.zone).trim() : '';
+      const normalizeZone = (value) => {
+        return Address.normalizeZone(value);
+      };
+      const zoneFilter = normalizeZone(zoneFilterRaw);
       
-      // Get all v2 customer_app user IDs
-      const v2CustomerAppUsers = [];
+      console.log(`📊 [getCustomerAppOrdersV2Paginated] Starting (includeDeleted=${includeDeleted})`);
+      
+      // Get all v2 customer user IDs (customer_app and customer user_type)
+      let v2CustomerAppUsers = [];
       let userLastKey = null;
       
       do {
+        // Build filter expression based on includeDeleted flag
+        let filterExpression = 'app_version = :appVersion AND ((app_type = :appType) OR (user_type = :customerType))';
+        let expressionValues = {
+          ':appVersion': 'v2',
+          ':appType': 'customer_app',
+          ':customerType': 'C'
+        };
+        
+        // Only exclude deleted users if includeDeleted is false
+        if (!includeDeleted) {
+          filterExpression += ' AND (attribute_not_exists(del_status) OR del_status <> :deleted)';
+          expressionValues[':deleted'] = 2;
+        }
+        
         const userParams = {
           TableName: 'users',
-          FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
-          ExpressionAttributeValues: {
-            ':appVersion': 'v2',
-            ':appType': 'customer_app',
-            ':deleted': 2
-          },
+          FilterExpression: filterExpression,
+          ExpressionAttributeValues: expressionValues,
           ProjectionExpression: 'id'
         };
 
@@ -1124,58 +1279,64 @@ class Order {
         userLastKey = userResponse.LastEvaluatedKey;
       } while (userLastKey);
 
-      console.log(`📊 [getCustomerAppOrdersV2Paginated] Found ${v2CustomerAppUsers.length} v2 customer_app users`);
+      console.log(`📊 [getCustomerAppOrdersV2Paginated] Found ${v2CustomerAppUsers.length} v2 customer users`);
 
-      if (v2CustomerAppUsers.length === 0) {
-        console.log(`⚠️ [getCustomerAppOrdersV2Paginated] No v2 customer_app users found, returning empty array`);
-        return {
-          orders: [],
-          total: 0,
-          page: page,
-          limit: limit,
-          totalPages: 0
-        };
+      // If zone is provided, narrow customer_ids using addresses.zone-index first.
+      if (zoneFilter) {
+        const zoneCustomerIds = await Address.findCustomerIdsByZone(zoneFilter);
+        const zoneCustomerSet = new Set(zoneCustomerIds);
+        v2CustomerAppUsers = v2CustomerAppUsers.filter((id) => {
+          const customerId = typeof id === 'string' && !isNaN(id) ? parseInt(id, 10) : id;
+          return zoneCustomerSet.has(customerId);
+        });
+        console.log(`📊 [getCustomerAppOrdersV2Paginated] Zone filter ${zoneFilter}: ${v2CustomerAppUsers.length} matching v2 customers`);
       }
 
-      // Get orders for these users
+      // Build a fast-lookup set with mixed numeric/string id variants.
+      const v2CustomerUserSet = new Set();
+      for (const id of v2CustomerAppUsers) {
+        v2CustomerUserSet.add(id);
+        v2CustomerUserSet.add(String(id));
+        if (typeof id === 'string' && !isNaN(id)) {
+          v2CustomerUserSet.add(parseInt(id, 10));
+        }
+      }
+
+      // Get orders by scanning orders table once and matching either:
+      // 1) customer_id in v2 customer users set, OR
+      // 2) order-level app_version/app_type metadata indicates v2 customer app order.
       const allOrders = [];
-      const batchSize = 25; // Limit to avoid expression size limits
-      
-      for (let i = 0; i < v2CustomerAppUsers.length; i += batchSize) {
-        const batch = v2CustomerAppUsers.slice(i, i + batchSize);
-        const batchUserIds = batch.map(id => typeof id === 'string' && !isNaN(id) ? parseInt(id) : id);
+      let ordersLastKey = null;
+      do {
+        const params = {
+          TableName: TABLE_NAME,
+          Limit: 1000
+        };
+        if (ordersLastKey) {
+          params.ExclusiveStartKey = ordersLastKey;
+        }
 
-        if (batchUserIds.length === 0) continue;
+        const response = await client.send(new ScanCommand(params));
+        if (response.Items) {
+          for (const order of response.Items) {
+            const customerId = order.customer_id;
+            const belongsByUserSet = customerId && (
+              v2CustomerUserSet.has(customerId) ||
+              v2CustomerUserSet.has(String(customerId)) ||
+              (typeof customerId === 'string' && !isNaN(customerId) && v2CustomerUserSet.has(parseInt(customerId, 10)))
+            );
+            const orderAppVersion = String(order.app_version || '').toLowerCase();
+            const orderAppType = String(order.app_type || '').toLowerCase();
+            const belongsByOrderMeta = orderAppVersion === 'v2' && (!orderAppType || orderAppType === 'customer_app');
 
-        let batchLastKey = null;
-        do {
-          const filterParts = batchUserIds.map((_, idx) => `customer_id = :customerId${idx}`);
-          const filterExpression = `(${filterParts.join(' OR ')})`;
-          const expressionAttributeValues = batchUserIds.reduce((acc, id, idx) => {
-            acc[`:customerId${idx}`] = id;
-            return acc;
-          }, {});
-
-          const params = {
-            TableName: TABLE_NAME,
-            FilterExpression: filterExpression,
-            ExpressionAttributeValues: expressionAttributeValues
-          };
-
-          if (batchLastKey) {
-            params.ExclusiveStartKey = batchLastKey;
+            if (belongsByUserSet || belongsByOrderMeta) {
+              allOrders.push(order);
+            }
           }
+        }
 
-          const command = new ScanCommand(params);
-          const response = await client.send(command);
-
-          if (response.Items) {
-            allOrders.push(...response.Items);
-          }
-
-          batchLastKey = response.LastEvaluatedKey;
-        } while (batchLastKey);
-      }
+        ordersLastKey = response.LastEvaluatedKey;
+      } while (ordersLastKey);
 
       // Filter out orders with bulk_request_id
       let filteredOrders = allOrders.filter(order => !order.bulk_request_id);
@@ -1195,8 +1356,48 @@ class Order {
         });
       }
 
-      // Sort by id DESC (newest first)
-      filteredOrders.sort((a, b) => (b.id || 0) - (a.id || 0));
+      // Resolve customer zone from latest address once, then use for filtering/sorting.
+      const customerIds = [
+        ...new Set(
+          filteredOrders
+            .map(o => (typeof o.customer_id === 'string' && !isNaN(o.customer_id) ? parseInt(o.customer_id, 10) : o.customer_id))
+            .filter(id => id !== null && id !== undefined && !isNaN(id))
+        )
+      ];
+      const zoneByCustomer = new Map();
+
+      if (customerIds.length > 0) {
+        const addressMap = await Address.findByCustomerIdsBulk(customerIds);
+        for (const cid of customerIds) {
+          const addresses = addressMap.get(cid) || [];
+          const latestAddress = addresses.length > 0 ? addresses[0] : null;
+          zoneByCustomer.set(cid, normalizeZone(latestAddress?.zone || ''));
+        }
+      }
+
+      filteredOrders = filteredOrders.map(order => {
+        const cid = typeof order.customer_id === 'string' && !isNaN(order.customer_id)
+          ? parseInt(order.customer_id, 10)
+          : order.customer_id;
+        const customerZone = zoneByCustomer.get(cid) || '';
+        return {
+          ...order,
+          customer_zone: customerZone || 'N/A'
+        };
+      });
+
+      // Optional zone filter (for zone1..zone48 dashboard users).
+      if (zoneFilter) {
+        filteredOrders = filteredOrders.filter(order => normalizeZone(order.customer_zone || '') === zoneFilter);
+      }
+
+      // Sort by newest first for "Recent Customer App Orders".
+      filteredOrders.sort((a, b) => {
+        const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        if (dateB !== dateA) return dateB - dateA;
+        return (b.id || 0) - (a.id || 0);
+      });
       
       // Calculate pagination
       const total = filteredOrders.length;
@@ -1219,94 +1420,249 @@ class Order {
     }
   }
 
-  // Get recent orders that are NOT from customer_app users (includes vendor orders, bulk orders, etc.)
-  // This shows all "other" orders that should appear in bulk orders section
-  // SIMPLIFIED: Uses direct scan for reliability (no GSIs required)
-  static async getBulkOrders(limit = 10) {
+  // Get recent B2B bulk orders from multiple tables
+  // Combines: bulk_scrap_requests (buy), bulk_sell_requests (sell), pending_bulk_buy_orders (pending)
+  static async getBulkOrders(limit = 10, filters = {}) {
     try {
       const client = getDynamoDBClient();
+      const User = require('./User');
+      const Address = require('./Address');
+      const zoneFilter = Address.normalizeZone(filters && filters.zone ? filters.zone : '');
       
-      console.log('📊 [getBulkOrders] Starting to get bulk orders (non-customer_app orders)');
+      console.log('📊 [getBulkOrders] Starting to get bulk orders from all tables', { zoneFilter });
 
-      // Step 1: Get all v2 customer_app user IDs to exclude
-      const v2CustomerAppUsers = new Set();
-      let userLastKey = null;
-      
-      do {
-        const userParams = {
-          TableName: 'users',
-          FilterExpression: 'app_version = :appVersion AND app_type = :appType AND (attribute_not_exists(del_status) OR del_status <> :deleted)',
-          ExpressionAttributeValues: {
-            ':appVersion': 'v2',
-            ':appType': 'customer_app',
-            ':deleted': 2
-          },
-          ProjectionExpression: 'id'
-        };
-        if (userLastKey) userParams.ExclusiveStartKey = userLastKey;
-        
-        const userResponse = await client.send(new ScanCommand(userParams));
-        if (userResponse.Items) {
-          userResponse.Items.forEach(u => {
-            // Store multiple type variations to handle type mismatches
-            const id = u.id;
-            v2CustomerAppUsers.add(id);
-            v2CustomerAppUsers.add(String(id));
-            v2CustomerAppUsers.add(typeof id === 'string' && !isNaN(id) ? parseInt(id) : id);
-          });
-        }
-        userLastKey = userResponse.LastEvaluatedKey;
-      } while (userLastKey);
+      const allOrders = [];
 
-      console.log(`📊 [getBulkOrders] Found ${v2CustomerAppUsers.size / 3} unique v2 customer_app users to exclude`);
-
-      // Step 2: Scan all orders and filter out customer_app orders
-      const bulkOrders = [];
-      let lastKey = null;
-      let scannedOrders = 0;
-      
-      do {
-        const orderParams = {
-          TableName: TABLE_NAME,
-          Limit: 1000
-        };
-        if (lastKey) orderParams.ExclusiveStartKey = lastKey;
-        
-        const orderResponse = await client.send(new ScanCommand(orderParams));
-        
-        if (orderResponse.Items) {
-          scannedOrders += orderResponse.Items.length;
+      // 1. Fetch from bulk_scrap_requests table (B2B bulk scrap buy requests)
+      try {
+        let lastKey = null;
+        let scannedCount = 0;
+        do {
+          const params = {
+            TableName: 'bulk_scrap_requests',
+            Limit: 100
+          };
+          if (lastKey) params.ExclusiveStartKey = lastKey;
           
-          for (const order of orderResponse.Items) {
-            // Check if this order belongs to a v2 customer_app user
-            const customerId = order.customer_id;
-            const isCustomerAppOrder = customerId && v2CustomerAppUsers.has(customerId) && !order.bulk_request_id;
-            
-            // If it's NOT a customer_app order, it's a bulk order
-            if (!isCustomerAppOrder) {
-              bulkOrders.push(order);
+          const response = await client.send(new ScanCommand(params));
+          
+          if (response.Items) {
+            scannedCount += response.Items.length;
+            for (const item of response.Items) {
+              allOrders.push({
+                ...item,
+                order_type: 'bulk_buy',
+                order_type_label: 'Bulk Buy'
+              });
             }
+          }
+          lastKey = response.LastEvaluatedKey;
+        } while (lastKey);
+        console.log(`📊 [getBulkOrders] Scanned ${scannedCount} bulk_scrap_requests`);
+      } catch (err) {
+        console.log('⚠️ [getBulkOrders] bulk_scrap_requests table error:', err.message);
+      }
+
+      // 2. Fetch from bulk_sell_requests table (B2B bulk sell requests)
+      try {
+        let lastKey = null;
+        let scannedCount = 0;
+        do {
+          const params = {
+            TableName: 'bulk_sell_requests',
+            Limit: 100
+          };
+          if (lastKey) params.ExclusiveStartKey = lastKey;
+          
+          const response = await client.send(new ScanCommand(params));
+          
+          if (response.Items) {
+            scannedCount += response.Items.length;
+            for (const item of response.Items) {
+              allOrders.push({
+                ...item,
+                order_type: 'bulk_sell',
+                order_type_label: 'Bulk Sell',
+                // Map seller fields to buyer fields for consistency
+                buyer_id: item.seller_id,
+                buyer_name: item.seller_name
+              });
+            }
+          }
+          lastKey = response.LastEvaluatedKey;
+        } while (lastKey);
+        console.log(`📊 [getBulkOrders] Scanned ${scannedCount} bulk_sell_requests`);
+      } catch (err) {
+        console.log('⚠️ [getBulkOrders] bulk_sell_requests table error:', err.message);
+      }
+
+      // 3. Fetch from pending_bulk_buy_orders table (Pending bulk buy with payment)
+      try {
+        let lastKey = null;
+        let scannedCount = 0;
+        do {
+          const params = {
+            TableName: 'pending_bulk_buy_orders',
+            Limit: 100
+          };
+          if (lastKey) params.ExclusiveStartKey = lastKey;
+          
+          const response = await client.send(new ScanCommand(params));
+          
+          if (response.Items) {
+            scannedCount += response.Items.length;
+            for (const item of response.Items) {
+              allOrders.push({
+                ...item,
+                order_type: 'pending_buy',
+                order_type_label: 'Pending Buy'
+              });
+            }
+          }
+          lastKey = response.LastEvaluatedKey;
+        } while (lastKey);
+        console.log(`📊 [getBulkOrders] Scanned ${scannedCount} pending_bulk_buy_orders`);
+      } catch (err) {
+        console.log('⚠️ [getBulkOrders] pending_bulk_buy_orders table error:', err.message);
+      }
+
+      console.log(`📊 [getBulkOrders] Total orders from all tables: ${allOrders.length}`);
+
+      let filteredOrders = allOrders;
+      if (zoneFilter) {
+        const zoneCustomerIds = await Address.findCustomerIdsByZone(zoneFilter);
+        const zoneCustomerSet = new Set(zoneCustomerIds);
+        filteredOrders = allOrders.filter((order) => {
+          const rawUserId = order.buyer_id || order.seller_id || order.user_id;
+          const userId = typeof rawUserId === 'string' && !isNaN(rawUserId) ? parseInt(rawUserId, 10) : rawUserId;
+          return userId !== null && userId !== undefined && zoneCustomerSet.has(userId);
+        });
+        console.log(`📊 [getBulkOrders] Zone filter ${zoneFilter}: ${filteredOrders.length} matching bulk orders`);
+      }
+
+      // Fetch user details for each order
+      const ordersWithUserInfo = [];
+      for (const order of filteredOrders) {
+        let userName = order.buyer_name || order.seller_name || order.username || order.shopname || null;
+        let userMobNum = null;
+        let userCompanyName = null;
+        
+        // Fetch user details from users table if user_id exists
+        const userId = order.buyer_id || order.seller_id || order.user_id;
+        if (userId && !userName) {
+          try {
+            const uid = typeof userId === 'string' ? parseInt(userId) : userId;
+            const user = await User.findById(uid);
+            if (user) {
+              userName = user.name || user.company_name;
+              userMobNum = user.mob_num || null;
+              userCompanyName = user.company_name || null;
+            }
+          } catch (userErr) {
+            console.warn(`⚠️ [getBulkOrders] Could not fetch user ${userId}:`, userErr.message);
           }
         }
         
-        lastKey = orderResponse.LastEvaluatedKey;
-      } while (lastKey);
+        ordersWithUserInfo.push({
+          ...order,
+          buyer_name: userName || userCompanyName || `User ${userId}`,
+          buyer_mob_num: userMobNum,
+          buyer_company_name: userCompanyName
+        });
+      }
 
-      console.log(`📊 [getBulkOrders] Scanned ${scannedOrders} orders, found ${bulkOrders.length} bulk orders`);
-
-      // Sort by created_at DESC (newest first), then by id DESC
-      bulkOrders.sort((a, b) => {
+      // Sort by created_at DESC (newest first)
+      ordersWithUserInfo.sort((a, b) => {
         const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
         const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
-        if (dateB !== dateA) return dateB - dateA;
-        return (b.id || 0) - (a.id || 0);
+        return dateB - dateA;
       });
       
-      console.log(`✅ [getBulkOrders] Returning ${Math.min(bulkOrders.length, limit)} bulk orders`);
-      return bulkOrders.slice(0, limit);
+      console.log(`✅ [getBulkOrders] Returning ${Math.min(ordersWithUserInfo.length, limit)} bulk orders`);
+      return ordersWithUserInfo.slice(0, limit);
     } catch (err) {
       console.error('❌ [getBulkOrders] Error:', err);
       return []; // Return empty array on error
+    }
+  }
+
+  // Get a single bulk order by ID from any of the bulk tables
+  static async getBulkOrderById(orderId) {
+    try {
+      const client = getDynamoDBClient();
+      const User = require('./User');
+      
+      console.log(`📊 [getBulkOrderById] Looking for order ${orderId}`);
+
+      // Try to find the order in each table
+      const tables = [
+        { name: 'bulk_scrap_requests', type: 'bulk_buy', label: 'Bulk Buy' },
+        { name: 'bulk_sell_requests', type: 'bulk_sell', label: 'Bulk Sell' },
+        { name: 'pending_bulk_buy_orders', type: 'pending_buy', label: 'Pending Buy' }
+      ];
+
+      for (const table of tables) {
+        try {
+          let lastKey = null;
+          do {
+            const params = {
+              TableName: table.name,
+              Limit: 100
+            };
+            if (lastKey) params.ExclusiveStartKey = lastKey;
+            
+            const response = await client.send(new ScanCommand(params));
+            
+            if (response.Items) {
+              const foundOrder = response.Items.find(item => 
+                String(item.id) === String(orderId)
+              );
+              
+              if (foundOrder) {
+                console.log(`✅ [getBulkOrderById] Found order in ${table.name}`);
+                
+                // Map seller fields for bulk_sell_requests
+                if (table.type === 'bulk_sell') {
+                  foundOrder.buyer_id = foundOrder.seller_id;
+                  foundOrder.buyer_name = foundOrder.seller_name;
+                }
+                
+                // Fetch user details
+                const userId = foundOrder.buyer_id || foundOrder.seller_id || foundOrder.user_id;
+                let userName = foundOrder.buyer_name || foundOrder.seller_name || foundOrder.username || foundOrder.shopname;
+                
+                if (userId && !userName) {
+                  try {
+                    const uid = typeof userId === 'string' ? parseInt(userId) : userId;
+                    const user = await User.findById(uid);
+                    if (user) {
+                      userName = user.name || user.company_name || `User ${userId}`;
+                    }
+                  } catch (e) {
+                    console.warn('Could not fetch user details:', e.message);
+                  }
+                }
+                
+                return {
+                  ...foundOrder,
+                  order_type: table.type,
+                  order_type_label: table.label,
+                  buyer_name: userName || `User ${userId}`
+                };
+              }
+            }
+            lastKey = response.LastEvaluatedKey;
+          } while (lastKey);
+        } catch (err) {
+          console.log(`⚠️ [getBulkOrderById] Error scanning ${table.name}:`, err.message);
+        }
+      }
+
+      console.log(`⚠️ [getBulkOrderById] Order ${orderId} not found in any table`);
+      return null;
+    } catch (err) {
+      console.error('❌ [getBulkOrderById] Error:', err);
+      return null;
     }
   }
 

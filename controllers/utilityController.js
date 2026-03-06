@@ -791,6 +791,18 @@ class UtilityController {
         invoiceType = 'Paid';
       }
       
+      // Fetch shop info to include shopname in invoice
+      let shopname = null;
+      try {
+        const allShops = await Shop.findAllByUserId(user_id);
+        const shop = allShops.find(s => s.shop_type === 3 || s.shop_type === 1); // B2C or B2B
+        if (shop) {
+          shopname = shop.shopname || null;
+        }
+      } catch (shopErr) {
+        console.warn(`⚠️  Could not fetch shop for user ${user_id}:`, shopErr.message);
+      }
+
       // Create new invoice with payment details
       // This creates a new record for each payment attempt, preserving history
       const newInvoice = await Invoice.create({
@@ -805,7 +817,8 @@ class UtilityController {
         payment_moj_id: payment_moj_id || null,
         payment_req_id: payment_req_id || null,
         pay_details: req.body.pay_details || null,
-        approval_status: 'pending' // New payment starts as pending
+        approval_status: 'pending', // New payment starts as pending
+        shopname: shopname // Store shopname for display in admin panel
       });
 
       const invoiceId = newInvoice.id;

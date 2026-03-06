@@ -250,11 +250,17 @@ class V2ProfileService {
         updated_at: user.updated_at,
       };
 
-      // Add shop data for B2B/B2C users - ONLY for vendor_app requests
+      // Add shop data for B2B/B2C/Marketplace users - ONLY for vendor_app requests
       // Don't show shop data in customer_app even if user_type is S/R/SR
       // Use effectiveAppType and effectiveUserType to ensure customer_app requests never get shop data
       const isVendorApp = effectiveAppType === 'vendor_app';
-      if ((effectiveUserType === 'S' || effectiveUserType === 'R' || effectiveUserType === 'SR') && isVendorApp) {
+      if (
+        (effectiveUserType === 'S' ||
+          effectiveUserType === 'R' ||
+          effectiveUserType === 'SR' ||
+          effectiveUserType === 'M') &&
+        isVendorApp
+      ) {
         try {
           let shop = null;
           let b2cShop = null;

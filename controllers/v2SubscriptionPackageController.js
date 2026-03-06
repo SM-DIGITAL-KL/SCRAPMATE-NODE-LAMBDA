@@ -2,6 +2,170 @@ const SubscriptionPackage = require('../models/SubscriptionPackage');
 const Invoice = require('../models/Invoice');
 const Shop = require('../models/Shop');
 const RedisCache = require('../utils/redisCache');
+const Address = require('../models/Address');
+const User = require('../models/User');
+const jwt = require('jsonwebtoken');
+
+const ZONE_TABLE = 'district_pincode_prefixes';
+const ZONE_CACHE_TTL_MS = 10 * 60 * 1000;
+let zoneMappingsCache = {
+  loadedAt: 0,
+  prefixToZones: new Map()
+};
+
+function normalizeZoneFromEmail(email) {
+  const value = String(email || '').trim().toLowerCase();
+  const match = value.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+  if (!match) return '';
+  const n = parseInt(match[1], 10);
+  if (Number.isNaN(n) || n < 1 || n > 48) return '';
+  return `Z${String(n).padStart(2, '0')}`;
+}
+
+function normalizeZoneCode(zoneValue) {
+  const raw = String(zoneValue || '').trim().toUpperCase();
+  if (!raw) return '';
+  const match = raw.match(/^(?:ZONE|Z)\s*0*(\d{1,2})$/);
+  if (!match) return raw;
+  const n = parseInt(match[1], 10);
+  if (Number.isNaN(n) || n < 1 || n > 48) return raw;
+  return `Z${String(n).padStart(2, '0')}`;
+}
+
+function getPrefix3(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  return digits.length >= 3 ? digits.slice(0, 3) : '';
+}
+
+function extractPincode(text) {
+  const match = String(text || '').match(/\b(\d{6})\b/);
+  return match ? match[1] : '';
+}
+
+async function loadZonePrefixMappings() {
+  const now = Date.now();
+  if ((now - zoneMappingsCache.loadedAt) < ZONE_CACHE_TTL_MS && zoneMappingsCache.prefixToZones.size > 0) {
+    return zoneMappingsCache;
+  }
+
+  const { getDynamoDBClient } = require('../config/dynamodb');
+  const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+  const client = getDynamoDBClient();
+  const prefixToZones = new Map();
+  let lastKey = null;
+
+  const zoneCodeFromItem = (item) => {
+    if (item.zone) return normalizeZoneCode(item.zone);
+    if (item.zone_code) return normalizeZoneCode(item.zone_code);
+    if (item.zone_no !== undefined && item.zone_no !== null && item.zone_no !== '') {
+      const n = Number(item.zone_no);
+      if (!Number.isNaN(n)) return `Z${String(n).padStart(2, '0')}`;
+    }
+    return '';
+  };
+
+  do {
+    const response = await client.send(new ScanCommand({
+      TableName: ZONE_TABLE,
+      ProjectionExpression: 'pincode_prefixes, #z, zone_code, zone_no',
+      ExpressionAttributeNames: { '#z': 'zone' },
+      ExclusiveStartKey: lastKey || undefined
+    }));
+
+    for (const item of response.Items || []) {
+      const zone = zoneCodeFromItem(item);
+      if (!zone) continue;
+      const prefixes = Array.isArray(item.pincode_prefixes) ? item.pincode_prefixes : [];
+      for (const prefix of prefixes) {
+        const key = getPrefix3(prefix);
+        if (!key) continue;
+        if (!prefixToZones.has(key)) prefixToZones.set(key, new Set());
+        prefixToZones.get(key).add(zone);
+      }
+    }
+    lastKey = response.LastEvaluatedKey;
+  } while (lastKey);
+
+  zoneMappingsCache = {
+    loadedAt: now,
+    prefixToZones
+  };
+  return zoneMappingsCache;
+}
+
+async function resolveRequestZone(req) {
+  const emailZone = normalizeZoneFromEmail(req.user?.email || req.headers['x-user-email'] || '');
+  if (emailZone) return emailZone;
+
+  const authHeader = String(req.headers?.authorization || '');
+  const bearerToken = authHeader.toLowerCase().startsWith('bearer ')
+    ? authHeader.slice(7).trim()
+    : '';
+
+  let tokenPayload = null;
+  if (bearerToken) {
+    try {
+      tokenPayload = jwt.decode(bearerToken) || null;
+    } catch (_) {
+      tokenPayload = null;
+    }
+  }
+
+  const mobileRaw = req.query.phoneNumber
+    || req.query.phone
+    || req.query.mobile
+    || req.headers['x-user-phone']
+    || req.headers['x-phone-number']
+    || (tokenPayload ? (tokenPayload.phone_number || tokenPayload.mob_num || tokenPayload.phoneNumber) : '')
+    || '';
+
+  let tokenUser = null;
+  const normalizedMobile = String(mobileRaw || '').replace(/\D/g, '');
+  if (normalizedMobile) {
+    try {
+      tokenUser = await User.findByMobile(normalizedMobile);
+    } catch (_) {
+      tokenUser = null;
+    }
+  }
+
+  const userIdRaw = req.query.userId
+    || req.query.user_id
+    || req.headers['x-user-id']
+    || req.headers['user-id']
+    || req.user?.id
+    || req.user?.user_id
+    || req.user?.customer_id
+    || (tokenPayload ? (tokenPayload.id || tokenPayload.user_id || tokenPayload.customer_id) : '')
+    || tokenUser?.id
+    || '';
+  const userId = typeof userIdRaw === 'string' && !isNaN(userIdRaw) ? parseInt(userIdRaw, 10) : userIdRaw;
+  if (!userId) return '';
+
+  try {
+    const addresses = await Address.findByCustomerId(userId);
+    const latest = Array.isArray(addresses) && addresses.length > 0 ? addresses[0] : null;
+    const zone = normalizeZoneCode(Address.normalizeZone(latest?.zone || ''));
+    if (zone) return zone;
+  } catch (_) {}
+
+  try {
+    const shops = await Shop.findAllByUserId(userId);
+    const shop = Array.isArray(shops) && shops.length > 0 ? shops[0] : null;
+    if (!shop) return '';
+    const explicitZone = normalizeZoneCode(Address.normalizeZone(shop.zone || ''));
+    if (explicitZone) return explicitZone;
+    const pincode = String(shop.pincode || extractPincode(shop.address || '')).trim();
+    const prefix = getPrefix3(pincode);
+    if (!prefix) return '';
+    const mappings = await loadZonePrefixMappings();
+    const candidates = mappings.prefixToZones.get(prefix);
+    if (!candidates || candidates.size === 0) return '';
+    return [...candidates].sort()[0];
+  } catch (_) {
+    return '';
+  }
+}
 
 /**
  * Check and update subscription expiry
@@ -129,24 +293,29 @@ exports.checkSubscriptionExpiry = async (req, res) => {
 };
 
 /**
- * Get subscription packages for a specific user type (B2B or B2C)
- * GET /api/v2/subscription-packages?userType=b2b|b2c&language=en|hi|ta|te|...
+ * Get subscription packages for a specific user type (B2B, B2C, or Marketplace)
+ * GET /api/v2/subscription-packages?userType=b2b|b2c|marketplace&language=en|hi|ta|te|...
  */
 exports.getSubscriptionPackages = async (req, res) => {
   try {
     const { userType, language = 'en' } = req.query;
+    const normalizedUserType = String(userType || '').trim().toLowerCase();
+    const resolvedUserType =
+      normalizedUserType === 'm' ? 'marketplace' : normalizedUserType;
     
-    if (!userType || !['b2b', 'b2c'].includes(userType)) {
+    if (!resolvedUserType || !['b2b', 'b2c', 'marketplace'].includes(resolvedUserType)) {
       return res.status(400).json({
         status: 'error',
-        message: 'userType query parameter is required and must be either "b2b" or "b2c"',
+        message: 'userType query parameter is required and must be one of: "b2b", "b2c", "marketplace"',
       });
     }
+
+    const requestZone = await resolveRequestZone(req);
 
     // Normalize language code (e.g., 'en-US' -> 'en')
     const langCode = language.split('-')[0].toLowerCase();
     
-    const cacheKey = RedisCache.listKey(`subscription_packages_${userType}_${langCode}`);
+    const cacheKey = RedisCache.listKey(`subscription_packages_${resolvedUserType}_${langCode}`, { zone: requestZone || 'all' });
     
     // Try to get from cache
     const cached = await RedisCache.get(cacheKey);
@@ -181,16 +350,23 @@ exports.getSubscriptionPackages = async (req, res) => {
       
       // Check if package has userType field
       if (pkg.userType) {
-        return pkg.userType === userType;
+        const pkgUserType = String(pkg.userType).trim().toLowerCase();
+        if (resolvedUserType === 'marketplace') {
+          return pkgUserType === 'm' || pkgUserType === 'marketplace';
+        }
+        return pkgUserType === resolvedUserType;
       }
       
       // Legacy support: filter by package ID pattern
       // B2B packages: 'b2b-*'
       // B2C packages: 'b2c-*' or packages without 'b2b' in ID
-      if (userType === 'b2b') {
+      if (resolvedUserType === 'b2b') {
         return pkg.id.includes('b2b');
-      } else if (userType === 'b2c') {
+      } else if (resolvedUserType === 'b2c') {
         return pkg.id.includes('b2c') || (!pkg.id.includes('b2b') && (pkg.id === 'monthly' || pkg.id === 'yearly'));
+      } else if (resolvedUserType === 'marketplace') {
+        const normalizedId = String(pkg.id || '').toLowerCase();
+        return normalizedId.includes('marketplace') || normalizedId.includes('market_place');
       }
       return false;
     });
@@ -245,9 +421,16 @@ exports.getSubscriptionPackages = async (req, res) => {
         description: translatedDescription,
         features: translatedFeatures,
       };
+
+      if (requestZone && pkg.zonePrices && pkg.zonePrices[requestZone] && pkg.zonePrices[requestZone].price !== undefined) {
+        const zonePrice = Number(pkg.zonePrices[requestZone].price);
+        if (!Number.isNaN(zonePrice)) {
+          translatedPkg.price = zonePrice;
+        }
+      }
       
       // If it's a B2B per-order subscription, modify the price to indicate percentage-based pricing
-      if (userType === 'b2b' && pkg.duration === 'order') {
+      if (resolvedUserType === 'b2b' && pkg.duration === 'order') {
         // Use stored percentage if available, otherwise default to 0.5%
         const pricePercentage = pkg.pricePercentage !== undefined && pkg.pricePercentage !== null 
           ? pkg.pricePercentage 
@@ -339,6 +522,14 @@ exports.saveUserSubscription = async (req, res) => {
       });
     }
 
+    const packageUserType = String(packageData.userType || '').trim().toLowerCase();
+    const normalizedPackageId = String(package_id || '').trim().toLowerCase();
+    const isMarketplacePackage =
+      packageUserType === 'm' ||
+      packageUserType === 'marketplace' ||
+      normalizedPackageId.includes('marketplace') ||
+      normalizedPackageId.includes('market_place');
+
     // Check if user has any active invoices to extend subscription
     const userInvoices = await Invoice.findByUserId(user_id);
     
@@ -387,7 +578,25 @@ exports.saveUserSubscription = async (req, res) => {
       }
     }
 
-    // Create invoice with payment details and pending approval status
+    // Fetch shop info to include shopname in invoice
+    const Shop = require('../models/Shop');
+    let shopname = null;
+    try {
+      const allShops = await Shop.findAllByUserId(user_id);
+      const shop = allShops.find(s => s.shop_type === 3 || s.shop_type === 1); // B2C or B2B
+      if (shop) {
+        shopname = shop.shopname || null;
+      }
+    } catch (shopErr) {
+      console.warn(`⚠️  Could not fetch shop for user ${user_id}:`, shopErr.message);
+    }
+
+    // Marketplace subscriptions are auto-approved instantly.
+    // B2B/B2C keep admin review flow (pending).
+    const approvalStatus = isMarketplacePackage ? 'approved' : 'pending';
+    const approvedAt = isMarketplacePackage ? new Date().toISOString() : null;
+
+    // Create invoice with payment details and approval status
     const newInvoice = await Invoice.create({
       user_id: user_id,
       package_id: package_id, // Store package ID for reference
@@ -401,14 +610,17 @@ exports.saveUserSubscription = async (req, res) => {
       payment_moj_id: payment_moj_id || null,
       payment_req_id: payment_req_id || null,
       pay_details: typeof parsedPayDetails === 'object' ? JSON.stringify(parsedPayDetails) : parsedPayDetails,
-      approval_status: 'pending', // Set to pending - admin needs to approve
-      approval_notes: null
+      approval_status: approvalStatus,
+      approval_notes: null,
+      approved_at: approvedAt,
+      shopname: shopname // Store shopname for display in admin panel
     });
 
-    console.log(`📝 Subscription invoice created with pending approval status for user ${user_id}`, {
+    console.log(`📝 Subscription invoice created for user ${user_id}`, {
       invoice_id: newInvoice.id,
       payment_moj_id: payment_moj_id,
-      package_id: package_id
+      package_id: package_id,
+      approval_status: approvalStatus,
     });
 
     // Invalidate paid subscriptions cache so admin panel shows new payment immediately
@@ -419,8 +631,23 @@ exports.saveUserSubscription = async (req, res) => {
       console.error('Cache invalidation error:', cacheErr);
     }
 
-    // Don't update shop subscription yet - wait for admin approval
-    // Shop subscription will be activated when admin approves the subscription
+    // Activate marketplace subscription instantly (no admin review)
+    if (isMarketplacePackage) {
+      try {
+        await User.updateProfile(user_id, {
+          isMarketPlaceSubscribed: true,
+          is_marketplace_subscribed: true,
+          marketplace_subscription_ends_at: subscriptionEndsAt,
+          marketplace_subscribed_duration: packageData.duration,
+        });
+        console.log(`✅ Marketplace subscription auto-approved for user ${user_id}`);
+      } catch (marketplaceErr) {
+        console.error('❌ Failed to auto-activate marketplace subscription:', marketplaceErr);
+      }
+    } else {
+      // Don't update B2B/B2C subscription yet - wait for admin approval
+      // Shop subscription will be activated when admin approves the subscription
+    }
 
     // Forward transaction to PHP admin panel (fire and forget)
     // This is done server-side to avoid mobile device connectivity issues
@@ -432,7 +659,7 @@ exports.saveUserSubscription = async (req, res) => {
           : 'http://127.0.0.1:8000/paidSubscriptions');
       
       // Forward if admin panel URL is configured
-      if (adminPanelUrl && adminPanelUrl.trim() !== '') {
+      if (!isMarketplacePackage && adminPanelUrl && adminPanelUrl.trim() !== '') {
         const http = require('http');
         const https = require('https');
         
@@ -512,14 +739,27 @@ exports.saveUserSubscription = async (req, res) => {
       console.warn('⚠️ Error forwarding to PHP admin panel (non-critical):', adminPanelErr.message);
     }
 
+    // Invalidate user profile caches so app immediately sees invoices/subscription flags.
+    try {
+      await RedisCache.delete(RedisCache.userKey(String(user_id), 'profile'));
+      await RedisCache.delete(RedisCache.userKey(String(user_id)));
+      console.log(`🗑️  Invalidated profile cache for user ${user_id} after subscription save`);
+    } catch (profileCacheErr) {
+      console.error('Profile cache invalidation error:', profileCacheErr);
+    }
+
     res.json({
   status: 'success',
-  msg: 'Subscription saved successfully',
+  msg: isMarketplacePackage
+    ? 'Marketplace subscription activated successfully'
+    : 'Subscription saved successfully',
   data: {
     package_id: package_id,
     from_date: fromDate,
     to_date: toDateStr,
-    subscription_ends_at: subscriptionEndsAt
+    subscription_ends_at: subscriptionEndsAt,
+    approval_status: approvalStatus,
+    auto_approved: isMarketplacePackage
   }
 });
   } catch (error) {
@@ -531,4 +771,3 @@ exports.saveUserSubscription = async (req, res) => {
     });
   }
 };
-

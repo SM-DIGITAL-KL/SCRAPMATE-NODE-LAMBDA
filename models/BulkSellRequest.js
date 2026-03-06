@@ -17,6 +17,9 @@ class BulkSellRequest {
     try {
       const client = getDynamoDBClient();
       const requestId = data.id || (Date.now() + Math.floor(Math.random() * 1000));
+      const nowIso = new Date().toISOString();
+      const statusValue = data.status || 'pending';
+      const createdAtValue = data.created_at || nowIso;
       
       // Ensure proper data types for DynamoDB
       const item = {
@@ -33,14 +36,28 @@ class BulkSellRequest {
         preferred_distance: typeof data.preferred_distance === 'string' ? parseFloat(data.preferred_distance) : (typeof data.preferred_distance === 'number' ? data.preferred_distance : parseFloat(String(data.preferred_distance || 50))), // in km
         when_available: data.when_available || null,
         location: data.location || null,
+        state: data.state || null,
+        state_key: data.state_key || null,
         additional_notes: data.additional_notes || null,
         documents: data.documents || null, // Should be JSON string if provided
+        post_star: data.post_star ? (typeof data.post_star === 'string' ? parseInt(data.post_star) : data.post_star) : 0,
         accepted_buyers: data.accepted_buyers || JSON.stringify([]), // JSON string - buyers who accepted
         rejected_buyers: data.rejected_buyers || JSON.stringify([]), // JSON string
         total_committed_quantity: data.total_committed_quantity || 0, // Total quantity committed by all buyers
-        status: 'active', // active, sold, cancelled
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        status: statusValue, // pending, active, sold, cancelled
+        status_created_at: data.status_created_at || `${statusValue}#${createdAtValue}`,
+        review_status: data.review_status || 'pending', // pending, approved, rejected
+        review_reason: data.review_reason || null,
+        reviewed_at: data.reviewed_at || null,
+        // Payment tracking fields
+        payment_status: data.payment_status || 'pending', // pending, paid, failed
+        payment_amount: data.payment_amount || null,
+        payment_moj_id: data.payment_moj_id || null,
+        payment_req_id: data.payment_req_id || null,
+        invoice_id: data.invoice_id || null,
+        order_value: data.order_value || null, // Total order value (for calculating percentage fee)
+        created_at: createdAtValue,
+        updated_at: nowIso
       };
 
       const command = new PutCommand({
@@ -71,13 +88,13 @@ class BulkSellRequest {
   /**
    * Find bulk sell requests for a user based on their location
    * Returns requests where the user's shop is within the request's preferred_distance
-   * Only 'S' type users can see these requests
+   * Both 'S' and 'R' type users can see these requests
    */
   static async findForUser(userId, userLat, userLng, userType) {
     try {
-      // Only 'S' type users can see bulk sell requests
-      if (userType !== 'S') {
-        console.log(`⚠️  User type ${userType} cannot see bulk sell requests. Only 'S' type users allowed.`);
+      // Both 'S' and 'R' type users can see bulk sell requests
+      if (userType !== 'S' && userType !== 'R') {
+        console.log(`⚠️  User type ${userType} cannot see bulk sell requests. Only 'S' and 'R' type users allowed.`);
         return [];
       }
 
@@ -396,9 +413,6 @@ class BulkSellRequest {
 }
 
 module.exports = BulkSellRequest;
-
-
-
 
 
 

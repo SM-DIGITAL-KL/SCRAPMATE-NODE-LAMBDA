@@ -6,6 +6,122 @@ const CallLog = require('../models/CallLog');
 const ProductCategory = require('../models/ProductCategory');
 const RedisCache = require('../utils/redisCache');
 
+const ZONE_TABLE = 'district_pincode_prefixes';
+const ZONE_CACHE_TTL_MS = 10 * 60 * 1000;
+let zoneMappingsCache = {
+  loadedAt: 0,
+  districtToZone: new Map(),
+  prefixToZones: new Map()
+};
+
+function normalizeZoneLookupText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, '')
+    .trim();
+}
+
+function getPrefix3(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  return digits.length >= 3 ? digits.slice(0, 3) : '';
+}
+
+function extractPincode(address) {
+  const text = String(address || '');
+  const match = text.match(/\b(\d{6})\b/);
+  return match ? match[1] : '';
+}
+
+function zoneCodeFromDistrictItem(item) {
+  if (item.zone) return String(item.zone).trim();
+  if (item.zone_code) return String(item.zone_code).trim();
+  if (item.zone_no !== undefined && item.zone_no !== null && item.zone_no !== '') {
+    const n = Number(item.zone_no);
+    if (!Number.isNaN(n)) return `Z${String(n).padStart(2, '0')}`;
+  }
+  return '';
+}
+
+async function loadZoneMappings() {
+  const now = Date.now();
+  if ((now - zoneMappingsCache.loadedAt) < ZONE_CACHE_TTL_MS && zoneMappingsCache.districtToZone.size > 0) {
+    return zoneMappingsCache;
+  }
+
+  const { getDynamoDBClient } = require('../config/dynamodb');
+  const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+  const client = getDynamoDBClient();
+
+  let lastKey = null;
+  const districtToZone = new Map();
+  const prefixToZones = new Map();
+
+  do {
+    const response = await client.send(new ScanCommand({
+      TableName: ZONE_TABLE,
+      ProjectionExpression: 'district_name, district_slug, pincode_prefixes, #z, zone_code, zone_no',
+      ExpressionAttributeNames: { '#z': 'zone' },
+      ExclusiveStartKey: lastKey || undefined
+    }));
+
+    for (const item of response.Items || []) {
+      const zone = zoneCodeFromDistrictItem(item);
+      if (!zone) continue;
+
+      const districtName = normalizeZoneLookupText(item.district_name);
+      const districtSlug = normalizeZoneLookupText(item.district_slug);
+
+      if (districtName && districtName !== 'all' && districtName !== 'alldistricts') {
+        districtToZone.set(districtName, zone);
+      }
+      if (districtSlug && districtSlug !== 'all' && districtSlug !== 'alldistricts') {
+        districtToZone.set(districtSlug, zone);
+      }
+
+      const prefixes = Array.isArray(item.pincode_prefixes) ? item.pincode_prefixes : [];
+      for (const prefix of prefixes) {
+        const key = getPrefix3(prefix);
+        if (!key) continue;
+        if (!prefixToZones.has(key)) prefixToZones.set(key, new Set());
+        prefixToZones.get(key).add(zone);
+      }
+    }
+
+    lastKey = response.LastEvaluatedKey;
+  } while (lastKey);
+
+  zoneMappingsCache = {
+    loadedAt: now,
+    districtToZone,
+    prefixToZones
+  };
+  return zoneMappingsCache;
+}
+
+function resolveZoneFromAddressText(address, mappings) {
+  const text = String(address || '').trim();
+  if (!text) return '';
+
+  // Prefer pincode-prefix mapping where possible.
+  const pincode = extractPincode(text);
+  const prefix = getPrefix3(pincode);
+  if (prefix && mappings.prefixToZones.has(prefix)) {
+    const choices = [...mappings.prefixToZones.get(prefix)].sort();
+    if (choices.length > 0) return choices[0];
+  }
+
+  // Fallback: district text included in address string.
+  const normalizedAddress = normalizeZoneLookupText(text);
+  for (const [districtKey, zone] of mappings.districtToZone.entries()) {
+    if (districtKey && normalizedAddress.includes(districtKey)) {
+      return zone;
+    }
+  }
+
+  return '';
+}
+
 /** Bulk-enrich users with Shop via 1 Scan (RCU-optimized). Used for B2B. */
 async function _enrichUsersWithShopsBulk(users, Shop) {
   if (!users || users.length === 0) return [];
@@ -1603,6 +1719,20 @@ class AdminPanelController {
     });
 
     try {
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+      if (/^zone/i.test(email)) {
+        return res.status(403).json({
+          status: 'error',
+          msg: 'Access denied for zone users',
+          data: null
+        });
+      }
+
       const { id } = req.params;
 
       // Check Redis cache first
@@ -1707,6 +1837,20 @@ class AdminPanelController {
   // Store user permission
   static async storeUserPermission(req, res) {
     try {
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+      if (/^zone/i.test(email)) {
+        return res.status(403).json({
+          status: 'error',
+          msg: 'Access denied for zone users',
+          data: null
+        });
+      }
+
       const { user_id } = req.body;
       if (!user_id) {
         return res.json({
@@ -1804,18 +1948,35 @@ class AdminPanelController {
       const limit = parseInt(req.query.limit) || 10;
       const search = req.query.search || null;
       const appVersion = req.query.app_version || null;
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+      const zoneEmailMatch = email.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+      const enforcedZone = zoneEmailMatch ? `zone${parseInt(zoneEmailMatch[1], 10)}` : '';
+      const enforcedZoneNumber = zoneEmailMatch ? parseInt(zoneEmailMatch[1], 10) : null;
 
       const User = require('../models/User');
       const Shop = require('../models/Shop');
+      const Address = require('../models/Address');
 
       let enrichedUsers;
       let total;
       const pageNumber = parseInt(page) || 1;
       const pageSize = parseInt(limit) || 10;
+      let zoneCustomerSet = null;
+
+      if (enforcedZone) {
+        const zoneCustomerIds = await Address.findCustomerIdsByZone(enforcedZone);
+        zoneCustomerSet = new Set(zoneCustomerIds.map(id => (typeof id === 'string' && !isNaN(id) ? parseInt(id, 10) : id)));
+        console.log(`🧭 b2bUsers scope: ${Address.normalizeZone(enforcedZone)} (${zoneCustomerSet.size} customers)`);
+      }
 
       // If searching, get all users first (no pagination), then filter, then paginate
       // If not searching, get paginated users directly
-      if (search && search.trim()) {
+      if (enforcedZone || (search && search.trim()) || (appVersion && (appVersion === 'v1' || appVersion === 'v2'))) {
         // Get all B2B users (no pagination) to search across entire database
         // Use a very large limit to get all users
         const allResult = await User.getB2BUsers(1, 999999, null);
@@ -1825,25 +1986,33 @@ class AdminPanelController {
         // Bulk enrich: 1 Shop Scan instead of N × findByUserId
         enrichedUsers = await _enrichUsersWithShopsBulk(allResult.users, Shop);
 
+        if (zoneCustomerSet) {
+          enrichedUsers = enrichedUsers.filter((user) => {
+            const userId = typeof user.id === 'string' && !isNaN(user.id) ? parseInt(user.id, 10) : user.id;
+            return zoneCustomerSet.has(userId);
+          });
+        }
+
         // Apply search filter after enriching with shop data (to search contact from shop)
-        const searchTerm = search.trim();
+        const searchTerm = (search || '').trim();
         const searchTermLower = searchTerm.toLowerCase();
         // Try to parse as number for exact phone number matching
         const searchAsNumber = !isNaN(searchTerm) && searchTerm.length > 0 ? parseInt(searchTerm) : null;
         const searchAsNumberStr = searchAsNumber ? searchAsNumber.toString() : null;
 
-        console.log(`🔍 Searching for: "${searchTerm}" (as number: ${searchAsNumber}, as string: "${searchAsNumberStr}")`);
-        console.log(`   Total users before filter: ${enrichedUsers.length}`);
+        if (searchTerm) {
+          console.log(`🔍 Searching for: "${searchTerm}" (as number: ${searchAsNumber}, as string: "${searchAsNumberStr}")`);
+          console.log(`   Total users before filter: ${enrichedUsers.length}`);
 
-        // Debug: Check if the specific user exists in the list
-        const testUser = enrichedUsers.find(u => u.mob_num && u.mob_num.toString() === '1234564890');
-        if (testUser) {
-          console.log(`   ✅ Found test user in list: ${testUser.name}, mob_num: ${testUser.mob_num}, contact: ${testUser.contact}`);
-        } else {
-          console.log(`   ⚠️  Test user 1234564890 NOT found in enriched users list`);
-        }
+          // Debug: Check if the specific user exists in the list
+          const testUser = enrichedUsers.find(u => u.mob_num && u.mob_num.toString() === '1234564890');
+          if (testUser) {
+            console.log(`   ✅ Found test user in list: ${testUser.name}, mob_num: ${testUser.mob_num}, contact: ${testUser.contact}`);
+          } else {
+            console.log(`   ⚠️  Test user 1234564890 NOT found in enriched users list`);
+          }
 
-        enrichedUsers = enrichedUsers.filter(user => {
+          enrichedUsers = enrichedUsers.filter(user => {
           // Search by phone number (mob_num from user) - check both string and number
           let userPhoneMatch = false;
           if (user.mob_num !== null && user.mob_num !== undefined) {
@@ -1905,19 +2074,20 @@ class AdminPanelController {
           }
 
           return matches;
-        });
+          });
 
-        console.log(`   Total users after filter: ${enrichedUsers.length}`);
+          console.log(`   Total users after filter: ${enrichedUsers.length}`);
 
-        // Debug: Check if the specific user is in filtered results
-        const testUserAfter = enrichedUsers.find(u => (u.mob_num && u.mob_num.toString() === '1234564890') || u.mob_num === 1234564890);
-        if (testUserAfter) {
-          console.log(`   ✅ Test user 1234564890 found in filtered results`);
-        } else {
-          console.log(`   ❌ Test user 1234564890 NOT found in filtered results`);
+          // Debug: Check if the specific user is in filtered results
+          const testUserAfter = enrichedUsers.find(u => (u.mob_num && u.mob_num.toString() === '1234564890') || u.mob_num === 1234564890);
+          if (testUserAfter) {
+            console.log(`   ✅ Test user 1234564890 found in filtered results`);
+          } else {
+            console.log(`   ❌ Test user 1234564890 NOT found in filtered results`);
+          }
+
+          console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} users found after filtering`);
         }
-
-        console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} users found after filtering`);
 
         // Re-sort enriched users: v2 users first, then v1 users
         enrichedUsers.sort((a, b) => {
@@ -2307,18 +2477,35 @@ class AdminPanelController {
       const search = req.query.search || null;
       const appVersion = req.query.app_version || null;
       const approvalStatus = req.query.approval_status || null;
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+      const zoneEmailMatch = email.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+      const enforcedZone = zoneEmailMatch ? `zone${parseInt(zoneEmailMatch[1], 10)}` : '';
+      const enforcedZoneNumber = zoneEmailMatch ? parseInt(zoneEmailMatch[1], 10) : null;
 
       const User = require('../models/User');
       const Shop = require('../models/Shop');
+      const Address = require('../models/Address');
 
       let enrichedUsers;
       let total;
       const pageNumber = parseInt(page) || 1;
       const pageSize = parseInt(limit) || 10;
+      let zoneCustomerSet = null;
+
+      if (enforcedZone) {
+        const zoneCustomerIds = await Address.findCustomerIdsByZone(enforcedZone);
+        zoneCustomerSet = new Set(zoneCustomerIds.map(id => (typeof id === 'string' && !isNaN(id) ? parseInt(id, 10) : id)));
+        console.log(`🧭 b2cUsers scope: ${Address.normalizeZone(enforcedZone)} (${zoneCustomerSet.size} customers)`);
+      }
 
       // If searching, get all users first (no pagination), then filter, then paginate
       // If not searching, get paginated users directly
-      if (search && search.trim()) {
+      if (enforcedZone || (search && search.trim()) || (appVersion && (appVersion === 'v1' || appVersion === 'v2'))) {
         // Get all B2C users (no pagination) to search across entire database
         const allResult = await User.getB2CUsers(1, 999999, null);
 
@@ -2327,45 +2514,97 @@ class AdminPanelController {
         // Bulk enrich: 1 Shop Scan instead of N × findByUserId
         enrichedUsers = await _enrichB2CUsersWithShopsBulk(allResult.users, Shop);
 
+        // Zone scope for zone dashboard users
+        if (zoneCustomerSet) {
+          const enforcedZoneNormalized = Address.normalizeZone(enforcedZone);
+          const zoneAddressRegex = enforcedZoneNumber
+            ? new RegExp(`\\bzone\\s*0*${enforcedZoneNumber}\\b`, 'i')
+            : null;
+          const zoneMappings = await loadZoneMappings();
+          const allShopsForUsers = await Shop.findByUserIds(enrichedUsers.map(u => u.id));
+          const shopAddressesByUser = new Map();
+          for (const shop of allShopsForUsers || []) {
+            const uid = typeof shop.user_id === 'string' && !isNaN(shop.user_id)
+              ? parseInt(shop.user_id, 10)
+              : shop.user_id;
+            if (uid === null || uid === undefined || Number.isNaN(uid)) continue;
+            if (!shopAddressesByUser.has(uid)) shopAddressesByUser.set(uid, []);
+
+            const addr = String(shop.address || '').trim();
+            if (addr) shopAddressesByUser.get(uid).push(addr);
+            const pin = String(shop.pincode || '').trim();
+            if (pin) shopAddressesByUser.get(uid).push(pin);
+          }
+
+          enrichedUsers = enrichedUsers.filter((user) => {
+            const userId = typeof user.id === 'string' && !isNaN(user.id) ? parseInt(user.id, 10) : user.id;
+            if (zoneCustomerSet.has(userId)) {
+              return true;
+            }
+
+            // Fallback for V1 retailer records: match zone number from shop/user address text.
+            const addressCandidates = [];
+            const primaryAddress = String(user.address || user.shop?.address || '').trim();
+            if (primaryAddress) addressCandidates.push(primaryAddress);
+            const extraAddresses = shopAddressesByUser.get(userId) || [];
+            if (extraAddresses.length > 0) addressCandidates.push(...extraAddresses);
+
+            for (const addressText of addressCandidates) {
+              if (zoneAddressRegex && zoneAddressRegex.test(addressText)) {
+                return true;
+              }
+
+              const derivedZone = resolveZoneFromAddressText(addressText, zoneMappings);
+              if (derivedZone && Address.normalizeZone(derivedZone) === enforcedZoneNormalized) {
+                return true;
+              }
+            }
+
+            return false;
+          });
+          console.log(`📊 Zone-filtered B2C users: ${enrichedUsers.length}`);
+        }
+
         // Apply search filter after enriching with shop data
-        const searchTerm = search.trim();
+        const searchTerm = (search || '').trim();
         const searchTermLower = searchTerm.toLowerCase();
         const searchAsNumber = !isNaN(searchTerm) && searchTerm.length > 0 ? parseInt(searchTerm) : null;
-        const searchAsNumberStr = searchAsNumber ? searchAsNumber.toString() : null;
 
-        console.log(`🔍 Searching for: "${searchTerm}" (as number: ${searchAsNumber})`);
+        if (searchTerm) {
+          console.log(`🔍 Searching for: "${searchTerm}" (as number: ${searchAsNumber})`);
 
-        enrichedUsers = enrichedUsers.filter(user => {
-          // Search by phone number (mob_num from user)
-          let userPhoneMatch = false;
-          if (user.mob_num !== null && user.mob_num !== undefined) {
-            const userPhoneStr = user.mob_num.toString();
-            if (userPhoneStr.toLowerCase().includes(searchTermLower)) {
-              userPhoneMatch = true;
+          enrichedUsers = enrichedUsers.filter(user => {
+            // Search by phone number (mob_num from user)
+            let userPhoneMatch = false;
+            if (user.mob_num !== null && user.mob_num !== undefined) {
+              const userPhoneStr = user.mob_num.toString();
+              if (userPhoneStr.toLowerCase().includes(searchTermLower)) {
+                userPhoneMatch = true;
+              }
+              if (searchAsNumber !== null && user.mob_num === searchAsNumber) {
+                userPhoneMatch = true;
+              }
             }
-            if (searchAsNumber !== null && user.mob_num === searchAsNumber) {
-              userPhoneMatch = true;
-            }
-          }
 
-          // Search by contact number (contact from shop)
-          let shopContactMatch = false;
-          if (user.contact !== null && user.contact !== undefined && user.contact !== '') {
-            const shopContactStr = user.contact.toString();
-            if (shopContactStr.toLowerCase().includes(searchTermLower)) {
-              shopContactMatch = true;
+            // Search by contact number (contact from shop)
+            let shopContactMatch = false;
+            if (user.contact !== null && user.contact !== undefined && user.contact !== '') {
+              const shopContactStr = user.contact.toString();
+              if (shopContactStr.toLowerCase().includes(searchTermLower)) {
+                shopContactMatch = true;
+              }
+              if (searchAsNumber !== null && user.contact === searchAsNumber) {
+                shopContactMatch = true;
+              }
             }
-            if (searchAsNumber !== null && user.contact === searchAsNumber) {
-              shopContactMatch = true;
-            }
-          }
 
-          // Search by name
-          const nameMatch = user.name && typeof user.name === 'string' &&
-            user.name.toLowerCase().includes(searchTermLower);
+            // Search by name
+            const nameMatch = user.name && typeof user.name === 'string' &&
+              user.name.toLowerCase().includes(searchTermLower);
 
-          return userPhoneMatch || shopContactMatch || nameMatch;
-        });
+            return userPhoneMatch || shopContactMatch || nameMatch;
+          });
+        }
 
         console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} users found after filtering`);
 
@@ -2407,67 +2646,6 @@ class AdminPanelController {
         enrichedUsers = paginatedUsers;
 
         console.log(`🔍 Paginated search results: Showing ${paginatedUsers.length} of ${total} users`);
-      } else if (appVersion && (appVersion === 'v1' || appVersion === 'v2')) {
-        // If app_version filter is specified, get all users first, then filter and paginate
-        console.log(`🔍 Filtering by app_version=${appVersion}, fetching all users first`);
-        const allResult = await User.getB2CUsers(1, 999999, null);
-
-        // Bulk enrich: 1 Shop Scan instead of N × findByUserId
-        enrichedUsers = await _enrichB2CUsersWithShopsBulk(allResult.users, Shop);
-
-        // Filter by app_version - ensure we check the actual app_version field
-        enrichedUsers = enrichedUsers.filter(user => {
-          // Get app_version from user object (should be preserved during enrichment)
-          const userAppVersion = user.app_version || 'v1';
-          const matches = userAppVersion === appVersion;
-          if (!matches && enrichedUsers.length < 100) {
-            // Only log first 100 mismatches to avoid spam
-            console.log(`❌ User ${user.id} (${user.name}) filtered out: app_version="${userAppVersion}", expected="${appVersion}"`);
-          }
-          return matches;
-        });
-        console.log(`✅ Filtered by app_version=${appVersion}: ${enrichedUsers.length} users found out of ${allResult.users.length} total`);
-
-        // Filter by approval_status if specified (only for v2 users)
-        if (approvalStatus && (approvalStatus === 'pending' || approvalStatus === 'approved' || approvalStatus === 'rejected')) {
-          enrichedUsers = enrichedUsers.filter(user => {
-            const userAppVersion = user.app_version || 'v1';
-            // Only apply approval_status filter to v2 users
-            if (userAppVersion !== 'v2') {
-              return true; // Include v1 users regardless of approval_status filter
-            }
-            const userApprovalStatus = user.approval_status || 'pending';
-            return userApprovalStatus === approvalStatus;
-          });
-          console.log(`🔍 Filtered by approval_status=${approvalStatus} (v2 only): ${enrichedUsers.length} users found`);
-        }
-        
-        // Verify all remaining users have correct app_version
-        const incorrectVersions = enrichedUsers.filter(user => {
-          const userAppVersion = user.app_version || 'v1';
-          return userAppVersion !== appVersion;
-        });
-        if (incorrectVersions.length > 0) {
-          console.error(`⚠️ WARNING: Found ${incorrectVersions.length} users with incorrect app_version after filtering!`);
-          incorrectVersions.slice(0, 5).forEach(user => {
-            console.error(`   User ${user.id} (${user.name}): app_version="${user.app_version || 'v1'}", expected="${appVersion}"`);
-          });
-        }
-
-        // Sort enriched users: v2 users first, then v1 users (though all should be same version now)
-        enrichedUsers.sort((a, b) => {
-          const aIsV2 = a.app_version === 'v2' ? 1 : 0;
-          const bIsV2 = b.app_version === 'v2' ? 1 : 0;
-          return bIsV2 - aIsV2; // v2 users come first
-        });
-
-        // Apply pagination after filtering
-        total = enrichedUsers.length;
-        const skip = (pageNumber - 1) * pageSize;
-        const paginatedUsers = enrichedUsers.slice(skip, skip + pageSize);
-        enrichedUsers = paginatedUsers;
-
-        console.log(`🔍 Paginated filtered results: Showing ${paginatedUsers.length} of ${total} users`);
       } else {
         // No search and no app_version filter - use normal pagination
         const result = await User.getB2CUsers(page, limit, null);
@@ -2542,18 +2720,34 @@ class AdminPanelController {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 10;
       const search = req.query.search || null;
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+      const zoneEmailMatch = email.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+      const enforcedZone = zoneEmailMatch ? `zone${parseInt(zoneEmailMatch[1], 10)}` : '';
 
       const User = require('../models/User');
       const Shop = require('../models/Shop');
+      const Address = require('../models/Address');
 
       let enrichedUsers;
       let total;
       const pageNumber = parseInt(page) || 1;
       const pageSize = parseInt(limit) || 10;
+      let zoneCustomerSet = null;
+
+      if (enforcedZone) {
+        const zoneCustomerIds = await Address.findCustomerIdsByZone(enforcedZone);
+        zoneCustomerSet = new Set(zoneCustomerIds.map(id => (typeof id === 'string' && !isNaN(id) ? parseInt(id, 10) : id)));
+        console.log(`🧭 srUsers scope: ${Address.normalizeZone(enforcedZone)} (${zoneCustomerSet.size} customers)`);
+      }
 
       // If searching, get all users first (no pagination), then filter, then paginate
       // If not searching, get paginated users directly
-      if (search && search.trim()) {
+      if (enforcedZone || (search && search.trim())) {
         // Get all SR users (no pagination) to search across entire database
         const allResult = await User.getSRUsers(1, 999999, null);
 
@@ -2644,15 +2838,22 @@ class AdminPanelController {
           }
         }));
 
+        if (zoneCustomerSet) {
+          enrichedUsers = enrichedUsers.filter((user) => {
+            const userId = typeof user.id === 'string' && !isNaN(user.id) ? parseInt(user.id, 10) : user.id;
+            return zoneCustomerSet.has(userId);
+          });
+        }
+
         // Apply search filter after enriching with shop data
-        const searchTerm = search.trim();
+        const searchTerm = (search || '').trim();
         const searchTermLower = searchTerm.toLowerCase();
         const searchAsNumber = !isNaN(searchTerm) && searchTerm.length > 0 ? parseInt(searchTerm) : null;
         const searchAsNumberStr = searchAsNumber ? searchAsNumber.toString() : null;
 
-        console.log(`🔍 Searching for: "${searchTerm}" (as number: ${searchAsNumber})`);
-
-        enrichedUsers = enrichedUsers.filter(user => {
+        if (searchTerm) {
+          console.log(`🔍 Searching for: "${searchTerm}" (as number: ${searchAsNumber})`);
+          enrichedUsers = enrichedUsers.filter(user => {
           // Search by phone number (mob_num from user)
           let userPhoneMatch = false;
           if (user.mob_num !== null && user.mob_num !== undefined) {
@@ -2682,9 +2883,9 @@ class AdminPanelController {
             user.name.toLowerCase().includes(searchTermLower);
 
           return userPhoneMatch || shopContactMatch || nameMatch;
-        });
-
-        console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} users found after filtering`);
+          });
+          console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} users found after filtering`);
+        }
 
         // Re-sort enriched users: v2 users first, then v1 users
         enrichedUsers.sort((a, b) => {
@@ -3171,18 +3372,34 @@ class AdminPanelController {
       const limit = parseInt(req.query.limit) || 10;
       const search = req.query.search || null;
       const appVersion = req.query.app_version || null;
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+      const zoneEmailMatch = email.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+      const enforcedZone = zoneEmailMatch ? `zone${parseInt(zoneEmailMatch[1], 10)}` : '';
 
       const User = require('../models/User');
       const Shop = require('../models/Shop');
+      const Address = require('../models/Address');
 
       let enrichedUsers;
       let total;
       const pageNumber = parseInt(page) || 1;
       const pageSize = parseInt(limit) || 10;
+      let zoneCustomerSet = null;
+
+      if (enforcedZone) {
+        const zoneCustomerIds = await Address.findCustomerIdsByZone(enforcedZone);
+        zoneCustomerSet = new Set(zoneCustomerIds.map(id => (typeof id === 'string' && !isNaN(id) ? parseInt(id, 10) : id)));
+        console.log(`🧭 newUsers scope: ${Address.normalizeZone(enforcedZone)} (${zoneCustomerSet.size} customers)`);
+      }
 
       // If searching, get all users first (no pagination), then filter, then paginate
       // If not searching, get paginated users directly
-      if (search && search.trim()) {
+      if (enforcedZone || (search && search.trim()) || (appVersion && (appVersion === 'v1' || appVersion === 'v2'))) {
         // Get all New users (no pagination) to search across entire database
         const allResult = await User.getNewUsers(1, 999999, null);
 
@@ -3191,14 +3408,21 @@ class AdminPanelController {
         // Bulk enrich: 1 Shop Scan instead of N × findByUserId
         enrichedUsers = await _enrichNewUsersWithShopsBulk(allResult.users, Shop);
 
+        if (zoneCustomerSet) {
+          enrichedUsers = enrichedUsers.filter((user) => {
+            const userId = typeof user.id === 'string' && !isNaN(user.id) ? parseInt(user.id, 10) : user.id;
+            return zoneCustomerSet.has(userId);
+          });
+        }
+
         // Apply search filter after enriching with shop data
-        const searchTerm = search.trim();
+        const searchTerm = (search || '').trim();
         const searchTermLower = searchTerm.toLowerCase();
         const searchAsNumber = !isNaN(searchTerm) && searchTerm.length > 0 ? parseInt(searchTerm) : null;
 
-        console.log(`🔍 Searching for: "${searchTerm}" (as number: ${searchAsNumber})`);
-
-        enrichedUsers = enrichedUsers.filter(user => {
+        if (searchTerm) {
+          console.log(`🔍 Searching for: "${searchTerm}" (as number: ${searchAsNumber})`);
+          enrichedUsers = enrichedUsers.filter(user => {
           // Search by phone number (mob_num from user)
           let userPhoneMatch = false;
           if (user.mob_num !== null && user.mob_num !== undefined) {
@@ -3228,9 +3452,9 @@ class AdminPanelController {
             user.name.toLowerCase().includes(searchTermLower);
 
           return userPhoneMatch || shopContactMatch || nameMatch;
-        });
-
-        console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} users found after filtering`);
+          });
+          console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} users found after filtering`);
+        }
 
         // Filter by app_version if specified
         if (appVersion && (appVersion === 'v1' || appVersion === 'v2')) {
@@ -3329,18 +3553,34 @@ class AdminPanelController {
       const limit = parseInt(req.query.limit) || 10;
       const search = req.query.search || null;
       const appVersion = req.query.app_version || null;
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+      const zoneEmailMatch = email.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+      const enforcedZone = zoneEmailMatch ? `zone${parseInt(zoneEmailMatch[1], 10)}` : '';
 
       const User = require('../models/User');
       const DeliveryBoy = require('../models/DeliveryBoy');
+      const Address = require('../models/Address');
 
       let enrichedUsers;
       let total;
       const pageNumber = parseInt(page) || 1;
       const pageSize = parseInt(limit) || 10;
+      let zoneCustomerSet = null;
+
+      if (enforcedZone) {
+        const zoneCustomerIds = await Address.findCustomerIdsByZone(enforcedZone);
+        zoneCustomerSet = new Set(zoneCustomerIds.map(id => (typeof id === 'string' && !isNaN(id) ? parseInt(id, 10) : id)));
+        console.log(`🧭 deliveryUsers scope: ${Address.normalizeZone(enforcedZone)} (${zoneCustomerSet.size} customers)`);
+      }
 
       // If searching, get all users first (no pagination), then filter, then paginate
       // If not searching, get paginated users directly
-      if (search && search.trim()) {
+      if (enforcedZone || (search && search.trim()) || (appVersion && (appVersion === 'v1' || appVersion === 'v2'))) {
         // Get all delivery users (no pagination) to search across entire database
         const allResult = await User.getDeliveryUsers(1, 999999, null);
 
@@ -3377,14 +3617,21 @@ class AdminPanelController {
           }
         }));
 
+        if (zoneCustomerSet) {
+          enrichedUsers = enrichedUsers.filter((user) => {
+            const userId = typeof user.id === 'string' && !isNaN(user.id) ? parseInt(user.id, 10) : user.id;
+            return zoneCustomerSet.has(userId);
+          });
+        }
+
         // Apply search filter after enriching with delivery boy data
-        const searchTerm = search.trim();
+        const searchTerm = (search || '').trim();
         const searchTermLower = searchTerm.toLowerCase();
         const searchAsNumber = !isNaN(searchTerm) && searchTerm.length > 0 ? parseInt(searchTerm) : null;
 
-        console.log(`🔍 Searching for: "${searchTerm}" (as number: ${searchAsNumber})`);
-
-        enrichedUsers = enrichedUsers.filter(user => {
+        if (searchTerm) {
+          console.log(`🔍 Searching for: "${searchTerm}" (as number: ${searchAsNumber})`);
+          enrichedUsers = enrichedUsers.filter(user => {
           // Search by phone number (mob_num from user)
           let userPhoneMatch = false;
           if (user.mob_num !== null && user.mob_num !== undefined) {
@@ -3414,9 +3661,9 @@ class AdminPanelController {
             user.name.toLowerCase().includes(searchTermLower);
 
           return userPhoneMatch || deliveryContactMatch || nameMatch;
-        });
-
-        console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} users found after filtering`);
+          });
+          console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} users found after filtering`);
+        }
 
         // Filter by app_version if specified
         if (appVersion && (appVersion === 'v1' || appVersion === 'v2')) {
@@ -3599,9 +3846,25 @@ class AdminPanelController {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 10;
       const search = req.query.search || null;
+      const requestedZone = req.query.zone ? String(req.query.zone).trim() : '';
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+      const zoneEmailMatch = email.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+      const enforcedZone = zoneEmailMatch ? `zone${parseInt(zoneEmailMatch[1], 10)}` : '';
+      const activeZone = enforcedZone || requestedZone;
+      console.log('🧭 customers scope', {
+        userEmail: email || 'N/A',
+        enforcedZone: enforcedZone || 'none',
+        requestedZone: requestedZone || 'none',
+        activeZone: activeZone || 'none'
+      });
 
       // Check Redis cache first (only if no search term)
-      const cacheKey = RedisCache.adminKey('customers', null, { page, limit, search });
+      const cacheKey = RedisCache.adminKey('customers', null, { page, limit, search, zone: activeZone || 'all' });
       // Don't cache search results
       if (!search) {
         try {
@@ -3626,62 +3889,97 @@ class AdminPanelController {
       let total;
       const pageNumber = parseInt(page) || 1;
       const pageSize = parseInt(limit) || 10;
+      const Address = require('../models/Address');
+      let zoneCustomerSet = null;
+
+      if (activeZone) {
+        const zoneCustomerIds = await Address.findCustomerIdsByZone(activeZone);
+        zoneCustomerSet = new Set(zoneCustomerIds.map(id => (typeof id === 'string' && !isNaN(id) ? parseInt(id, 10) : id)));
+      }
 
       // If searching, get all users first (no pagination), then filter, then paginate
       // If not searching, get paginated users directly
-      if (search && search.trim()) {
+      if ((search && search.trim()) || activeZone) {
         // Get all customers (no pagination) to search across entire database
         const allResult = await User.getCustomers(1, 999999, null);
 
         console.log(`📊 Total customers fetched: ${allResult.total}, users in result: ${allResult.users.length}`);
 
         // Bulk enrich: 1 Customer Scan + 1 Address Scan instead of N × (findByUserId + findByCustomerId)
-        const Address = require('../models/Address');
         enrichedUsers = await _enrichCustomersWithBulk(allResult.users, Customer, Address);
 
+        // Enforce zone scope for zone dashboard users
+        if (zoneCustomerSet) {
+          const enforcedZoneNormalized = Address.normalizeZone(activeZone);
+          const zoneMatch = String(enforcedZoneNormalized || '').match(/^(?:ZONE|Z)\s*0*(\d{1,2})$/i);
+          const zoneNumber = zoneMatch ? parseInt(zoneMatch[1], 10) : null;
+          const zoneAddressRegex = zoneNumber ? new RegExp(`\\bzone\\s*0*${zoneNumber}\\b`, 'i') : null;
+          const zoneMappings = await loadZoneMappings();
+
+          enrichedUsers = enrichedUsers.filter((user) => {
+            const userId = typeof user.id === 'string' && !isNaN(user.id) ? parseInt(user.id, 10) : user.id;
+            if (zoneCustomerSet.has(userId)) {
+              return true;
+            }
+
+            const addressText = String(user.address || user.customer?.address || user.location || '').trim();
+            if (!addressText) {
+              return false;
+            }
+
+            if (zoneAddressRegex && zoneAddressRegex.test(addressText)) {
+              return true;
+            }
+
+            const derivedZone = resolveZoneFromAddressText(addressText, zoneMappings);
+            return !!derivedZone && Address.normalizeZone(derivedZone) === enforcedZoneNormalized;
+          });
+        }
+
         // Apply search filter after enriching with customer data
-        const searchTerm = search.trim();
+        const searchTerm = (search || '').trim();
         const searchTermLower = searchTerm.toLowerCase();
         const searchAsNumber = !isNaN(searchTerm) && searchTerm.length > 0 ? parseInt(searchTerm) : null;
-        const searchAsNumberStr = searchAsNumber ? searchAsNumber.toString() : null;
 
-        console.log(`🔍 Searching for: "${searchTerm}" (as number: ${searchAsNumber})`);
+        if (searchTerm) {
+          console.log(`🔍 Searching for: "${searchTerm}" (as number: ${searchAsNumber})`);
 
-        enrichedUsers = enrichedUsers.filter(user => {
-          // Search by phone number (mob_num from user)
-          let userPhoneMatch = false;
-          if (user.mob_num !== null && user.mob_num !== undefined) {
-            const userPhoneStr = user.mob_num.toString();
-            if (userPhoneStr.toLowerCase().includes(searchTermLower)) {
-              userPhoneMatch = true;
+          enrichedUsers = enrichedUsers.filter(user => {
+            // Search by phone number (mob_num from user)
+            let userPhoneMatch = false;
+            if (user.mob_num !== null && user.mob_num !== undefined) {
+              const userPhoneStr = user.mob_num.toString();
+              if (userPhoneStr.toLowerCase().includes(searchTermLower)) {
+                userPhoneMatch = true;
+              }
+              if (searchAsNumber !== null && user.mob_num === searchAsNumber) {
+                userPhoneMatch = true;
+              }
             }
-            if (searchAsNumber !== null && user.mob_num === searchAsNumber) {
-              userPhoneMatch = true;
+
+            // Search by contact number (contact from customer)
+            let customerContactMatch = false;
+            if (user.contact !== null && user.contact !== undefined && user.contact !== '') {
+              const customerContactStr = user.contact.toString();
+              if (customerContactStr.toLowerCase().includes(searchTermLower)) {
+                customerContactMatch = true;
+              }
+              if (searchAsNumber !== null && user.contact === searchAsNumber) {
+                customerContactMatch = true;
+              }
             }
-          }
 
-          // Search by contact number (contact from customer)
-          let customerContactMatch = false;
-          if (user.contact !== null && user.contact !== undefined && user.contact !== '') {
-            const customerContactStr = user.contact.toString();
-            if (customerContactStr.toLowerCase().includes(searchTermLower)) {
-              customerContactMatch = true;
-            }
-            if (searchAsNumber !== null && user.contact === searchAsNumber) {
-              customerContactMatch = true;
-            }
-          }
+            // Search by name
+            const nameMatch = user.name && typeof user.name === 'string' &&
+              user.name.toLowerCase().includes(searchTermLower);
 
-          // Search by name
-          const nameMatch = user.name && typeof user.name === 'string' &&
-            user.name.toLowerCase().includes(searchTermLower);
+            // Search by email
+            const emailMatch = user.email && typeof user.email === 'string' &&
+              user.email.toLowerCase().includes(searchTermLower);
 
-          // Search by email
-          const emailMatch = user.email && typeof user.email === 'string' &&
-            user.email.toLowerCase().includes(searchTermLower);
-
-          return userPhoneMatch || customerContactMatch || nameMatch || emailMatch;
-        });
+            return userPhoneMatch || customerContactMatch || nameMatch || emailMatch;
+          });
+        }
 
         console.log(`🔍 Search results for "${search}": ${enrichedUsers.length} customers found after filtering`);
 
@@ -3704,7 +4002,6 @@ class AdminPanelController {
         const result = await User.getCustomers(page, limit, null);
 
         // Bulk enrich: 1 Customer Scan + 1 Address Scan instead of N × (findByUserId + findByCustomerId)
-        const Address = require('../models/Address');
         enrichedUsers = await _enrichCustomersWithBulk(result.users, Customer, Address);
 
         // Sort enriched users by app_version (v2 first, then v1), without sorting by date
@@ -3754,6 +4051,138 @@ class AdminPanelController {
           totalPages: 0,
           hasMore: false
         }
+      });
+    }
+  }
+
+  // Get exact saved customer autofill data by user id
+  static async customerAutofillByUserId(req, res) {
+    try {
+      const userId = parseInt(req.params.userId, 10);
+      if (!userId || isNaN(userId)) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Invalid userId',
+          data: null
+        });
+      }
+
+      const User = require('../models/User');
+      const Customer = require('../models/Customer');
+      const Address = require('../models/Address');
+
+      const requestedZone = req.query.zone ? String(req.query.zone).trim() : '';
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+      const zoneEmailMatch = email.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+      const enforcedZone = zoneEmailMatch ? `zone${parseInt(zoneEmailMatch[1], 10)}` : '';
+      const activeZone = enforcedZone || requestedZone;
+
+      if (activeZone) {
+        const zoneCustomerIds = await Address.findCustomerIdsByZone(activeZone);
+        const zoneCustomerSet = new Set(
+          zoneCustomerIds.map(id => (typeof id === 'string' && !isNaN(id) ? parseInt(id, 10) : id))
+        );
+        if (!zoneCustomerSet.has(userId)) {
+          return res.status(403).json({
+            status: 'error',
+            msg: 'Access denied for this zone',
+            data: null
+          });
+        }
+      }
+
+      const user = await User.findById(userId);
+      const customer = await Customer.findByUserId(userId);
+
+      let address = '';
+      let latitude = '';
+      let longitude = '';
+
+      // First preference: customer table
+      if (customer) {
+        address = (customer.address || customer.location || '').toString().trim();
+
+        const customerLatLog = (customer.lat_log || '').toString().trim();
+        if (customerLatLog.includes(',')) {
+          const [lat, lng] = customerLatLog.split(',').map(v => String(v).trim());
+          latitude = lat || '';
+          longitude = lng || '';
+        } else {
+          latitude = (customer.latitude || customer.lat || '').toString().trim();
+          longitude = (customer.longitude || customer.lng || customer.long || '').toString().trim();
+        }
+      }
+
+      // Second preference: addresses table (try customer.id and user.id)
+      if (!address || !latitude || !longitude) {
+        const addrCandidates = [];
+
+        if (customer && customer.id) {
+          const byCustomerId = await Address.findByCustomerId(customer.id).catch(() => []);
+          if (Array.isArray(byCustomerId) && byCustomerId.length) {
+            addrCandidates.push(...byCustomerId);
+          }
+        }
+
+        const byUserId = await Address.findByCustomerId(userId).catch(() => []);
+        if (Array.isArray(byUserId) && byUserId.length) {
+          addrCandidates.push(...byUserId);
+        }
+
+        if (addrCandidates.length > 0) {
+          const first = addrCandidates[0] || {};
+          if (!address) {
+            address = (first.address || first.full_address || first.location || '').toString().trim();
+          }
+          if (!latitude || !longitude) {
+            const addrLatLog = (first.lat_log || '').toString().trim();
+            if (addrLatLog.includes(',')) {
+              const [lat, lng] = addrLatLog.split(',').map(v => String(v).trim());
+              if (!latitude) latitude = lat || '';
+              if (!longitude) longitude = lng || '';
+            }
+            if (!latitude) latitude = (first.latitude || first.lat || '').toString().trim();
+            if (!longitude) longitude = (first.longitude || first.lng || first.long || '').toString().trim();
+          }
+        }
+      }
+
+      // Third preference: user-level fallback fields
+      if ((!address || address === '') && user) {
+        address = (user.address || user.location || '').toString().trim();
+      }
+      if ((!latitude || !longitude) && user) {
+        const userLatLog = (user.lat_log || '').toString().trim();
+        if (userLatLog.includes(',')) {
+          const [lat, lng] = userLatLog.split(',').map(v => String(v).trim());
+          if (!latitude) latitude = lat || '';
+          if (!longitude) longitude = lng || '';
+        }
+        if (!latitude) latitude = (user.latitude || user.lat || '').toString().trim();
+        if (!longitude) longitude = (user.longitude || user.lng || user.long || '').toString().trim();
+      }
+
+      return res.json({
+        status: 'success',
+        msg: 'Autofill data retrieved',
+        data: {
+          user_id: userId,
+          address: address || '',
+          latitude: latitude || '',
+          longitude: longitude || ''
+        }
+      });
+    } catch (error) {
+      console.error('customerAutofillByUserId error:', error);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Error fetching autofill data',
+        data: null
       });
     }
   }
@@ -4515,6 +4944,16 @@ class AdminPanelController {
     console.log('✅ AdminPanelController.v2UserTypesDashboard called (fast mode)');
 
     try {
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+      const zoneEmailMatch = email.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+      const enforcedZone = zoneEmailMatch ? `zone${parseInt(zoneEmailMatch[1], 10)}` : '';
+      console.log('🧭 v2UserTypesDashboard scope', { userEmail: email || 'N/A', enforcedZone: enforcedZone || 'none' });
+
       // Helper function to safely execute promises with timeout
       const fastPromise = async (promise, defaultValue, label = 'Unknown', timeoutMs = 2500) => {
         try {
@@ -4538,7 +4977,8 @@ class AdminPanelController {
 
       // Check cache first for faster response (unless bypass_cache query param is set)
       const bypassCache = req.query.bypass_cache === 'true' || req.query.bypass_cache === '1';
-      const cacheKey = RedisCache.adminKey('v2_user_types_dashboard');
+      const cacheScope = enforcedZone || 'all';
+      const cacheKey = RedisCache.adminKey(`v2_user_types_dashboard_${cacheScope}`);
       
       if (!bypassCache) {
         try {
@@ -4594,21 +5034,52 @@ class AdminPanelController {
         return result;
       };
 
-      const [
-        newUserCount,
-        recyclerCount,
-        shopCount,
-        shopRecyclerCount,
-        deliveryCount,
-        customerCount
-      ] = await Promise.all([
-        getUserCount('N', 0),
-        getUserCount('R', 0),
-        getUserCount('S', 0),
-        getUserCount('SR', 0),
-        getUserCount('D', 0),
-        getUserCount('C', 0)
-      ]);
+      let newUserCount;
+      let recyclerCount;
+      let shopCount;
+      let shopRecyclerCount;
+      let deliveryCount;
+      let customerCount;
+
+      if (enforcedZone) {
+        const Address = require('../models/Address');
+        const zoneCustomerIds = await Address.findCustomerIdsByZone(enforcedZone);
+        const zoneUsers = zoneCustomerIds.length > 0 ? await User.findByIds(zoneCustomerIds) : [];
+        const isActiveV2 = (u, expectedType) => {
+          const expectedAppType = expectedType === 'C' ? 'customer_app' : 'vendor_app';
+          const appType = u.app_type || (u.user_type === 'C' ? 'customer_app' : 'vendor_app');
+          return (
+            u &&
+            u.user_type === expectedType &&
+            u.app_version === 'v2' &&
+            appType === expectedAppType &&
+            (u.del_status === undefined || u.del_status === null || u.del_status !== 2)
+          );
+        };
+
+        newUserCount = zoneUsers.filter(u => isActiveV2(u, 'N')).length;
+        recyclerCount = zoneUsers.filter(u => isActiveV2(u, 'R')).length;
+        shopCount = zoneUsers.filter(u => isActiveV2(u, 'S')).length;
+        shopRecyclerCount = zoneUsers.filter(u => isActiveV2(u, 'SR')).length;
+        deliveryCount = zoneUsers.filter(u => isActiveV2(u, 'D')).length;
+        customerCount = zoneUsers.filter(u => isActiveV2(u, 'C')).length;
+      } else {
+        [
+          newUserCount,
+          recyclerCount,
+          shopCount,
+          shopRecyclerCount,
+          deliveryCount,
+          customerCount
+        ] = await Promise.all([
+          getUserCount('N', 0),
+          getUserCount('R', 0),
+          getUserCount('S', 0),
+          getUserCount('SR', 0),
+          getUserCount('D', 0),
+          getUserCount('C', 0)
+        ]);
+      }
 
       // Get order counts and recent orders in parallel (with longer timeout for accuracy)
       const [
@@ -4617,10 +5088,32 @@ class AdminPanelController {
         recentCustomerAppOrders,
         recentBulkOrders
       ] = await Promise.all([
-        fastPromise(Order.countCustomerAppOrdersV2(), 0, 'OrderCount-CustomerApp', 8000),
-        fastPromise(Order.countBulkOrders(), 0, 'OrderCount-Bulk', 8000),
-        fastPromise(Order.getCustomerAppOrdersV2(10), [], 'RecentOrders-CustomerApp', 5000),
-        fastPromise(Order.getBulkOrders(10), [], 'RecentOrders-Bulk', 5000)
+        fastPromise(
+          (async () => {
+            if (enforcedZone) {
+              const paginated = await Order.getCustomerAppOrdersV2Paginated(1, 1, '', true, { zone: enforcedZone });
+              return paginated.total || 0;
+            }
+            return Order.countCustomerAppOrdersV2(true);
+          })(),
+          0,
+          'OrderCount-CustomerApp',
+          8000
+        ),
+        fastPromise(Order.countBulkOrders({ zone: enforcedZone }), 0, 'OrderCount-Bulk', 8000),
+        fastPromise(
+          (async () => {
+            if (enforcedZone) {
+              const paginated = await Order.getCustomerAppOrdersV2Paginated(1, 10, '', true, { zone: enforcedZone });
+              return paginated.orders || [];
+            }
+            return Order.getCustomerAppOrdersV2(10, true);
+          })(),
+          [],
+          'RecentOrders-CustomerApp',
+          5000
+        ),
+        fastPromise(Order.getBulkOrders(10, { zone: enforcedZone }), [], 'RecentOrders-Bulk', 5000)
       ]);
 
       // Get monthly counts - check cache first, then query with timeout
@@ -4748,17 +5241,103 @@ class AdminPanelController {
     }
   }
 
+  // Get bulk order details by ID (from any of the bulk tables)
+  static async getBulkOrderDetails(req, res) {
+    try {
+      const orderId = req.params.orderId;
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+      const zoneEmailMatch = email.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+      const enforcedZone = zoneEmailMatch ? `zone${parseInt(zoneEmailMatch[1], 10)}` : '';
+      
+      if (!orderId) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Order ID is required',
+          data: null
+        });
+      }
+      
+      console.log(`🟢 AdminPanelController.getBulkOrderDetails called for order ${orderId}`);
+      
+      const Order = require('../models/Order');
+      const Address = require('../models/Address');
+      const order = await Order.getBulkOrderById(orderId);
+      
+      if (!order) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Bulk order not found',
+          data: null
+        });
+      }
+
+      if (enforcedZone) {
+        const zoneCustomerIds = await Address.findCustomerIdsByZone(enforcedZone);
+        const zoneCustomerSet = new Set(zoneCustomerIds);
+        const rawUserId = order.buyer_id || order.seller_id || order.user_id;
+        const orderUserId = typeof rawUserId === 'string' && !isNaN(rawUserId) ? parseInt(rawUserId, 10) : rawUserId;
+        if (orderUserId === null || orderUserId === undefined || !zoneCustomerSet.has(orderUserId)) {
+          return res.status(403).json({
+            status: 'error',
+            msg: `This order does not belong to ${Address.normalizeZone(enforcedZone)} scope`,
+            data: null
+          });
+        }
+      }
+      
+      res.json({
+        status: 'success',
+        msg: 'Bulk order details retrieved',
+        data: order
+      });
+    } catch (error) {
+      console.error('❌ getBulkOrderDetails error:', error);
+      res.status(500).json({
+        status: 'error',
+        msg: 'Error fetching bulk order details',
+        data: null
+      });
+    }
+  }
+
   // Get customer app orders v2 with pagination
   static async getCustomerAppOrdersPaginated(req, res) {
     try {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 10;
       const search = req.query.search || '';
+      const requestedZone = req.query.zone ? String(req.query.zone).trim() : '';
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+
+      // Enforce zone scope for zone dashboard users like zone1@scrapmate.co.in
+      const zoneEmailMatch = email.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+      const enforcedZone = zoneEmailMatch ? `zone${parseInt(zoneEmailMatch[1], 10)}` : '';
+      const zone = enforcedZone || '';
       
-      console.log(`🟢 AdminPanelController.getCustomerAppOrdersPaginated called`, { page, limit, search });
+      console.log(`🟢 AdminPanelController.getCustomerAppOrdersPaginated called`, {
+        page,
+        limit,
+        search,
+        requestedZone,
+        zone,
+        userEmail: email || 'N/A',
+        zoneEnforced: !!enforcedZone,
+        requestedZoneIgnored: !enforcedZone && !!requestedZone
+      });
       
       const Order = require('../models/Order');
-      const result = await Order.getCustomerAppOrdersV2Paginated(page, limit, search);
+      // includeDeleted=true for admin dashboard to show all orders including from deleted users
+      const result = await Order.getCustomerAppOrdersV2Paginated(page, limit, search, true, { zone });
       
       // Return orders as array (not nested in data.orders)
       res.json({
@@ -4780,6 +5359,253 @@ class AdminPanelController {
         page: 1,
         limit: 10,
         totalPages: 0
+      });
+    }
+  }
+
+  /**
+   * Get order details with notified vendors (for admin export)
+   */
+  static async getOrderDetailsWithNotifiedVendors(req, res) {
+    try {
+      const { orderId } = req.params;
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+      const zoneEmailMatch = email.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+      const enforcedZone = zoneEmailMatch ? `zone${parseInt(zoneEmailMatch[1], 10)}` : '';
+      console.log(`🟢 AdminPanelController.getOrderDetailsWithNotifiedVendors called`, { orderId });
+      
+      const order = await Order.getById(orderId);
+      const Address = require('../models/Address');
+      
+      if (!order) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Order not found'
+        });
+      }
+
+      if (enforcedZone) {
+        const zoneCustomerIds = await Address.findCustomerIdsByZone(enforcedZone);
+        const zoneCustomerSet = new Set(zoneCustomerIds);
+        const orderCustomerId = typeof order.customer_id === 'string' && !isNaN(order.customer_id)
+          ? parseInt(order.customer_id, 10)
+          : order.customer_id;
+        if (orderCustomerId === null || orderCustomerId === undefined || !zoneCustomerSet.has(orderCustomerId)) {
+          return res.status(403).json({
+            status: 'error',
+            msg: `This order does not belong to ${Address.normalizeZone(enforcedZone)} scope`
+          });
+        }
+      }
+      
+      // Enrich notified vendor details
+      const notifiedVendors = [];
+      if (order.notified_vendor_ids) {
+        try {
+          let notifiedVendorIds = order.notified_vendor_ids;
+          
+          // Parse if it's a string
+          if (typeof notifiedVendorIds === 'string') {
+            notifiedVendorIds = JSON.parse(notifiedVendorIds);
+          }
+          
+          // Ensure it's an array
+          if (!Array.isArray(notifiedVendorIds)) {
+            notifiedVendorIds = [notifiedVendorIds];
+          }
+          
+          // Convert to numbers and filter out invalid IDs
+          const validIds = notifiedVendorIds
+            .map(id => typeof id === 'string' && !isNaN(id) ? parseInt(id) : id)
+            .filter(id => !isNaN(id) && id > 0);
+          
+          if (validIds.length > 0) {
+            const vendorUsers = await User.findByIds(validIds);
+            
+            // Get order location for distance calculation
+            let orderLat = null, orderLng = null;
+            if (order.lat_log) {
+              const [lat, lng] = order.lat_log.split(',').map(Number);
+              if (!isNaN(lat) && !isNaN(lng)) {
+                orderLat = lat;
+                orderLng = lng;
+              }
+            }
+            
+            // Haversine formula
+            const calculateDistance = (lat1, lon1, lat2, lon2) => {
+              const R = 6371;
+              const dLat = (lat2 - lat1) * Math.PI / 180;
+              const dLon = (lon2 - lon1) * Math.PI / 180;
+              const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+              const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+              return R * c;
+            };
+            
+            // Batch fetch shops
+            const vendorUserIds = vendorUsers.map(u => u.id).filter(id => id);
+            let shopsMap = new Map();
+            
+            if (vendorUserIds.length > 0 && orderLat !== null && orderLng !== null) {
+              try {
+                const shops = await Shop.findByUserIds(vendorUserIds);
+                shops.forEach(shop => {
+                  if (shop.user_id) {
+                    const userId = typeof shop.user_id === 'string' ? parseInt(shop.user_id) : shop.user_id;
+                    if (!shopsMap.has(userId)) {
+                      shopsMap.set(userId, shop);
+                    }
+                  }
+                });
+              } catch (shopErr) {
+                console.error('Error batch fetching shops:', shopErr.message);
+              }
+            }
+            
+            // Build vendor details with distance
+            for (const user of vendorUsers) {
+              let distance = null;
+              let shopName = null;
+              
+              const shop = shopsMap.get(user.id);
+              if (shop) {
+                shopName = shop.shopname || shop.name || null;
+                if (shop.lat_log && orderLat !== null && orderLng !== null) {
+                  const [shopLat, shopLng] = shop.lat_log.split(',').map(Number);
+                  if (!isNaN(shopLat) && !isNaN(shopLng)) {
+                    distance = calculateDistance(orderLat, orderLng, shopLat, shopLng);
+                  }
+                }
+              }
+              
+              notifiedVendors.push({
+                id: user.id,
+                name: user.name || 'N/A',
+                mobile: user.mob_num || user.mobile || user.phone || 'N/A',
+                email: user.email || 'N/A',
+                user_type: user.user_type || 'N/A',
+                app_version: user.app_version || 'N/A',
+                shop_name: shopName,
+                distance_km: distance !== null ? parseFloat(distance.toFixed(2)) : null
+              });
+            }
+            
+            // Sort by distance
+            notifiedVendors.sort((a, b) => {
+              if (a.distance_km === null && b.distance_km === null) return 0;
+              if (a.distance_km === null) return 1;
+              if (b.distance_km === null) return -1;
+              return a.distance_km - b.distance_km;
+            });
+          }
+        } catch (err) {
+          console.error('Error enriching notified vendors:', err);
+        }
+      }
+      
+      // Parse customer details - first try to fetch from Customer/User table
+      let customerName = 'N/A';
+      let customerAddress = 'N/A';
+      let customerPhone = 'N/A';
+      
+      // Try to enrich customer details from database
+      if (order.customer_id) {
+        try {
+          const Customer = require('../models/Customer');
+          const User = require('../models/User');
+          
+          // Try to find customer by customer_id
+          let customer = null;
+          let user = null;
+          
+          try {
+            customer = await Customer.findById(order.customer_id);
+          } catch (custErr) {
+            // Ignore error
+          }
+          
+          // If customer not found, try to find user by customer_id (for v2 orders)
+          if (!customer) {
+            try {
+              user = await User.findById(order.customer_id);
+              // If user found and is customer type, try to find customer record
+              if (user && user.user_type === 'C') {
+                customer = await Customer.findByUserId(user.id);
+              }
+            } catch (userErr) {
+              // Ignore error
+            }
+          }
+          
+          // If still no customer but we have user_id, try that
+          if (!customer && order.user_id) {
+            try {
+              customer = await Customer.findByUserId(order.user_id);
+            } catch (err) {
+              // Ignore error
+            }
+          }
+          
+          // Use the best available data
+          const sourceData = customer || user;
+          if (sourceData) {
+            customerName = customer?.name || user?.name || 'N/A';
+            customerPhone = customer?.contact || customer?.phone || user?.mob_num || user?.mobile || user?.phone || 'N/A';
+            customerAddress = customer?.address || 'N/A';
+          }
+        } catch (enrichErr) {
+          console.error('Error enriching customer details:', enrichErr);
+        }
+      }
+      
+      // Fallback: Parse customerdetails field if still missing data
+      if (customerName === 'N/A' || customerAddress === 'N/A' || customerPhone === 'N/A') {
+        if (order.customerdetails) {
+          try {
+            const customerDetails = typeof order.customerdetails === 'string' 
+              ? JSON.parse(order.customerdetails) 
+              : order.customerdetails;
+            if (customerName === 'N/A') {
+              customerName = customerDetails.name || customerDetails.customer_name || 'N/A';
+            }
+            if (customerAddress === 'N/A') {
+              customerAddress = customerDetails.address || customerDetails.customerdetails || 'N/A';
+            }
+            if (customerPhone === 'N/A') {
+              customerPhone = customerDetails.phone || customerDetails.mobile || customerDetails.contact || customerDetails.mob_num || 'N/A';
+            }
+          } catch (e) {
+            // If it's a plain string, use it as address
+            if (typeof order.customerdetails === 'string' && customerAddress === 'N/A') {
+              customerAddress = order.customerdetails;
+            }
+          }
+        }
+      }
+      
+      res.json({
+        status: 'success',
+        msg: 'Order details retrieved',
+        data: {
+          ...order,
+          notified_vendors: notifiedVendors,
+          customer_name: customerName,
+          customer_address: customerAddress,
+          customer_phone: customerPhone
+        }
+      });
+    } catch (error) {
+      console.error('❌ getOrderDetailsWithNotifiedVendors error:', error);
+      res.status(500).json({
+        status: 'error',
+        msg: 'Error fetching order details'
       });
     }
   }
@@ -6959,6 +7785,94 @@ class AdminPanelController {
   }
 
   /**
+   * POST /admin/order/:orderId/reschedule-scheduled
+   * Re-notify all previously notified vendors for an already scheduled order (status=1).
+   * Body: { notes?: string }
+   */
+  static async adminRescheduleScheduledOrder(req, res) {
+    try {
+      const { orderId } = req.params;
+      const { notes } = req.body || {};
+
+      console.log(`🟢 AdminPanelController.adminRescheduleScheduledOrder called`, { orderId, notes });
+
+      const order = await Order.getById(orderId);
+      if (!order) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Order not found',
+          data: null
+        });
+      }
+
+      if (parseInt(order.status) !== 1) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Only scheduled orders can be rescheduled',
+          data: {
+            current_status: order.status
+          }
+        });
+      }
+
+      const now = new Date().toISOString();
+      const existingRescheduleCount = parseInt(order.reschedule_count || 0) || 0;
+      const updateData = {
+        status: 1,
+        updated_at: now,
+        rescheduled_at: now,
+        reschedule_count: existingRescheduleCount + 1
+      };
+
+      if (notes) {
+        updateData.admin_notes = notes;
+      }
+
+      await Order.updateById(orderId, updateData);
+
+      // Invalidate caches
+      try {
+        await RedisCache.delete(RedisCache.orderKey(orderId));
+        await RedisCache.delete(RedisCache.listKey('orders'));
+        await RedisCache.delete(RedisCache.adminKey('dashboard_recent_orders_8'));
+        await RedisCache.delete(RedisCache.adminKey('dashboard'));
+        console.log('🗑️  Invalidated order caches after scheduled reschedule');
+      } catch (cacheErr) {
+        console.error('Cache invalidation error:', cacheErr);
+      }
+
+      console.log(`📤 Sending notifications again to previously notified vendors for rescheduled order ${orderId}`);
+      const notificationResults = await AdminPanelController._sendRevertToScheduledNotifications(order, orderId, {
+        notificationType: 'rescheduled_scheduled_order',
+        isReverted: false,
+        actionLabel: 'rescheduled'
+      });
+
+      return res.json({
+        status: 'success',
+        msg: 'Scheduled order rescheduled and notifications sent to previously notified vendors',
+        data: {
+          order_id: orderId,
+          status: 1,
+          status_label: 'Scheduled',
+          updated_at: now,
+          rescheduled_at: now,
+          reschedule_count: existingRescheduleCount + 1,
+          notifications: notificationResults
+        }
+      });
+    } catch (error) {
+      console.error('❌ Error rescheduling scheduled order:', error);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Failed to reschedule scheduled order',
+        data: null,
+        error: error.message
+      });
+    }
+  }
+
+  /**
    * Helper function to send push notifications and SMS to previously notified vendors
    * when an order is reverted from Accepted (2) back to Scheduled (1)
    * Filters vendors to only send to:
@@ -6966,8 +7880,12 @@ class AdminPanelController {
    * - Pending/Rejected user_type 'R' (not approved)
    * - Phone numbers from bulk_message_notifications not in database
    */
-  static async _sendRevertToScheduledNotifications(order, orderId) {
+  static async _sendRevertToScheduledNotifications(order, orderId, options = {}) {
     try {
+      const notificationType = options.notificationType || 'revert_to_scheduled';
+      const isReverted = options.isReverted !== false;
+      const actionLabel = options.actionLabel || 'reverted';
+
       console.log(`📤 [_sendRevertToScheduledNotifications] Starting notification process for order ${orderId}`);
       
       // Get notified_vendor_ids from the order
@@ -7095,7 +8013,7 @@ class AdminPanelController {
                 customer_id: (order.customer_id || '').toString(),
                 status: '1',
                 timestamp: new Date().toISOString(),
-                is_reverted: 'true'
+                is_reverted: isReverted ? 'true' : 'false'
               }
             );
             console.log(`✅ Push notification sent to vendor (user_id: ${vendorUserId})`);
@@ -7156,7 +8074,7 @@ class AdminPanelController {
           });
           
           const options = {
-            hostname: 'sms.bulksmsindia.in',
+            hostname: 'sms.bulksmsind.in',
             path: `/v2/sendSMS?${params}`,
             method: 'GET',
             timeout: 30000,
@@ -7210,23 +8128,45 @@ class AdminPanelController {
       const smsPromises = smsRecipients.map(async (recipient) => {
         try {
           const smsResult = await sendSMS(recipient.phone, smsMessage);
+          const safeResult = (() => {
+            try {
+              return JSON.stringify(smsResult);
+            } catch (_e) {
+              return String(smsResult);
+            }
+          })();
           
           let isSuccess = false;
+          let providerStatus = null;
+          let providerMsgId = null;
+          let providerMessage = null;
           if (Array.isArray(smsResult) && smsResult.length > 0) {
-            isSuccess = smsResult[0].status === 'success';
+            providerStatus = smsResult[0].status || null;
+            providerMsgId = smsResult[0].msgid || smsResult[0].messageid || null;
+            providerMessage = smsResult[0].message || smsResult[0].msg || null;
+            isSuccess = String(providerStatus || '').toLowerCase() === 'success';
           } else if (smsResult && typeof smsResult === 'object') {
-            isSuccess = smsResult.status === 'success' || smsResult.success === true;
+            providerStatus = smsResult.status || null;
+            providerMsgId = smsResult.msgid || smsResult.messageid || null;
+            providerMessage = smsResult.message || smsResult.msg || null;
+            isSuccess = String(providerStatus || '').toLowerCase() === 'success' || smsResult.success === true;
           }
           
           if (isSuccess) {
-            console.log(`✅ SMS sent to ${recipient.phone}`);
+            console.log(`✅ SMS sent to ${recipient.phone} | status=${providerStatus || 'N/A'} | msgid=${providerMsgId || 'N/A'} | response=${safeResult}`);
             smsSuccessCount++;
+          } else {
+            console.warn(`⚠️ SMS provider did not return success for ${recipient.phone} | status=${providerStatus || 'N/A'} | message=${providerMessage || 'N/A'} | response=${safeResult}`);
           }
           
           return { 
             success: isSuccess, 
             phone: recipient.phone, 
-            user_id: recipient.user_id 
+            user_id: recipient.user_id,
+            provider_status: providerStatus,
+            provider_msgid: providerMsgId,
+            provider_message: providerMessage,
+            provider_response: smsResult
           };
         } catch (err) {
           console.error(`❌ Error sending SMS to ${recipient.phone}:`, err.message);
@@ -7248,7 +8188,7 @@ class AdminPanelController {
             vendor_user_ids: notifiedVendorIds,
             material_name: materialName,
             amount: payableAmount,
-            notification_type: 'revert_to_scheduled'
+            notification_type: notificationType
           },
           message: smsMessage,
           status: 'sent',
@@ -7259,6 +8199,7 @@ class AdminPanelController {
       }
       
       return {
+        action: actionLabel,
         pushSent: pushSuccessCount,
         smsSent: smsSuccessCount,
         totalVendors: notifiedVendorIds.length,

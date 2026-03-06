@@ -56,15 +56,48 @@ class V2B2BSignupController {
 
       // Check if user has a shop with rejected status and change to pending on document resubmission
       const Shop = require('../models/Shop');
-      const shop = await Shop.findByUserId(userId);
-      if (shop && shop.approval_status === 'rejected') {
-        const updateData = {
-          approval_status: 'pending',
-          application_submitted_at: new Date().toISOString()
-        };
-        await Shop.update(shop.id, updateData);
+      const User = require('../models/User');
+      let shop = await Shop.findByUserId(userId);
+
+      const documentFieldMap = {
+        'business-license': 'business_license_url',
+        'gst-certificate': 'gst_certificate_url',
+        'address-proof': 'address_proof_url',
+        'kyc-owner': 'kyc_owner_url',
+      };
+      const targetField = documentFieldMap[documentType];
+      if (!targetField) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Invalid document type',
+          data: null,
+        });
+      }
+
+      // Ensure shop exists so uploaded docs are reflected in profile immediately.
+      if (!shop) {
+        const user = await User.findById(userId);
+        shop = await Shop.create({
+          user_id: userId,
+          shopname: user?.name || '',
+          shop_type: 1,
+          del_status: 1,
+        });
+        console.log(`✅ Created shop ${shop.id} for user ${userId} during ${documentType} upload`);
+      }
+
+      const updateData = {
+        [targetField]: s3Result.s3Url,
+      };
+
+      if (shop.approval_status === 'rejected') {
+        updateData.approval_status = 'pending';
+        updateData.application_submitted_at = new Date().toISOString();
         console.log(`📋 B2B document upload (${documentType}) - changing approval_status from 'rejected' to 'pending' for user ${userId} (resubmission)`);
       }
+
+      await Shop.update(shop.id, updateData);
+      console.log(`✅ Saved ${targetField} to shop ${shop.id}`);
 
       // Invalidate v2 API caches
       try {

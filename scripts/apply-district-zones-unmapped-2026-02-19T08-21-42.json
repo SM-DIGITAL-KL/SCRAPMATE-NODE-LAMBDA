@@ -1,0 +1,268 @@
+{
+  "generated_at": "2026-02-19T08:21:42.228Z",
+  "summary": {
+    "table": "district_pincode_prefixes",
+    "mode": "dry_run",
+    "scanned": 755,
+    "matched": 704,
+    "updated": 0,
+    "unmapped": 51
+  },
+  "unmapped_rows": [
+    {
+      "id": "uttar-pradesh#kaushambi",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "KAUSHAMBI"
+    },
+    {
+      "id": "odisha#sambalpur",
+      "state_name": "ODISHA",
+      "district_name": "SAMBALPUR"
+    },
+    {
+      "id": "uttar-pradesh#fatehpur",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "FATEHPUR"
+    },
+    {
+      "id": "odisha#jajapur",
+      "state_name": "ODISHA",
+      "district_name": "JAJAPUR"
+    },
+    {
+      "id": "gujarat#vadodara",
+      "state_name": "GUJARAT",
+      "district_name": "VADODARA"
+    },
+    {
+      "id": "andhra-pradesh#sri-sathya-sai",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "Sri Sathya Sai"
+    },
+    {
+      "id": "bihar#aurangabad",
+      "state_name": "BIHAR",
+      "district_name": "AURANGABAD"
+    },
+    {
+      "id": "haryana#karnal",
+      "state_name": "HARYANA",
+      "district_name": "KARNAL"
+    },
+    {
+      "id": "uttar-pradesh#mahoba",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "MAHOBA"
+    },
+    {
+      "id": "haryana#nuh",
+      "state_name": "HARYANA",
+      "district_name": "NUH"
+    },
+    {
+      "id": "haryana#charki-dadri",
+      "state_name": "HARYANA",
+      "district_name": "CHARKI DADRI"
+    },
+    {
+      "id": "odisha#bargarh",
+      "state_name": "ODISHA",
+      "district_name": "BARGARH"
+    },
+    {
+      "id": "haryana#panchkula",
+      "state_name": "HARYANA",
+      "district_name": "PANCHKULA"
+    },
+    {
+      "id": "uttar-pradesh#ambedkar-nagar",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "AMBEDKAR NAGAR"
+    },
+    {
+      "id": "andhra-pradesh#visakhapatanam",
+      "state_name": "ANDHRA PRADESH",
+      "district_name": "VISAKHAPATANAM"
+    },
+    {
+      "id": "odisha#malkangiri",
+      "state_name": "ODISHA",
+      "district_name": "MALKANGIRI"
+    },
+    {
+      "id": "uttar-pradesh#jalaun",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "JALAUN"
+    },
+    {
+      "id": "uttar-pradesh#lalitpur",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "LALITPUR"
+    },
+    {
+      "id": "uttar-pradesh#pratapgarh",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "PRATAPGARH"
+    },
+    {
+      "id": "uttar-pradesh#prayagraj",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "PRAYAGRAJ"
+    },
+    {
+      "id": "uttar-pradesh#jhansi",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "JHANSI"
+    },
+    {
+      "id": "karnataka#bidar",
+      "state_name": "KARNATAKA",
+      "district_name": "BIDAR"
+    },
+    {
+      "id": "odisha#deogarh",
+      "state_name": "ODISHA",
+      "district_name": "DEOGARH"
+    },
+    {
+      "id": "odisha#gajapati",
+      "state_name": "ODISHA",
+      "district_name": "GAJAPATI"
+    },
+    {
+      "id": "odisha#jharsuguda",
+      "state_name": "ODISHA",
+      "district_name": "JHARSUGUDA"
+    },
+    {
+      "id": "odisha#sundargarh",
+      "state_name": "ODISHA",
+      "district_name": "SUNDARGARH"
+    },
+    {
+      "id": "tamil-nadu#mayiladuthurai",
+      "state_name": "TAMIL NADU",
+      "district_name": "MAYILADUTHURAI"
+    },
+    {
+      "id": "madhya-pradesh#guna",
+      "state_name": "MADHYA PRADESH",
+      "district_name": "GUNA"
+    },
+    {
+      "id": "haryana#fatehabad",
+      "state_name": "HARYANA",
+      "district_name": "FATEHABAD"
+    },
+    {
+      "id": "uttar-pradesh#kanpur-nagar",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "KANPUR NAGAR"
+    },
+    {
+      "id": "odisha#nabarangpur",
+      "state_name": "ODISHA",
+      "district_name": "NABARANGPUR"
+    },
+    {
+      "id": "uttar-pradesh#chitrakoot",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "CHITRAKOOT"
+    },
+    {
+      "id": "odisha#kandhamal",
+      "state_name": "ODISHA",
+      "district_name": "KANDHAMAL"
+    },
+    {
+      "id": "gujarat#panch-mahals",
+      "state_name": "GUJARAT",
+      "district_name": "PANCH MAHALS"
+    },
+    {
+      "id": "odisha#nuapada",
+      "state_name": "ODISHA",
+      "district_name": "NUAPADA"
+    },
+    {
+      "id": "the-dadra-and-nagar-haveli-and-daman-and-diu#diu",
+      "state_name": "THE DADRA AND NAGAR HAVELI AND DAMAN AND DIU",
+      "district_name": "DIU"
+    },
+    {
+      "id": "odisha#kendujhar",
+      "state_name": "ODISHA",
+      "district_name": "KENDUJHAR"
+    },
+    {
+      "id": "the-dadra-and-nagar-haveli-and-daman-and-diu#dadra-and-nagar-haveli",
+      "state_name": "THE DADRA AND NAGAR HAVELI AND DAMAN AND DIU",
+      "district_name": "DADRA AND NAGAR HAVELI"
+    },
+    {
+      "id": "madhya-pradesh#east-nimar",
+      "state_name": "MADHYA PRADESH",
+      "district_name": "EAST NIMAR"
+    },
+    {
+      "id": "odisha#sonepur",
+      "state_name": "ODISHA",
+      "district_name": "SONEPUR"
+    },
+    {
+      "id": "na#na",
+      "state_name": "NA",
+      "district_name": "NA"
+    },
+    {
+      "id": "uttar-pradesh#hamirpur",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "HAMIRPUR"
+    },
+    {
+      "id": "uttar-pradesh#banda",
+      "state_name": "UTTAR PRADESH",
+      "district_name": "BANDA"
+    },
+    {
+      "id": "haryana#jind",
+      "state_name": "HARYANA",
+      "district_name": "JIND"
+    },
+    {
+      "id": "gujarat#arvalli",
+      "state_name": "GUJARAT",
+      "district_name": "ARVALLI"
+    },
+    {
+      "id": "the-dadra-and-nagar-haveli-and-daman-and-diu#daman",
+      "state_name": "THE DADRA AND NAGAR HAVELI AND DAMAN AND DIU",
+      "district_name": "DAMAN"
+    },
+    {
+      "id": "odisha#boudh",
+      "state_name": "ODISHA",
+      "district_name": "BOUDH"
+    },
+    {
+      "id": "gujarat#dohad",
+      "state_name": "GUJARAT",
+      "district_name": "DOHAD"
+    },
+    {
+      "id": "odisha#ganjam",
+      "state_name": "ODISHA",
+      "district_name": "GANJAM"
+    },
+    {
+      "id": "odisha#rayagada",
+      "state_name": "ODISHA",
+      "district_name": "RAYAGADA"
+    },
+    {
+      "id": "gujarat#chhotaudepur",
+      "state_name": "GUJARAT",
+      "district_name": "CHHOTAUDEPUR"
+    }
+  ]
+}

@@ -1,7 +1,8 @@
 const Order = require('../models/Order');
 const OrderRatings = require('../models/OrderRatings');
 const path = require('path');
-const { getFileSize } = require('../utils/fileUpload');
+const { getFileSize, uploadFileToS3 } = require('../utils/fileUpload');
+const { compressImage } = require('../utils/imageCompression');
 const RedisCache = require('../utils/redisCache');
 
 class OrderController {

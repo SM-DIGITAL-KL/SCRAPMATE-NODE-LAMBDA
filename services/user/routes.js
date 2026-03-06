@@ -93,7 +93,7 @@ router.delete('/v2/profile/:userId', V2ProfileController.deleteAccount);
 
 // ==================== V2 MOBILE SUBSCRIPTION PACKAGES ROUTES ====================
 /**
- * GET /api/v2/subscription-packages?userType=b2b|b2c
+ * GET /api/v2/subscription-packages?userType=b2b|b2c|marketplace
  * Get subscription packages for a specific user type
  */
 router.get('/v2/subscription-packages', V2SubscriptionPackageController.getSubscriptionPackages);
@@ -146,4 +146,3 @@ router.delete('/v2/profile/:userId/subcategories', V2ProfileController.removeUse
 router.get('/v2/profile/:userId/subcategories', V2ProfileController.getUserSubcategories);
 
 module.exports = router;
-

@@ -71,26 +71,37 @@ export INSTAMOJO_SALT=${INSTAMOJO_SALT:-''}
 export INSTAMOJO_CLIENT_ID=${INSTAMOJO_CLIENT_ID:-$INSTAMOJO_API_KEY}
 export INSTAMOJO_CLIENT_SECRET=${INSTAMOJO_CLIENT_SECRET:-$INSTAMOJO_AUTH_TOKEN}
 
+# Get script directory for reliable path resolution
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+echo "📁 Script directory: $SCRIPT_DIR"
+echo "📁 Project directory: $PROJECT_DIR"
+
 # Load Firebase service account - prioritize vendor app (partner) service account
-if [ -f "scrapmate-partner-android-firebase-adminsdk-fbsvc-709bbce0d4.json" ]; then
-    echo "📋 Loading vendor app Firebase service account from file..."
-    export FIREBASE_SERVICE_ACCOUNT=$(cat scrapmate-partner-android-firebase-adminsdk-fbsvc-709bbce0d4.json | jq -c .)
+VENDOR_FCM_FILE="$PROJECT_DIR/scrapmate-partner-android-firebase-adminsdk-fbsvc-709bbce0d4.json"
+VENDOR_FCM_FILE_OLD="$PROJECT_DIR/scrapmate-partner-android-firebase-adminsdk-fbsvc-94a2c243ee.json"
+CUSTOMER_FCM_FILE="$PROJECT_DIR/firebase-service-account.json"
+
+if [ -f "$VENDOR_FCM_FILE" ]; then
+    echo "📋 Loading vendor app Firebase service account from: $VENDOR_FCM_FILE"
+    export FIREBASE_SERVICE_ACCOUNT=$(cat "$VENDOR_FCM_FILE" | jq -c .)
     if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
         echo "⚠️  Warning: Failed to load vendor app Firebase service account from file"
     else
         echo "✅ Vendor app Firebase service account loaded (for vendor notifications)"
     fi
-elif [ -f "scrapmate-partner-android-firebase-adminsdk-fbsvc-94a2c243ee.json" ]; then
+elif [ -f "$VENDOR_FCM_FILE_OLD" ]; then
     echo "📋 Loading vendor app Firebase service account from file (old)..."
-    export FIREBASE_SERVICE_ACCOUNT=$(cat scrapmate-partner-android-firebase-adminsdk-fbsvc-94a2c243ee.json | jq -c .)
+    export FIREBASE_SERVICE_ACCOUNT=$(cat "$VENDOR_FCM_FILE_OLD" | jq -c .)
     if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
         echo "⚠️  Warning: Failed to load vendor app Firebase service account from file"
     else
         echo "✅ Vendor app Firebase service account loaded (for vendor notifications)"
     fi
-elif [ -f "firebase-service-account.json" ]; then
-    echo "📋 Loading customer app Firebase service account from file..."
-    export FIREBASE_SERVICE_ACCOUNT=$(cat firebase-service-account.json | jq -c .)
+elif [ -f "$CUSTOMER_FCM_FILE" ]; then
+    echo "📋 Loading customer app Firebase service account from: $CUSTOMER_FCM_FILE"
+    export FIREBASE_SERVICE_ACCOUNT=$(cat "$CUSTOMER_FCM_FILE" | jq -c .)
     if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
         echo "⚠️  Warning: Failed to load Firebase service account from file"
     else
@@ -100,6 +111,10 @@ elif [ -n "$FIREBASE_SERVICE_ACCOUNT" ]; then
     echo "✅ Using FIREBASE_SERVICE_ACCOUNT from environment"
 else
     echo "⚠️  Warning: FIREBASE_SERVICE_ACCOUNT not set - FCM notifications may not work"
+    echo "   Searched for:"
+    echo "     - $VENDOR_FCM_FILE"
+    echo "     - $VENDOR_FCM_FILE_OLD"
+    echo "     - $CUSTOMER_FCM_FILE"
 fi
 
 echo "📦 Creating deployment package..."
@@ -586,4 +601,3 @@ rm -f "$ZIP_FILE" /tmp/lambda-*.json
 
 echo ""
 echo "✅ Production deployment complete!"
-

@@ -13,6 +13,51 @@ const { sendMulticastNotification, sendVendorNotification } = require('../utils/
 const { uploadBufferToS3 } = require('../utils/s3Upload');
 const path = require('path');
 
+const resolveUploadMeta = (file, sellerId) => {
+  const mimeType = (file?.mimetype || '').toLowerCase();
+  const fromName = path.extname(file?.originalname || '').toLowerCase();
+  const fallbackMap = {
+    'application/pdf': '.pdf',
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'image/gif': '.gif',
+    'video/mp4': '.mp4',
+    'video/quicktime': '.mov',
+    'video/x-m4v': '.m4v',
+    'video/webm': '.webm',
+    'video/x-matroska': '.mkv',
+  };
+
+  const ext = fromName || fallbackMap[mimeType] || '.bin';
+  const isVideo = mimeType.startsWith('video/');
+  const folder = isVideo ? 'bulk-sell-videos' : 'bulk-sell-documents';
+  const prefix = isVideo ? 'bulk-sell-video' : 'bulk-sell-doc';
+  const filename = `${prefix}-${sellerId}-${Date.now()}-${Math.random().toString(36).substring(7)}${ext}`;
+  return { folder, filename };
+};
+
+const normalizeStateKey = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+const extractStateFromLocation = (location) => {
+  const text = String(location || '').trim();
+  if (!text) return '';
+  const parts = text.split(',').map((part) => String(part || '').trim()).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : '';
+};
+
+const toNumberOrNull = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 // Helper function to find nearby users by type (reused from v2BulkScrapController)
 async function findNearbyUsersByType(lat, lng, radiusKm, userTypes, shopType) {
   const Shop = require('../models/Shop');
@@ -64,6 +109,56 @@ async function findNearbyUsersByType(lat, lng, radiusKm, userTypes, shopType) {
 }
 
 class V2BulkSellController {
+  static parseDocumentUrls(rawUrls) {
+    if (!rawUrls) return [];
+    try {
+      let parsed = rawUrls;
+      if (typeof rawUrls === 'string') {
+        const trimmed = rawUrls.trim();
+        if (!trimmed) return [];
+        // Accept either JSON array string or comma separated url string.
+        if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+          parsed = JSON.parse(trimmed);
+        } else if (trimmed.includes(',')) {
+          parsed = trimmed.split(',').map((v) => v.trim()).filter(Boolean);
+        } else {
+          parsed = [trimmed];
+        }
+      }
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((u) => {
+          if (typeof u === 'string') return u.trim();
+          if (u && typeof u === 'object') {
+            return String(u.url || u.s3Url || u.fileUrl || '').trim();
+          }
+          return '';
+        })
+        .filter((u) => u.startsWith('http://') || u.startsWith('https://'));
+    } catch (e) {
+      console.warn('⚠️ Failed to parse document_urls:', e.message);
+      return [];
+    }
+  }
+
+  static mergeDocumentUrls(primaryUrls, additionalNotes) {
+    const unique = new Set((primaryUrls || []).filter(Boolean));
+    if (!additionalNotes || typeof additionalNotes !== 'string') {
+      return Array.from(unique);
+    }
+    try {
+      const parsedNotes = JSON.parse(additionalNotes);
+      const mediaFromNotes = Array.isArray(parsedNotes?.mediaUrls)
+        ? parsedNotes.mediaUrls
+        : [];
+      const normalized = V2BulkSellController.parseDocumentUrls(mediaFromNotes);
+      normalized.forEach((url) => unique.add(url));
+    } catch (_e) {
+      // Keep backward compatibility when notes are plain text.
+    }
+    return Array.from(unique);
+  }
+
   /**
    * POST /api/v2/bulk-sell/create
    * Create a bulk sell request and notify nearby 'S' type users
@@ -84,6 +179,7 @@ class V2BulkSellController {
   static async createBulkSellRequest(req, res) {
     try {
       const {
+        request_id,
         seller_id,
         latitude,
         longitude,
@@ -95,7 +191,16 @@ class V2BulkSellController {
         preferred_distance,
         when_available,
         location,
-        additional_notes
+        additional_notes,
+        document_urls,
+        // Payment fields
+        payment_status,
+        payment_amount,
+        payment_moj_id,
+        payment_req_id,
+        invoice_id,
+        order_value,
+        post_star
       } = req.body;
 
       // Parse subcategories if it's a JSON string
@@ -111,16 +216,15 @@ class V2BulkSellController {
       }
 
       // Handle document uploads
-      const documentUrls = [];
+      const requestDocumentUrls = V2BulkSellController.parseDocumentUrls(document_urls);
+      const documentUrls = [...requestDocumentUrls];
       if (req.files) {
         const documentFiles = Object.values(req.files).flat();
         for (const file of documentFiles) {
           if (file && file.buffer) {
             try {
-              const ext = path.extname(file.originalname).toLowerCase() || 
-                         (file.mimetype === 'application/pdf' ? '.pdf' : '.jpg');
-              const filename = `bulk-sell-doc-${seller_id}-${Date.now()}-${Math.random().toString(36).substring(7)}${ext}`;
-              const s3Result = await uploadBufferToS3(file.buffer, filename, 'bulk-sell-documents');
+              const { folder, filename } = resolveUploadMeta(file, seller_id);
+              const s3Result = await uploadBufferToS3(file.buffer, filename, folder);
               documentUrls.push(s3Result.s3Url);
               console.log(`✅ Document uploaded: ${s3Result.s3Url}`);
             } catch (uploadError) {
@@ -129,6 +233,7 @@ class V2BulkSellController {
           }
         }
       }
+      const mergedDocumentUrls = V2BulkSellController.mergeDocumentUrls(documentUrls, additional_notes);
 
       console.log('📦 V2BulkSellController.createBulkSellRequest called');
       console.log('   Request data:', {
@@ -141,7 +246,7 @@ class V2BulkSellController {
         quantity,
         asking_price,
         preferred_distance,
-        documents_count: documentUrls.length
+        documents_count: mergedDocumentUrls.length
       });
 
       // Validate required fields
@@ -164,7 +269,7 @@ class V2BulkSellController {
         });
       }
 
-      // Verify seller is a B2B user
+      // Verify seller is allowed to create bulk sell requests
       const seller = await User.findById(seller_id);
       if (!seller) {
         return res.status(404).json({
@@ -175,10 +280,10 @@ class V2BulkSellController {
       }
 
       const sellerUserType = seller.user_type;
-      if (sellerUserType !== 'S' && sellerUserType !== 'SR') {
+      if (sellerUserType !== 'S' && sellerUserType !== 'SR' && sellerUserType !== 'M') {
         return res.status(400).json({
           status: 'error',
-          msg: 'Only B2B users (user_type S or SR) can create bulk sell requests',
+          msg: 'Only B2B or Marketplace users (user_type S, SR, or M) can create bulk sell requests',
           data: null
         });
       }
@@ -210,9 +315,9 @@ class V2BulkSellController {
 
       console.log(`📏 Using search radius: ${validatedRadius}km`);
 
-      // Find all nearby 'S' type users (only 'S' users can see bulk sell requests)
-      console.log(`🔍 Finding all nearby 'S' type users within ${validatedRadius}km...`);
-      const nearbySUsers = await findNearbyUsersByType(sellerLat, sellerLng, validatedRadius, ['S'], null);
+      // Find all nearby 'S' and 'R' type users (both B2B sellers and B2C buyers can see bulk sell requests)
+      console.log(`🔍 Finding all nearby 'S' and 'R' type users within ${validatedRadius}km...`);
+      const nearbySUsers = await findNearbyUsersByType(sellerLat, sellerLng, validatedRadius, ['S', 'R'], null);
 
       // Filter out seller's own shops
       const sellerShopIds = new Set();
@@ -250,11 +355,18 @@ class V2BulkSellController {
         }
       }
 
-      console.log(`📤 Will notify ${uniqueShops.length} 'S' type users about this bulk sell request`);
+      console.log(`📤 Will notify ${uniqueShops.length} 'S' and 'R' type users about this bulk sell request`);
 
       // Create the bulk sell request
       const sellerName = seller.name || seller.company_name || `User_${seller_id}`;
+      const resolvedState = extractStateFromLocation(location);
+      const resolvedStateKey = normalizeStateKey(resolvedState);
       const requestData = {
+        id: request_id !== undefined && request_id !== null && request_id !== ''
+          ? Number.isFinite(Number(request_id))
+            ? Number(request_id)
+            : String(request_id)
+          : undefined,
         seller_id: seller_id,
         seller_name: sellerName,
         latitude: sellerLat,
@@ -267,11 +379,25 @@ class V2BulkSellController {
         preferred_distance: validatedRadius,
         when_available: when_available || null,
         location: location || null,
+        state: resolvedState || null,
+        state_key: resolvedStateKey || null,
         additional_notes: additional_notes || null,
-        documents: documentUrls.length > 0 ? JSON.stringify(documentUrls) : null
+        documents: mergedDocumentUrls.length > 0 ? JSON.stringify(mergedDocumentUrls) : null,
+        // Payment fields
+        payment_status: payment_status || 'pending',
+        payment_amount: payment_amount ? parseFloat(payment_amount) : null,
+        payment_moj_id: payment_moj_id || null,
+        payment_req_id: payment_req_id || null,
+        invoice_id: invoice_id || null,
+        order_value: order_value ? parseFloat(order_value) : (asking_price && quantity ? parseFloat(asking_price) * parseFloat(quantity) : null),
+        post_star: post_star ? parseInt(post_star, 10) : 0,
+        status: 'pending',
+        review_status: 'pending',
+        status_created_at: `pending#${new Date().toISOString()}`
       };
 
       const bulkSellRequest = await BulkSellRequest.create(requestData);
+      const shouldNotifyAfterCreate = bulkSellRequest?.status === 'active';
 
       // Get FCM tokens for all users to notify
       const userShopMap = new Map();
@@ -297,7 +423,7 @@ class V2BulkSellController {
       console.log(`✅ Found ${fcmTokens.length} users with FCM tokens`);
 
       // Send notifications to nearby 'S' users
-      if (fcmTokens.length > 0) {
+      if (shouldNotifyAfterCreate && fcmTokens.length > 0) {
         try {
           const quantityText = `${(quantity / 1000).toFixed(2)} ton${quantity !== 1000 ? 's' : ''}`;
           const notificationTitle = 'New Bulk Sell Request Available';
@@ -319,12 +445,14 @@ class V2BulkSellController {
 
       return res.json({
         status: 'success',
-        msg: 'Bulk sell request created successfully',
+        msg: shouldNotifyAfterCreate
+          ? 'Bulk sell request created successfully'
+          : 'Bulk sell post submitted for admin approval',
         data: {
           request_id: bulkSellRequest.id,
           notified_users: {
-            total: uniqueShops.length,
-            notified: fcmTokens.length
+            total: shouldNotifyAfterCreate ? uniqueShops.length : 0,
+            notified: shouldNotifyAfterCreate ? fcmTokens.length : 0
           }
         }
       });
@@ -342,11 +470,25 @@ class V2BulkSellController {
    * GET /api/v2/bulk-sell/requests
    * Get bulk sell requests available for the user
    * Query params: user_id, user_type, latitude, longitude
-   * Only 'S' type users can see these requests
+   * Both 'S' and 'R' type users can see these requests
    */
   static async getBulkSellRequests(req, res) {
     try {
-      const { user_id, user_type, latitude, longitude } = req.query;
+      const {
+        user_id,
+        user_type,
+        latitude,
+        longitude,
+        page,
+        limit,
+        state,
+        sort_by,
+        sort_order,
+        min_star,
+        max_star,
+        min_price,
+        max_price
+      } = req.query;
 
       if (!user_id || !user_type) {
         return res.status(400).json({
@@ -356,18 +498,27 @@ class V2BulkSellController {
         });
       }
 
-      // Only 'S' type users can see bulk sell requests
-      if (user_type !== 'S') {
+      // Both 'S' and 'R' type users can see bulk sell requests
+      if (user_type !== 'S' && user_type !== 'R') {
         return res.json({
           status: 'success',
           msg: 'Bulk sell requests retrieved successfully',
-          data: [] // Return empty array for non-S users
+          data: [] // Return empty array for non-S and non-R users
         });
       }
 
       const userIdNum = typeof user_id === 'string' ? parseInt(user_id) : (typeof user_id === 'number' ? user_id : parseInt(String(user_id)));
       const userLat = latitude ? parseFloat(latitude) : null;
       const userLng = longitude ? parseFloat(longitude) : null;
+      const pageNum = Math.max(1, parseInt(String(page || '1'), 10) || 1);
+      const limitNum = Math.max(1, Math.min(100, parseInt(String(limit || '20'), 10) || 20));
+      const requestedStateKey = normalizeStateKey(state);
+      const sortBy = String(sort_by || 'created_at').trim().toLowerCase();
+      const sortOrder = String(sort_order || 'desc').trim().toLowerCase() === 'asc' ? 'asc' : 'desc';
+      const minStar = toNumberOrNull(min_star);
+      const maxStar = toNumberOrNull(max_star);
+      const minPrice = toNumberOrNull(min_price);
+      const maxPrice = toNumberOrNull(max_price);
 
       const requests = await BulkSellRequest.findForUser(userIdNum, userLat, userLng, user_type);
 
@@ -405,8 +556,11 @@ class V2BulkSellController {
           preferred_distance: typeof request.preferred_distance === 'string' ? parseFloat(request.preferred_distance) : (typeof request.preferred_distance === 'number' ? request.preferred_distance : parseFloat(String(request.preferred_distance || 50))),
           when_available: request.when_available || null,
           location: request.location || null,
+          state: request.state || extractStateFromLocation(request.location) || null,
+          state_key: request.state_key || normalizeStateKey(request.state || extractStateFromLocation(request.location)) || null,
           additional_notes: request.additional_notes || null,
           documents: parsedDocuments,
+          post_star: request.post_star ? (typeof request.post_star === 'string' ? parseInt(request.post_star) : request.post_star) : 0,
           status: request.status || 'active',
           accepted_buyers: request.accepted_buyers || [],
           rejected_buyers: request.rejected_buyers || [],
@@ -418,10 +572,58 @@ class V2BulkSellController {
         };
       });
 
+      const filteredRequests = formattedRequests.filter((request) => {
+        const requestStateKey = normalizeStateKey(request.state || extractStateFromLocation(request.location));
+        if (requestedStateKey && requestStateKey !== requestedStateKey) return false;
+
+        const stars = toNumberOrNull(request.post_star) || 0;
+        if (minStar !== null && stars < minStar) return false;
+        if (maxStar !== null && stars > maxStar) return false;
+
+        const price = toNumberOrNull(request.asking_price);
+        if (minPrice !== null && (price === null || price < minPrice)) return false;
+        if (maxPrice !== null && (price === null || price > maxPrice)) return false;
+
+        return true;
+      });
+
+      filteredRequests.sort((a, b) => {
+        const getCreatedTime = (item) => new Date(item?.created_at || 0).getTime();
+        const getPrice = (item) => toNumberOrNull(item?.asking_price) || 0;
+        const getStar = (item) => toNumberOrNull(item?.post_star) || 0;
+        const getDistance = (item) => toNumberOrNull(item?.distance) || Number.MAX_SAFE_INTEGER;
+
+        let comparison = 0;
+        if (sortBy === 'price') {
+          comparison = getPrice(a) - getPrice(b);
+        } else if (sortBy === 'star' || sortBy === 'stars' || sortBy === 'post_star') {
+          comparison = getStar(a) - getStar(b);
+        } else if (sortBy === 'distance') {
+          comparison = getDistance(a) - getDistance(b);
+        } else {
+          comparison = getCreatedTime(a) - getCreatedTime(b);
+        }
+
+        return sortOrder === 'asc' ? comparison : -comparison;
+      });
+
+      const totalItems = filteredRequests.length;
+      const totalPages = totalItems === 0 ? 0 : Math.ceil(totalItems / limitNum);
+      const startIndex = (pageNum - 1) * limitNum;
+      const pagedData = filteredRequests.slice(startIndex, startIndex + limitNum);
+
       return res.json({
         status: 'success',
         msg: 'Bulk sell requests retrieved successfully',
-        data: formattedRequests
+        data: pagedData,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total_items: totalItems,
+          total_pages: totalPages,
+          has_next: pageNum < totalPages,
+          has_prev: pageNum > 1
+        }
       });
     } catch (error) {
       console.error('❌ V2BulkSellController.getBulkSellRequests error:', error);
@@ -563,6 +765,7 @@ class V2BulkSellController {
           location: request.location || null,
           additional_notes: request.additional_notes || null,
           documents: parsedDocuments,
+          post_star: request.post_star ? (typeof request.post_star === 'string' ? parseInt(request.post_star) : request.post_star) : 0,
           status: request.status || 'active',
           accepted_buyers: request.accepted_buyers || [],
           rejected_buyers: request.rejected_buyers || [],
@@ -930,4 +1133,3 @@ class V2BulkSellController {
 }
 
 module.exports = V2BulkSellController;
-

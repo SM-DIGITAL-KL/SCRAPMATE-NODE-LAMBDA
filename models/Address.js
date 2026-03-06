@@ -6,6 +6,25 @@ const TABLE_NAME = 'addresses';
 const ADDRESS_BY_CUSTOMER_PREFIX = 'address:by_customer:';
 
 class Address {
+  static normalizeZone(value) {
+    const raw = String(value || '').trim().toUpperCase();
+    if (!raw) return '';
+    const match = raw.match(/^(?:ZONE|Z)?\s*0*(\d{1,2})$/);
+    if (match) {
+      return `ZONE${parseInt(match[1], 10)}`;
+    }
+    return raw.replace(/\s+/g, '');
+  }
+
+  static zoneCandidates(value) {
+    const raw = String(value || '').trim().toUpperCase();
+    const match = raw.match(/^(?:ZONE|Z)?\s*0*(\d{1,2})$/);
+    if (!match) return [Address.normalizeZone(value)].filter(Boolean);
+    const num = parseInt(match[1], 10);
+    const padded = String(num).padStart(2, '0');
+    return [...new Set([`ZONE${num}`, `Z${num}`, `Z${padded}`])];
+  }
+
   // Find address by ID
   static async findById(id) {
     try {
@@ -112,6 +131,90 @@ class Address {
     return map;
   }
 
+  /**
+   * Find customer IDs for a zone using addresses.zone-index.
+   * Falls back to a scan if the GSI is unavailable.
+   */
+  static async findCustomerIdsByZone(zone) {
+    const normalizedZone = Address.normalizeZone(zone);
+    if (!normalizedZone) return [];
+
+    const client = getDynamoDBClient();
+    const customerIdSet = new Set();
+    const zoneCandidates = Address.zoneCandidates(zone);
+
+    try {
+      for (const zoneValue of zoneCandidates) {
+        let lastKey = null;
+        do {
+          const params = {
+            TableName: TABLE_NAME,
+            IndexName: 'zone-index',
+            KeyConditionExpression: '#zone = :zone',
+            FilterExpression: 'attribute_not_exists(#del) OR #del <> :deleted',
+            ExpressionAttributeNames: {
+              '#zone': 'zone',
+              '#del': 'del_status'
+            },
+            ExpressionAttributeValues: {
+              ':zone': zoneValue,
+              ':deleted': 0
+            },
+            ProjectionExpression: 'customer_id'
+          };
+
+          if (lastKey) params.ExclusiveStartKey = lastKey;
+
+          const response = await client.send(new QueryCommand(params));
+          for (const item of response.Items || []) {
+            const cid = typeof item.customer_id === 'string' && !isNaN(item.customer_id)
+              ? parseInt(item.customer_id, 10)
+              : item.customer_id;
+            if (cid !== null && cid !== undefined && !isNaN(cid)) {
+              customerIdSet.add(cid);
+            }
+          }
+          lastKey = response.LastEvaluatedKey;
+        } while (lastKey);
+      }
+    } catch (gsiErr) {
+      console.warn(`[Address.findCustomerIdsByZone] zone-index query failed, fallback to scan: ${gsiErr.message}`);
+      let lastKey = null;
+      do {
+        const params = {
+          TableName: TABLE_NAME,
+          FilterExpression: '(#zone = :zone0 OR #zone = :zone1 OR #zone = :zone2) AND (attribute_not_exists(#del) OR #del <> :deleted)',
+          ExpressionAttributeNames: {
+            '#zone': 'zone',
+            '#del': 'del_status'
+          },
+          ExpressionAttributeValues: {
+            ':zone0': zoneCandidates[0] || normalizedZone,
+            ':zone1': zoneCandidates[1] || normalizedZone,
+            ':zone2': zoneCandidates[2] || normalizedZone,
+            ':deleted': 0
+          },
+          ProjectionExpression: 'customer_id'
+        };
+
+        if (lastKey) params.ExclusiveStartKey = lastKey;
+
+        const response = await client.send(new ScanCommand(params));
+        for (const item of response.Items || []) {
+          const cid = typeof item.customer_id === 'string' && !isNaN(item.customer_id)
+            ? parseInt(item.customer_id, 10)
+            : item.customer_id;
+          if (cid !== null && cid !== undefined && !isNaN(cid)) {
+            customerIdSet.add(cid);
+          }
+        }
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+    }
+
+    return [...customerIdSet];
+  }
+
   // Create a new address
   static async create(data) {
     try {
@@ -161,6 +264,10 @@ class Address {
         id: id,
         customer_id: typeof data.customer_id === 'string' && !isNaN(data.customer_id) ? parseInt(data.customer_id) : data.customer_id,
         address: data.address || '',
+        district: data.district || '',
+        state: data.state || '',
+        pincode: data.pincode ? String(data.pincode).trim() : '',
+        zone: data.zone ? String(data.zone).trim() : '',
         addres_type: data.addres_type || 'Home',
         building_no: data.building_no || '',
         landmark: data.landmark || '',
@@ -227,6 +334,26 @@ class Address {
         updateExpression.push('#address = :address');
         expressionAttributeNames['#address'] = 'address';
         expressionAttributeValues[':address'] = data.address;
+      }
+      if (data.district !== undefined) {
+        updateExpression.push('#district = :district');
+        expressionAttributeNames['#district'] = 'district';
+        expressionAttributeValues[':district'] = data.district;
+      }
+      if (data.state !== undefined) {
+        updateExpression.push('#state = :state');
+        expressionAttributeNames['#state'] = 'state';
+        expressionAttributeValues[':state'] = data.state;
+      }
+      if (data.pincode !== undefined) {
+        updateExpression.push('#pincode = :pincode');
+        expressionAttributeNames['#pincode'] = 'pincode';
+        expressionAttributeValues[':pincode'] = data.pincode ? String(data.pincode).trim() : '';
+      }
+      if (data.zone !== undefined) {
+        updateExpression.push('#zone = :zone');
+        expressionAttributeNames['#zone'] = 'zone';
+        expressionAttributeValues[':zone'] = data.zone ? String(data.zone).trim() : '';
       }
       if (data.addres_type !== undefined) {
         updateExpression.push('#addres_type = :addres_type');
@@ -330,4 +457,3 @@ class Address {
 }
 
 module.exports = Address;
-

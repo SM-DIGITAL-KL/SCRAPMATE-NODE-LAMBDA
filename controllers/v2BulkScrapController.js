@@ -13,6 +13,26 @@ const { sendMulticastNotification } = require('../utils/fcmNotification');
 const { uploadBufferToS3 } = require('../utils/s3Upload');
 const path = require('path');
 
+const normalizeStateKey = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+const extractStateFromLocation = (location) => {
+  const text = String(location || '').trim();
+  if (!text) return '';
+  const parts = text.split(',').map((part) => String(part || '').trim()).filter(Boolean);
+  return parts.length > 0 ? parts[parts.length - 1] : '';
+};
+
+const toNumberOrNull = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 class V2BulkScrapController {
   /**
    * POST /api/v2/bulk-scrap/purchase
@@ -34,6 +54,7 @@ class V2BulkScrapController {
   static async createBulkPurchaseRequest(req, res) {
     try {
       const {
+        request_id,
         buyer_id,
         latitude,
         longitude,
@@ -46,7 +67,8 @@ class V2BulkScrapController {
         when_needed,
         location,
         additional_notes,
-        pending_order_id // ID of the pending order being submitted
+        pending_order_id, // ID of the pending order being submitted
+        post_star
       } = req.body;
 
       // Parse subcategories if it's a JSON string (from FormData)
@@ -116,7 +138,7 @@ class V2BulkScrapController {
         });
       }
 
-      // Verify buyer is a B2B user (user_type 'S' or 'SR')
+      // Verify buyer is a B2B/Marketplace user (user_type 'S', 'SR', or 'M')
       const buyer = await User.findById(buyer_id);
       if (!buyer) {
         return res.status(404).json({
@@ -127,10 +149,10 @@ class V2BulkScrapController {
       }
 
       const buyerUserType = buyer.user_type;
-      if (buyerUserType !== 'S' && buyerUserType !== 'SR') {
+      if (buyerUserType !== 'S' && buyerUserType !== 'SR' && buyerUserType !== 'M') {
         return res.status(400).json({
           status: 'error',
-          msg: 'Only B2B users (user_type S or SR) can create bulk purchase requests',
+          msg: 'Only B2B or Marketplace users (user_type S, SR, or M) can create bulk purchase requests',
           data: null
         });
       }
@@ -299,15 +321,15 @@ class V2BulkScrapController {
       });
 
       // If buyer is SR type, only notify R shops (B2C dashboard), not S shops (B2B)
-      // If buyer is S type, notify both S and R shops
+      // If buyer is S or M type, notify both S and R shops
       let shopsToNotify = [];
       if (buyerUserType === 'SR') {
         // SR buyer: Only send to R shops (B2C dashboard)
         console.log(`📤 Buyer is SR type - will only notify R shops (B2C dashboard), not S shops`);
         shopsToNotify = b2cShops;
-      } else if (buyerUserType === 'S') {
-        // S buyer: Send to both S and R shops
-        console.log(`📤 Buyer is S type - will notify both S shops (B2B) and R shops (B2C)`);
+      } else if (buyerUserType === 'S' || buyerUserType === 'M') {
+        // S/M buyer: Send to both S and R shops
+        console.log(`📤 Buyer is ${buyerUserType} type - will notify both S shops (B2B) and R shops (B2C)`);
         shopsToNotify = [...b2bShops, ...b2cShops];
       } else {
         // Fallback (shouldn't happen based on validation above)
@@ -469,7 +491,14 @@ class V2BulkScrapController {
 
       // Save the bulk scrap request to the database
       const buyerName = buyer.name || buyer.company_name || `User_${buyer_id}`;
+      const resolvedState = extractStateFromLocation(location);
+      const resolvedStateKey = normalizeStateKey(resolvedState);
       const requestData = {
+        id: request_id !== undefined && request_id !== null && request_id !== ''
+          ? Number.isFinite(Number(request_id))
+            ? Number(request_id)
+            : String(request_id)
+          : undefined,
         buyer_id: parseInt(buyer_id),
         buyer_name: buyerName,
         latitude: lat,
@@ -482,10 +511,16 @@ class V2BulkScrapController {
         preferred_distance: validatedRadius,
         when_needed: when_needed || null,
         location: location || null,
+        state: resolvedState || null,
+        state_key: resolvedStateKey || null,
         additional_notes: additional_notes || null,
         documents: documentUrls.length > 0 ? JSON.stringify(documentUrls) : null,
         accepted_vendors: JSON.stringify([]),
-        rejected_vendors: JSON.stringify([])
+        rejected_vendors: JSON.stringify([]),
+        post_star: post_star ? parseInt(post_star, 10) : 0,
+        status: 'pending',
+        review_status: 'pending',
+        status_created_at: `pending#${new Date().toISOString()}`
       };
 
       let savedRequest = null;
@@ -497,6 +532,7 @@ class V2BulkScrapController {
         // Continue with notifications even if save fails (for backward compatibility)
         // But log the error for debugging
       }
+      const shouldNotifyAfterCreate = savedRequest?.status === 'active';
 
       // Prepare notification message
       const quantityText = `${(quantity / 1000).toFixed(2)} ton${quantity !== 1000 ? 's' : ''}`; // Convert kgs to tons
@@ -529,7 +565,7 @@ class V2BulkScrapController {
 
       // Send notifications to all users simultaneously
       let notificationResult = null;
-      if (fcmTokens.length > 0) {
+      if (shouldNotifyAfterCreate && fcmTokens.length > 0) {
         try {
           notificationResult = await sendMulticastNotification(
             fcmTokens,
@@ -545,7 +581,7 @@ class V2BulkScrapController {
           console.error('❌ Error sending notifications:', notifError);
           // Continue even if notifications fail
         }
-      } else {
+      } else if (shouldNotifyAfterCreate) {
         console.warn('⚠️ No FCM tokens found - skipping notifications');
       }
 
@@ -555,7 +591,9 @@ class V2BulkScrapController {
       // Return success response
       return res.json({
         status: 'success',
-        msg: 'Bulk scrap purchase request created and notifications sent',
+        msg: shouldNotifyAfterCreate
+          ? 'Bulk scrap purchase request created and notifications sent'
+          : 'Bulk buy post submitted for admin approval',
         data: {
           request_id: savedRequest?.id || null,
           buyer_id: buyer_id,
@@ -570,11 +608,11 @@ class V2BulkScrapController {
             address: location || null
           },
           notified_shops: {
-            total: uniqueShops.length,
-            b2b_count: buyerUserType === 'SR' ? 0 : uniqueShops.filter(s => s.user_type === 'S').length, // SR buyers don't notify B2B shops
-            b2c_count: uniqueShops.filter(s => s.user_type === 'R').length,
-            unique_users: userShopMap.size,
-            with_fcm_tokens: fcmTokens.length
+            total: shouldNotifyAfterCreate ? uniqueShops.length : 0,
+            b2b_count: shouldNotifyAfterCreate ? (buyerUserType === 'SR' ? 0 : uniqueShops.filter(s => s.user_type === 'S').length) : 0, // SR buyers don't notify B2B shops
+            b2c_count: shouldNotifyAfterCreate ? uniqueShops.filter(s => s.user_type === 'R').length : 0,
+            unique_users: shouldNotifyAfterCreate ? userShopMap.size : 0,
+            with_fcm_tokens: shouldNotifyAfterCreate ? fcmTokens.length : 0
           },
           notifications: notificationResult ? {
             success_count: notificationResult.successCount,
@@ -599,10 +637,24 @@ class V2BulkScrapController {
    */
   static async getBulkScrapRequests(req, res) {
     try {
-      const { user_id, latitude, longitude, user_type } = req.query;
+      const {
+        user_id,
+        latitude,
+        longitude,
+        user_type,
+        page,
+        limit,
+        state,
+        sort_by,
+        sort_order,
+        min_star,
+        max_star,
+        min_price,
+        max_price
+      } = req.query;
 
       console.log('📦 V2BulkScrapController.getBulkScrapRequests called');
-      console.log('   Query params:', { user_id, latitude, longitude, user_type });
+      console.log('   Query params:', { user_id, latitude, longitude, user_type, page, limit, state, sort_by, sort_order });
 
       // Validate required fields
       if (!user_id) {
@@ -775,10 +827,74 @@ class V2BulkScrapController {
         }
       }
 
+      const pageNum = Math.max(1, parseInt(String(page || '1'), 10) || 1);
+      const limitNum = Math.max(1, Math.min(100, parseInt(String(limit || '20'), 10) || 20));
+      const requestedStateKey = normalizeStateKey(state);
+      const sortBy = String(sort_by || 'created_at').trim().toLowerCase();
+      const sortOrder = String(sort_order || 'desc').trim().toLowerCase() === 'asc' ? 'asc' : 'desc';
+      const minStar = toNumberOrNull(min_star);
+      const maxStar = toNumberOrNull(max_star);
+      const minPrice = toNumberOrNull(min_price);
+      const maxPrice = toNumberOrNull(max_price);
+
+      const normalizedRequests = (requests || []).map((request) => ({
+        ...request,
+        state: request.state || extractStateFromLocation(request.location) || null,
+        state_key: request.state_key || normalizeStateKey(request.state || extractStateFromLocation(request.location)) || null
+      }));
+
+      const filteredRequests = normalizedRequests.filter((request) => {
+        const requestStateKey = normalizeStateKey(request.state || extractStateFromLocation(request.location));
+        if (requestedStateKey && requestStateKey !== requestedStateKey) return false;
+
+        const stars = toNumberOrNull(request.post_star) || 0;
+        if (minStar !== null && stars < minStar) return false;
+        if (maxStar !== null && stars > maxStar) return false;
+
+        const price = toNumberOrNull(request.preferred_price);
+        if (minPrice !== null && (price === null || price < minPrice)) return false;
+        if (maxPrice !== null && (price === null || price > maxPrice)) return false;
+
+        return true;
+      });
+
+      filteredRequests.sort((a, b) => {
+        const getCreatedTime = (item) => new Date(item?.created_at || 0).getTime();
+        const getPrice = (item) => toNumberOrNull(item?.preferred_price) || 0;
+        const getStar = (item) => toNumberOrNull(item?.post_star) || 0;
+        const getDistance = (item) => toNumberOrNull(item?.distance) || Number.MAX_SAFE_INTEGER;
+
+        let comparison = 0;
+        if (sortBy === 'price') {
+          comparison = getPrice(a) - getPrice(b);
+        } else if (sortBy === 'star' || sortBy === 'stars' || sortBy === 'post_star') {
+          comparison = getStar(a) - getStar(b);
+        } else if (sortBy === 'distance') {
+          comparison = getDistance(a) - getDistance(b);
+        } else {
+          comparison = getCreatedTime(a) - getCreatedTime(b);
+        }
+
+        return sortOrder === 'asc' ? comparison : -comparison;
+      });
+
+      const totalItems = filteredRequests.length;
+      const totalPages = totalItems === 0 ? 0 : Math.ceil(totalItems / limitNum);
+      const startIndex = (pageNum - 1) * limitNum;
+      const pagedData = filteredRequests.slice(startIndex, startIndex + limitNum);
+
       return res.json({
         status: 'success',
         msg: 'Bulk scrap requests retrieved successfully',
-        data: requests
+        data: pagedData,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total_items: totalItems,
+          total_pages: totalPages,
+          has_next: pageNum < totalPages,
+          has_prev: pageNum > 1
+        }
       });
     } catch (error) {
       console.error('❌ V2BulkScrapController.getBulkScrapRequests error:', error);
@@ -1753,6 +1869,7 @@ class V2BulkScrapController {
             location: request.location || null,
             additional_notes: request.additional_notes || null,
             documents: parsedDocuments,
+            post_star: request.post_star ? (typeof request.post_star === 'string' ? parseInt(request.post_star) : request.post_star) : 0,
             status: request.status || 'active',
             accepted_vendors: request.accepted_vendors ? (typeof request.accepted_vendors === 'string' ? JSON.parse(request.accepted_vendors) : request.accepted_vendors) : [],
             rejected_vendors: request.rejected_vendors ? (typeof request.rejected_vendors === 'string' ? JSON.parse(request.rejected_vendors) : request.rejected_vendors) : [],
@@ -2700,4 +2817,3 @@ async function findNearbyUsersByType(refLat, refLng, radius, userTypes, limit = 
 }
 
 module.exports = V2BulkScrapController;
-

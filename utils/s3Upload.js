@@ -326,14 +326,42 @@ async function uploadBufferToS3(buffer, filename, folder = 'images') {
   }
 }
 
+// Generate presigned PUT URL for direct client uploads
+async function createPresignedUploadUrl({
+  key,
+  contentType = 'application/octet-stream',
+  expiresIn = 900, // 15 minutes
+}) {
+  if (!key) {
+    throw new Error('S3 key is required for presigned upload URL');
+  }
+
+  const client = getS3Client();
+  const command = new PutObjectCommand({
+    Bucket: BUCKET_NAME,
+    Key: key,
+    ContentType: contentType,
+  });
+
+  const uploadUrl = await getSignedUrl(client, command, { expiresIn });
+  const publicUrl = `${getS3BaseUrl()}/${key}`;
+
+  return {
+    uploadUrl,
+    publicUrl,
+    s3Key: key,
+    expiresIn,
+  };
+}
+
 module.exports = {
   uploadToS3,
   deleteFromS3,
   getS3Url,
   generateS3Key,
   uploadBufferToS3,
+  createPresignedUploadUrl,
   getS3BaseUrl,
   getS3Client,
   BUCKET_NAME
 };
-

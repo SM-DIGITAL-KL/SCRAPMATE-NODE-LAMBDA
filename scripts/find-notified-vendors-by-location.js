@@ -10,7 +10,7 @@ const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
 const User = require('../models/User');
 const Shop = require('../models/Shop');
 
-async function calculateDistance(lat1, lon1, lat2, lon2) {
+function calculateDistance(lat1, lon1, lat2, lon2) {
   const R = 6371; // Earth's radius in km
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
@@ -87,6 +87,19 @@ async function findNearbyShopsForRequest(lat, lng, radius, buyerId = null) {
 
     console.log(`   Found ${allUsers.length} vendor_app users (R, S, SR)`);
 
+    // Build quick lookup for users by ID
+    const usersById = new Map();
+    for (const user of allUsers) {
+      usersById.set(String(user.id), user);
+      if (!isNaN(user.id)) {
+        usersById.set(String(parseInt(user.id)), user);
+      }
+    }
+
+    // Batch fetch all shops for all vendor users (faster than N x findByUserId)
+    const userIds = allUsers.map(u => u.id);
+    const allVendorShops = await Shop.findByUserIds(userIds);
+
     // Debug: Count shops with/without location
     let shopsWithLocation = 0;
     let shopsWithoutLocation = 0;
@@ -94,70 +107,62 @@ async function findNearbyShopsForRequest(lat, lng, radius, buyerId = null) {
 
     // Find shops within radius
     const nearbyShops = [];
-    
-    for (const user of allUsers) {
-      try {
-        const isSRUser = user.user_type === 'SR';
-        const shops = isSRUser 
-          ? await Shop.findAllByUserId(user.id) 
-          : [await Shop.findByUserId(user.id)].filter(s => s !== null);
-        
-        for (const shop of shops) {
-          totalShopsChecked++;
-          if (shop && shop.lat_log && shop.del_status !== 2) {
-            shopsWithLocation++;
-            const [shopLat, shopLng] = shop.lat_log.split(',').map(Number);
-            if (!isNaN(shopLat) && !isNaN(shopLng)) {
-              const distance = calculateDistance(lat, lng, shopLat, shopLng);
-              
-              // Show all shops for debugging, but mark distance
-              const withinRadius = distance <= radius;
-              
-              if (true) { // Show all shops for debugging
-                // Check if this is buyer's shop
-                const shopIdStr = String(shop.id || '');
-                const shopIdNum = Number(shop.id);
-                const isBuyerShop = buyerShopIds.has(shopIdStr) || buyerShopIds.has(shopIdNum) || 
-                                   buyerUserIds.has(String(user.id)) || buyerUserIds.has(Number(user.id));
-                
-                // Determine if shop should be notified based on type
-                let shouldNotify = false;
-                let shopCategory = '';
-                
-                if (user.user_type === 'S' || (user.user_type === 'SR' && shop.shop_type === 1)) {
-                  shouldNotify = true;
-                  shopCategory = 'B2B';
-                } else if (user.user_type === 'R' || (user.user_type === 'SR' && (shop.shop_type === 2 || shop.shop_type === 3))) {
-                  shouldNotify = true;
-                  shopCategory = 'B2C';
-                }
-                
-                if (shouldNotify && !isBuyerShop) {
-                  nearbyShops.push({
-                    user_id: user.id,
-                    user_name: user.name || user.company_name || `User_${user.id}`,
-                    user_type: user.user_type,
-                    mob_num: user.mob_num || 'N/A',
-                    fcm_token: user.fcm_token ? 'Yes' : 'No',
-                    shop_id: shop.id,
-                    shop_name: shop.shopname || shop.name || 'N/A',
-                    shop_type: shop.shop_type || 'N/A',
-                    shop_category: shopCategory,
-                    distance: distance,
-                    within_radius: withinRadius,
-                    location: shop.lat_log
-                  });
-                }
-              }
-            } else {
-              shopsWithoutLocation++;
-            }
-          } else {
-            shopsWithoutLocation++;
-          }
-        }
-      } catch (err) {
-        // Silently continue
+
+    for (const shop of allVendorShops) {
+      totalShopsChecked++;
+      if (!shop || shop.del_status === 2 || !shop.lat_log) {
+        shopsWithoutLocation++;
+        continue;
+      }
+
+      const user = usersById.get(String(shop.user_id));
+      if (!user) {
+        continue;
+      }
+
+      shopsWithLocation++;
+      const [shopLat, shopLng] = shop.lat_log.split(',').map(Number);
+      if (isNaN(shopLat) || isNaN(shopLng)) {
+        shopsWithoutLocation++;
+        continue;
+      }
+
+      const distance = calculateDistance(lat, lng, shopLat, shopLng);
+      const withinRadius = distance <= radius;
+
+      // Check if this is buyer's shop
+      const shopIdStr = String(shop.id || '');
+      const shopIdNum = Number(shop.id);
+      const isBuyerShop = buyerShopIds.has(shopIdStr) || buyerShopIds.has(shopIdNum) ||
+                         buyerUserIds.has(String(user.id)) || buyerUserIds.has(Number(user.id));
+
+      // Determine if shop should be notified based on type
+      let shouldNotify = false;
+      let shopCategory = '';
+
+      if (user.user_type === 'S' || (user.user_type === 'SR' && shop.shop_type === 1)) {
+        shouldNotify = true;
+        shopCategory = 'B2B';
+      } else if (user.user_type === 'R' || (user.user_type === 'SR' && (shop.shop_type === 2 || shop.shop_type === 3))) {
+        shouldNotify = true;
+        shopCategory = 'B2C';
+      }
+
+      if (shouldNotify && !isBuyerShop) {
+        nearbyShops.push({
+          user_id: user.id,
+          user_name: user.name || user.company_name || `User_${user.id}`,
+          user_type: user.user_type,
+          mob_num: user.mob_num || 'N/A',
+          fcm_token: user.fcm_token ? 'Yes' : 'No',
+          shop_id: shop.id,
+          shop_name: shop.shopname || shop.name || 'N/A',
+          shop_type: shop.shop_type || 'N/A',
+          shop_category: shopCategory,
+          distance: distance,
+          within_radius: withinRadius,
+          location: shop.lat_log
+        });
       }
     }
 
@@ -293,4 +298,3 @@ main().catch(error => {
   console.error('❌ Error:', error);
   process.exit(1);
 });
-

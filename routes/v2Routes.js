@@ -18,6 +18,7 @@ const V2FoodWasteController = require('../controllers/v2FoodWasteController');
 const V2InstamojoOrderController = require('../controllers/v2InstamojoOrderController');
 const V2BulkMessageController = require('../controllers/v2BulkMessageController');
 const V2LivePriceController = require('../controllers/v2LivePriceController');
+const V2MediaController = require('../controllers/v2MediaController');
 const SubcategoryController = require('../controllers/subcategoryController');
 const UtilityController = require('../controllers/utilityController');
 const SitePanelController = require('../controllers/sitePanelController');
@@ -211,6 +212,13 @@ router.post('/auth/login', V2AuthController.login);
  */
 router.post('/auth/verify-otp', V2AuthController.verifyOtp);
 
+// ==================== MEDIA ROUTES ====================
+/**
+ * POST /api/v2/media/presign-upload
+ * Generate presigned S3 upload URL for direct client uploads
+ */
+router.post('/media/presign-upload', V2MediaController.getPresignedUploadUrl);
+
 // ==================== SHOP TYPE ROUTES ====================
 /**
  * GET /api/v2/shop-types
@@ -325,9 +333,9 @@ router.post('/b2b-signup/:userId', V2B2BSignupController.submitSignup);
 
 // ==================== SUBSCRIPTION PACKAGES ROUTES ====================
 /**
- * GET /api/v2/subscription-packages?userType=b2b|b2c
+ * GET /api/v2/subscription-packages?userType=b2b|b2c|marketplace
  * Get subscription packages for a specific user type
- * Query params: userType (required) - 'b2b' or 'b2c'
+ * Query params: userType (required) - 'b2b', 'b2c', or 'marketplace'
  */
 router.get('/subscription-packages', V2SubscriptionPackageController.getSubscriptionPackages);
 
@@ -781,6 +789,7 @@ router.delete('/location/:userId', LocationController.clearLocation);
  *   customer_id: number,
  *   address: string,
  *   addres_type: 'Work' | 'Home' | 'Other',
+ *   district?: string,
  *   building_no?: string,
  *   landmark?: string,
  *   lat_log?: string (format: "latitude,longitude"),
@@ -816,11 +825,31 @@ router.post('/addresses', (req, res, next) => {
 router.get('/addresses/customer/:customerId', V2AddressController.getCustomerAddresses);
 
 /**
+ * GET /api/v2/addresses/geo/resolve
+ * Resolve district/state/pincode/zone using the same zone mapping flow.
+ * Query: latitude, longitude, address (optional)
+ */
+router.get('/addresses/geo/resolve', V2AddressController.resolveGeo);
+
+/**
+ * GET /api/v2/addresses/marketplace/customer/:customerId
+ * Get latest marketplace address for a customer
+ */
+router.get('/addresses/marketplace/customer/:customerId', V2AddressController.getMarketplaceAddress);
+
+/**
+ * POST /api/v2/addresses/marketplace/upsert
+ * Upsert marketplace address and mark marketplace role as M
+ */
+router.post('/addresses/marketplace/upsert', V2AddressController.upsertMarketplaceAddress);
+
+/**
  * PUT /api/v2/addresses/:addressId
  * Update an address
  * Body: {
  *   address?: string,
  *   addres_type?: 'Work' | 'Home' | 'Other',
+ *   district?: string,
  *   building_no?: string,
  *   landmark?: string,
  *   lat_log?: string
@@ -1079,15 +1108,18 @@ router.get('/bulk-scrap/pending-orders', V2BulkScrapController.getPendingBulkBuy
  */
 const bulkSellDocumentUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /pdf|jpeg|jpg|png|gif|webp/;
+    const allowedTypes = /pdf|jpeg|jpg|png|gif|webp|mp4|mov|m4v|webm|mkv/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = file.mimetype === 'application/pdf' || file.mimetype.startsWith('image/');
+    const mimetype =
+      file.mimetype === 'application/pdf' ||
+      file.mimetype.startsWith('image/') ||
+      file.mimetype.startsWith('video/');
     if (mimetype && extname) {
       return cb(null, true);
     } else {
-      cb(new Error('Only PDF and image files are allowed!'));
+      cb(new Error('Only PDF, image, and video files are allowed!'));
     }
   }
 });
@@ -1098,12 +1130,13 @@ router.post('/bulk-sell/create', handleMulterErrors(bulkSellDocumentUpload.field
   { name: 'document3', maxCount: 1 },
   { name: 'document4', maxCount: 1 },
   { name: 'document5', maxCount: 1 },
-  { name: 'document6', maxCount: 1 }
+  { name: 'document6', maxCount: 1 },
+  { name: 'document7', maxCount: 1 }
 ])), V2BulkSellController.createBulkSellRequest);
 
 /**
  * GET /api/v2/bulk-sell/requests
- * Get bulk sell requests available for the user (only 'S' type users)
+ * Get bulk sell requests available for the user ('S' and 'R' type users)
  */
 router.get('/bulk-sell/requests', V2BulkSellController.getBulkSellRequests);
 
@@ -1134,7 +1167,7 @@ const bulkSellAcceptanceImageUpload = multer({
 
 /**
  * POST /api/v2/bulk-sell/requests/:requestId/accept
- * Accept/buy from a bulk sell request (only 'S' type users)
+ * Accept/buy from a bulk sell request ('S' and 'R' type users)
  */
 router.post('/bulk-sell/requests/:requestId/accept', 
   handleMulterErrors(bulkSellAcceptanceImageUpload.fields([

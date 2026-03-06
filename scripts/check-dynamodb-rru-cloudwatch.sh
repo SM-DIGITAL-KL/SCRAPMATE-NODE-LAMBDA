@@ -13,7 +13,7 @@
 #   --hours N     Time window (default: 24). Use 1, 6, 24, 48, 72.
 #   --period N    CloudWatch period in seconds (default: 300 = 5 min). Max 1440 pts.
 #   --region R    AWS region (default: from AWS_REGION or aws configure).
-#   --profile P   AWS profile (default: default).
+#   --profile P   AWS profile (optional). If omitted, uses AWS env/default provider chain.
 #   --tables T    Comma-separated table names.
 #   --all-tables   Use all DynamoDB tables (default: high-RRU set). Excludes dev_*.
 #   --include-dev  With --all-tables, include dev_* tables (default: exclude).
@@ -31,7 +31,7 @@ set -e
 HOURS=24
 PERIOD=300
 REGION="${AWS_REGION:-}"
-PROFILE="${AWS_PROFILE:-default}"
+PROFILE="${AWS_PROFILE:-}"
 TABLES=""
 ALL_TABLES=0
 READS_ONLY=0
@@ -60,7 +60,9 @@ done
 if [[ -n "$REGION" ]]; then
   AWS_EXTRA+=(--region "$REGION")
 fi
-AWS_EXTRA+=(--profile "$PROFILE")
+if [[ -n "$PROFILE" ]]; then
+  AWS_EXTRA+=(--profile "$PROFILE")
+fi
 
 # 1440 data points max; keep (hours * 3600 / period) <= 1440
 MAX_HOURS=$(( 1440 * PERIOD / 3600 ))
@@ -81,7 +83,11 @@ echo "DynamoDB RCU/WCU (Tables + GSIs) — CloudWatch"
 echo "════════════════════════════════════════════════════════════"
 echo "  Window:  $START → $END  (last $HOURS h)"
 echo "  Period:  ${PERIOD}s"
-echo "  Profile: $PROFILE"
+if [[ -n "$PROFILE" ]]; then
+  echo "  Profile: $PROFILE"
+else
+  echo "  Profile: (not set; using env/default provider chain)"
+fi
 [[ -n "$REGION" ]] && echo "  Region:  $REGION"
 echo "════════════════════════════════════════════════════════════"
 
