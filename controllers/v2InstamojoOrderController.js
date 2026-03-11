@@ -7,6 +7,46 @@
 const https = require('https');
 const { URLSearchParams } = require('url');
 
+function normalizeErrorMessage(input, fallback = 'Request failed') {
+  if (input === null || input === undefined) return fallback;
+  if (typeof input === 'string') {
+    const trimmed = input.trim();
+    return trimmed || fallback;
+  }
+  if (typeof input === 'number' || typeof input === 'boolean') {
+    return String(input);
+  }
+  if (input instanceof Error) {
+    return normalizeErrorMessage(input.message, fallback);
+  }
+  if (Array.isArray(input)) {
+    const combined = input
+      .map((item) => normalizeErrorMessage(item, ''))
+      .filter(Boolean)
+      .join(', ');
+    return combined || fallback;
+  }
+  if (typeof input === 'object') {
+    const preferredKeys = ['msg', 'message', 'error', 'description', 'detail', 'details', 'reason', 'non_field_errors'];
+    for (const key of preferredKeys) {
+      if (Object.prototype.hasOwnProperty.call(input, key)) {
+        const value = normalizeErrorMessage(input[key], '');
+        if (value) return value;
+      }
+    }
+    const values = Object.values(input)
+      .map((value) => normalizeErrorMessage(value, ''))
+      .filter(Boolean);
+    if (values.length > 0) return values.join(', ');
+    try {
+      return JSON.stringify(input);
+    } catch (_) {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
 /**
  * Create Instamojo payment request (for WebView)
  * POST /api/v2/instamojo/create-payment-request
@@ -183,7 +223,11 @@ exports.createPaymentRequest = async (req, res) => {
             } else {
               // Log full response for debugging
               console.error('❌ Instamojo API error response:', JSON.stringify(response, null, 2));
-              reject(new Error(response.message || response.error || `HTTP ${res.statusCode}: Failed to create payment request`));
+              const readableError = normalizeErrorMessage(
+                response.message || response.error || response,
+                `HTTP ${res.statusCode}: Failed to create payment request`
+              );
+              reject(new Error(readableError));
             }
           } catch (error) {
             console.error('❌ Failed to parse Instamojo response:', error);
@@ -240,7 +284,7 @@ exports.createPaymentRequest = async (req, res) => {
     console.error('❌ Error creating Instamojo payment order:', error);
     res.status(500).json({
       status: 'error',
-      msg: error.message || 'Failed to create payment order',
+      msg: normalizeErrorMessage(error, 'Failed to create payment order'),
       data: null,
     });
   }
@@ -319,7 +363,11 @@ exports.getPaymentRequestDetails = async (req, res) => {
             if (res.statusCode === 200 && response.payment_request) {
               resolve(response);
             } else {
-              reject(new Error(response.message || response.error || `HTTP ${res.statusCode}: Failed to get payment details`));
+              const readableError = normalizeErrorMessage(
+                response.message || response.error || response,
+                `HTTP ${res.statusCode}: Failed to get payment details`
+              );
+              reject(new Error(readableError));
             }
           } catch (error) {
             console.error('❌ Failed to parse Instamojo payment details response:', error);
@@ -355,7 +403,7 @@ exports.getPaymentRequestDetails = async (req, res) => {
     console.error('❌ Error fetching Instamojo payment details:', error);
     res.status(500).json({
       status: 'error',
-      msg: error.message || 'Failed to fetch payment details',
+      msg: normalizeErrorMessage(error, 'Failed to fetch payment details'),
       data: null,
     });
   }
@@ -432,4 +480,3 @@ exports.handlePaymentRedirect = async (req, res) => {
     res.status(500).send('Error processing payment redirect');
   }
 };
-

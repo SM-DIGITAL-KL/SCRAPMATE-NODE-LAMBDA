@@ -301,7 +301,9 @@ exports.getSubscriptionPackages = async (req, res) => {
     const { userType, language = 'en' } = req.query;
     const normalizedUserType = String(userType || '').trim().toLowerCase();
     const resolvedUserType =
-      normalizedUserType === 'm' ? 'marketplace' : normalizedUserType;
+      ['m', 'marketplace', 'market_place', 'market place'].includes(normalizedUserType)
+        ? 'marketplace'
+        : normalizedUserType;
     
     if (!resolvedUserType || !['b2b', 'b2c', 'marketplace'].includes(resolvedUserType)) {
       return res.status(400).json({
@@ -315,16 +317,19 @@ exports.getSubscriptionPackages = async (req, res) => {
     // Normalize language code (e.g., 'en-US' -> 'en')
     const langCode = language.split('-')[0].toLowerCase();
     
+    // Marketplace packages are edited frequently and stale cache caused empty-plan issues.
+    // Skip Redis for marketplace so changes reflect immediately.
+    const shouldUseCache = resolvedUserType !== 'marketplace';
     const cacheKey = RedisCache.listKey(`subscription_packages_${resolvedUserType}_${langCode}`, { zone: requestZone || 'all' });
-    
-    // Try to get from cache
-    const cached = await RedisCache.get(cacheKey);
-    if (cached !== null && cached !== undefined) {
-      return res.json({
-        status: 'success',
-        data: cached,
-        hitBy: 'Redis'
-      });
+    if (shouldUseCache) {
+      const cached = await RedisCache.get(cacheKey);
+      if (cached !== null && cached !== undefined) {
+        return res.json({
+          status: 'success',
+          data: cached,
+          hitBy: 'Redis'
+        });
+      }
     }
 
     // Fetch all packages from database
@@ -343,17 +348,39 @@ exports.getSubscriptionPackages = async (req, res) => {
     
     // Filter packages by userType and isActive
     const filteredPackages = allPackages.filter(pkg => {
-      // Only show active packages
-      if (pkg.isActive === false) {
-        return false;
+      const normalizedId = String(pkg.id || '').toLowerCase();
+      const normalizedName = String(pkg.name || '').toLowerCase();
+      const normalizedDisplayName = String(pkg.displayname || '').toLowerCase();
+      const isMarketplacePackageByText =
+        normalizedId.includes('marketplace') ||
+        normalizedId.includes('market_place') ||
+        normalizedName.includes('marketplace') ||
+        normalizedName.includes('market place') ||
+        normalizedDisplayName.includes('marketplace') ||
+        normalizedDisplayName.includes('market place');
+
+      // Only show active packages (support booleans, numbers, and common string states).
+      if (pkg.isActive !== undefined && pkg.isActive !== null) {
+        const activeValue = String(pkg.isActive).trim().toLowerCase();
+        if (
+          pkg.isActive === false ||
+          pkg.isActive === 0 ||
+          activeValue === 'false' ||
+          activeValue === '0' ||
+          activeValue === 'inactive' ||
+          activeValue === 'disabled'
+        ) {
+          return false;
+        }
       }
       
       // Check if package has userType field
       if (pkg.userType) {
         const pkgUserType = String(pkg.userType).trim().toLowerCase();
         if (resolvedUserType === 'marketplace') {
-          return pkgUserType === 'm' || pkgUserType === 'marketplace';
+          return pkgUserType === 'm' || pkgUserType === 'marketplace' || isMarketplacePackageByText;
         }
+        if (isMarketplacePackageByText) return false;
         return pkgUserType === resolvedUserType;
       }
       
@@ -365,8 +392,7 @@ exports.getSubscriptionPackages = async (req, res) => {
       } else if (resolvedUserType === 'b2c') {
         return pkg.id.includes('b2c') || (!pkg.id.includes('b2b') && (pkg.id === 'monthly' || pkg.id === 'yearly'));
       } else if (resolvedUserType === 'marketplace') {
-        const normalizedId = String(pkg.id || '').toLowerCase();
-        return normalizedId.includes('marketplace') || normalizedId.includes('market_place');
+        return isMarketplacePackageByText;
       }
       return false;
     });
@@ -459,8 +485,10 @@ exports.getSubscriptionPackages = async (req, res) => {
       return priceA - priceB;
     });
 
-    // Cache for 1 hour
-    await RedisCache.set(cacheKey, sortedPackages, 3600);
+    if (shouldUseCache) {
+      // Cache for 1 hour
+      await RedisCache.set(cacheKey, sortedPackages, 3600);
+    }
 
     res.json({
       status: 'success',
@@ -551,18 +579,37 @@ exports.saveUserSubscription = async (req, res) => {
     const toDate = new Date(fromDate);
     
     // Calculate duration based on package duration type
-    if (packageData.duration === 'month') {
+    const durationRaw = String(packageData.duration || '').trim().toLowerCase();
+    if (durationRaw === 'month') {
       toDate.setMonth(toDate.getMonth() + 1);
-    } else if (packageData.duration === 'year') {
+    } else if (durationRaw === 'year') {
       toDate.setFullYear(toDate.getFullYear() + 1);
-    } else if (packageData.duration === 'order') {
+    } else if (durationRaw === 'order') {
       // Per-order subscriptions don't have an end date
       // They are valid until explicitly cancelled
       toDate.setFullYear(toDate.getFullYear() + 100); // Set far future date
     } else {
-      // Legacy support: if duration is a number, treat as days
-      const durationDays = parseInt(packageData.duration) || 30;
-      toDate.setDate(toDate.getDate() + durationDays);
+      // Support custom durations like "6 months", "2 years", "45 days"
+      const durationMatch = durationRaw.match(/^(\d+)\s*([a-z]+)?$/);
+      if (durationMatch) {
+        const durationValue = parseInt(durationMatch[1], 10);
+        const durationUnit = durationMatch[2] || 'days';
+        if (durationValue > 0) {
+          if (durationUnit.startsWith('month') || durationUnit === 'mon' || durationUnit === 'm') {
+            toDate.setMonth(toDate.getMonth() + durationValue);
+          } else if (durationUnit.startsWith('year') || durationUnit === 'yr' || durationUnit === 'y') {
+            toDate.setFullYear(toDate.getFullYear() + durationValue);
+          } else {
+            // Default to days for numeric/unknown units
+            toDate.setDate(toDate.getDate() + durationValue);
+          }
+        } else {
+          toDate.setDate(toDate.getDate() + 30);
+        }
+      } else {
+        // Legacy fallback: if duration is not parseable, default to 30 days
+        toDate.setDate(toDate.getDate() + 30);
+      }
     }
     
     const toDateStr = toDate.toISOString().split('T')[0];

@@ -1,5 +1,7 @@
 const CategoryImgKeywords = require('../models/CategoryImgKeywords');
 const { uploadFileToS3 } = require('../utils/fileUpload');
+const { resolveRequestZone, normalizeZoneCode } = require('../utils/zoneRequestScope');
+const { getItemZone } = require('../utils/zoneCategoryScope');
 
 class CategoryController {
   // Update category
@@ -178,9 +180,40 @@ class CategoryController {
       }
 
       console.log(`   Validated category ID: ${categoryIdNum} (number)`);
+      const requestZone = await resolveRequestZone(req, { allowQueryZone: true });
+      const existingCategory = await CategoryImgKeywords.findById(categoryIdNum);
+      if (!existingCategory) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Category not found',
+          data: null
+        });
+      }
+
+      const existingZone = normalizeZoneCode(getItemZone(existingCategory));
+      if (requestZone && existingZone && existingZone !== requestZone) {
+        return res.status(403).json({
+          status: 'error',
+          msg: 'This category belongs to another zone',
+          data: null
+        });
+      }
+
+      let finalUpdateData = updateData;
+      if (requestZone && !existingZone) {
+        const zoneOverrides = { ...(existingCategory.zone_overrides || {}) };
+        zoneOverrides[requestZone] = {
+          ...(zoneOverrides[requestZone] || {}),
+          ...updateData,
+          deleted: false,
+          updated_at: new Date().toISOString(),
+          updated_by: req.headers['x-user-email'] || req.user?.email || ''
+        };
+        finalUpdateData = { zone_overrides: zoneOverrides };
+      }
 
       const dbUpdateStartTime = Date.now();
-      const result = await CategoryImgKeywords.update(categoryIdNum, updateData);
+      const result = await CategoryImgKeywords.update(categoryIdNum, finalUpdateData);
       const dbUpdateDuration = Date.now() - dbUpdateStartTime;
 
       console.log(`\n📊 [DATABASE UPDATE RESULT]`);
@@ -414,6 +447,7 @@ class CategoryController {
   // Create new category
   static async createCategory(req, res) {
     try {
+      const requestZone = await resolveRequestZone(req, { allowQueryZone: true });
       console.log(`\n${'='.repeat(80)}`);
       console.log(`➕ [CATEGORY CREATE] Starting create process`);
       console.log(`${'='.repeat(80)}`);
@@ -471,6 +505,10 @@ class CategoryController {
         category_img: uploadedS3Url || category_img || '',
         cat_img: uploadedS3Url || category_img || '' // Also set cat_img for compatibility
       };
+      if (requestZone) {
+        categoryData.zone_scope = requestZone;
+        categoryData.zone_code = requestZone;
+      }
 
       console.log(`\n💾 [DATABASE] Creating category...`);
       const createdCategory = await CategoryImgKeywords.create(categoryData);
@@ -485,6 +523,7 @@ class CategoryController {
         const RedisCache = require('../utils/redisCache');
         await RedisCache.invalidateTableCache('category_img_keywords');
         await RedisCache.delete(RedisCache.listKey('category_img_list'));
+        await RedisCache.delete(RedisCache.listKey('category_img_list', { version: 's3' }));
         console.log(`🗑️  Invalidated category caches after create`);
       } catch (cacheError) {
         console.error(`⚠️  Cache invalidation error:`, cacheError);
@@ -513,6 +552,7 @@ class CategoryController {
   static async deleteCategory(req, res) {
     try {
       const { id } = req.params;
+      const requestZone = await resolveRequestZone(req, { allowQueryZone: true });
 
       if (!id) {
         return res.status(400).json({
@@ -539,6 +579,31 @@ class CategoryController {
         return res.json({
           status: 'success',
           msg: 'Category is already deleted',
+          data: null
+        });
+      }
+
+      const existingZone = normalizeZoneCode(getItemZone(category));
+      if (requestZone && existingZone && existingZone !== requestZone) {
+        return res.status(403).json({
+          status: 'error',
+          msg: 'This category belongs to another zone',
+          data: null
+        });
+      }
+
+      if (requestZone && !existingZone) {
+        const zoneOverrides = { ...(category.zone_overrides || {}) };
+        zoneOverrides[requestZone] = {
+          ...(zoneOverrides[requestZone] || {}),
+          deleted: true,
+          updated_at: new Date().toISOString(),
+          updated_by: req.headers['x-user-email'] || req.user?.email || ''
+        };
+        await CategoryImgKeywords.update(parseInt(id), { zone_overrides: zoneOverrides });
+        return res.json({
+          status: 'success',
+          msg: 'Category hidden for selected zone successfully',
           data: null
         });
       }

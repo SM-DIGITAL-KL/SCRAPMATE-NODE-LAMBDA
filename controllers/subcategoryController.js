@@ -1,13 +1,17 @@
 const Subcategory = require('../models/Subcategory');
 const CategoryImgKeywords = require('../models/CategoryImgKeywords');
 const RedisCache = require('../utils/redisCache');
+const { resolveRequestZone, normalizeZoneCode } = require('../utils/zoneRequestScope');
+const { filterCategoriesForZone, filterSubcategoriesForZone, getItemZone } = require('../utils/zoneCategoryScope');
 
 class SubcategoryController {
   // Get all subcategories
   static async getAllSubcategories(req, res) {
     try {
-      const subcategories = await Subcategory.getAll();
-      const mainCategories = await CategoryImgKeywords.getAll();
+      const requestZone = await resolveRequestZone(req, { allowQueryZone: true });
+      const mainCategories = filterCategoriesForZone(await CategoryImgKeywords.getAll(), requestZone);
+      const allowedCategoryIds = new Set(mainCategories.map(cat => cat.id));
+      const subcategories = filterSubcategoriesForZone(await Subcategory.getAll(), requestZone, allowedCategoryIds);
 
       // Create a map of main category ID to name
       const mainCategoryMap = {};
@@ -51,6 +55,7 @@ class SubcategoryController {
   static async getSubcategoriesByMainCategory(req, res) {
     try {
       const { mainCategoryId } = req.params;
+      const requestZone = await resolveRequestZone(req, { allowQueryZone: true });
 
       if (!mainCategoryId) {
         return res.status(400).json({
@@ -60,8 +65,25 @@ class SubcategoryController {
         });
       }
 
-      const subcategories = await Subcategory.findByMainCategoryId(mainCategoryId);
-      const mainCategory = await CategoryImgKeywords.findById(parseInt(mainCategoryId));
+      const rawMainCategory = await CategoryImgKeywords.findById(parseInt(mainCategoryId));
+      const filteredMainCategories = filterCategoriesForZone([rawMainCategory].filter(Boolean), requestZone);
+      const mainCategory = filteredMainCategories.length > 0 ? filteredMainCategories[0] : null;
+      if (!mainCategory) {
+        return res.json({
+          status: 'success',
+          msg: 'Subcategories list',
+          data: {
+            main_category: null,
+            subcategories: []
+          }
+        });
+      }
+
+      const subcategories = filterSubcategoriesForZone(
+        await Subcategory.findByMainCategoryId(mainCategoryId),
+        requestZone,
+        new Set([mainCategory.id])
+      );
 
       return res.json({
         status: 'success',
@@ -96,8 +118,10 @@ class SubcategoryController {
   // Get subcategories grouped by main category
   static async getSubcategoriesGrouped(req, res) {
     try {
-      const subcategories = await Subcategory.getAll();
-      const mainCategories = await CategoryImgKeywords.getAll();
+      const requestZone = await resolveRequestZone(req, { allowQueryZone: true });
+      const mainCategories = filterCategoriesForZone(await CategoryImgKeywords.getAll(), requestZone);
+      const allowedCategoryIds = new Set(mainCategories.map(cat => cat.id));
+      const subcategories = filterSubcategoriesForZone(await Subcategory.getAll(), requestZone, allowedCategoryIds);
 
       // Create a map of main category ID to name
       const mainCategoryMap = {};
@@ -164,6 +188,7 @@ class SubcategoryController {
   static async createSubcategory(req, res) {
     try {
       const { main_category_id, subcategory_name, default_price, price_unit, subcategory_img } = req.body;
+      const requestZone = await resolveRequestZone(req, { allowQueryZone: true });
 
       if (!main_category_id || !subcategory_name) {
         return res.status(400).json({
@@ -179,6 +204,10 @@ class SubcategoryController {
         default_price: default_price || '0',
         price_unit: price_unit || 'kg'
       };
+      if (requestZone) {
+        subcategoryData.zone_scope = requestZone;
+        subcategoryData.zone_code = requestZone;
+      }
 
       // Handle file upload if provided
       if (req.file) {
@@ -240,6 +269,7 @@ class SubcategoryController {
     try {
       const { id } = req.params;
       const { subcategory_name, default_price, price_unit, subcategory_img } = req.body;
+      const requestZone = await resolveRequestZone(req, { allowQueryZone: true });
 
       if (!id) {
         return res.status(400).json({
@@ -289,7 +319,38 @@ class SubcategoryController {
         });
       }
 
-      const result = await Subcategory.update(parseInt(id), updateData);
+      const existingSubcategory = await Subcategory.findById(parseInt(id));
+      if (!existingSubcategory) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Subcategory not found',
+          data: null
+        });
+      }
+
+      const existingZone = normalizeZoneCode(getItemZone(existingSubcategory));
+      if (requestZone && existingZone && existingZone !== requestZone) {
+        return res.status(403).json({
+          status: 'error',
+          msg: 'This subcategory belongs to another zone',
+          data: null
+        });
+      }
+
+      let result;
+      if (requestZone && !existingZone) {
+        const zoneOverrides = { ...(existingSubcategory.zone_overrides || {}) };
+        zoneOverrides[requestZone] = {
+          ...(zoneOverrides[requestZone] || {}),
+          ...updateData,
+          deleted: false,
+          updated_at: new Date().toISOString(),
+          updated_by: req.headers['x-user-email'] || req.user?.email || ''
+        };
+        result = await Subcategory.update(parseInt(id), { zone_overrides: zoneOverrides });
+      } else {
+        result = await Subcategory.update(parseInt(id), updateData);
+      }
 
       if (result.affectedRows === 0) {
         return res.status(404).json({
@@ -348,6 +409,7 @@ class SubcategoryController {
   static async deleteSubcategory(req, res) {
     try {
       const { id } = req.params;
+      const requestZone = await resolveRequestZone(req, { allowQueryZone: true });
 
       if (!id) {
         return res.status(400).json({
@@ -377,7 +439,28 @@ class SubcategoryController {
       }
 
       const categoryId = subcategory.main_category_id;
-      const result = await Subcategory.delete(parseInt(id));
+      const existingZone = normalizeZoneCode(getItemZone(subcategory));
+      if (requestZone && existingZone && existingZone !== requestZone) {
+        return res.status(403).json({
+          status: 'error',
+          msg: 'This subcategory belongs to another zone',
+          data: null
+        });
+      }
+
+      let result;
+      if (requestZone && !existingZone) {
+        const zoneOverrides = { ...(subcategory.zone_overrides || {}) };
+        zoneOverrides[requestZone] = {
+          ...(zoneOverrides[requestZone] || {}),
+          deleted: true,
+          updated_at: new Date().toISOString(),
+          updated_by: req.headers['x-user-email'] || req.user?.email || ''
+        };
+        result = await Subcategory.update(parseInt(id), { zone_overrides: zoneOverrides });
+      } else {
+        result = await Subcategory.delete(parseInt(id));
+      }
 
       if (result.affectedRows === 0) {
         return res.status(404).json({

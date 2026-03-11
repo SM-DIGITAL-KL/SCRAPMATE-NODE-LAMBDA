@@ -9,6 +9,7 @@ const { getDynamoDBClient } = require('../config/dynamodb');
 const { GetCommand, ScanCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 const Shop = require('../models/Shop');
 const User = require('../models/User');
+const RedisCache = require('../utils/redisCache');
 const { sendVendorNotification } = require('../utils/fcmNotification');
 
 const ORDER_ID = process.argv[2];
@@ -336,6 +337,22 @@ async function notifyVendorsForOrder() {
 
         await client.send(updateCommand);
         console.log('✅ Successfully saved notified vendor IDs to order record');
+        
+        // Clear cached order payload so admin/customer order details reflect latest notified vendors.
+        try {
+          await RedisCache.delete(RedisCache.orderKey(orderId));
+          if (order.customer_id) {
+            const customerIdNum = typeof order.customer_id === 'string' && !isNaN(order.customer_id)
+              ? parseInt(order.customer_id, 10)
+              : order.customer_id;
+            await RedisCache.delete(RedisCache.listKey('customer_recent_orders', { customer_id: customerIdNum }));
+            await RedisCache.delete(RedisCache.listKey('customer_orders', { customer_id: customerIdNum }));
+          }
+          console.log('🧹 Cleared Redis cache for order/customer order views');
+        } catch (cacheErr) {
+          console.warn('⚠️  Failed to clear Redis cache:', cacheErr.message);
+        }
+
         console.log('');
       } catch (updateError) {
         console.error('❌ Error updating order with notified vendor IDs:', updateError.message);
@@ -354,4 +371,3 @@ async function notifyVendorsForOrder() {
 
 // Run the script
 notifyVendorsForOrder().catch(console.error);
-

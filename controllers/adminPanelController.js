@@ -1385,28 +1385,116 @@ class AdminPanelController {
 
   static async sendCustNotification(req, res) {
     try {
-      const { cust_ids, message, title } = req.body;
+      const { cust_ids, message, title, zone_code } = req.body;
       console.log('🟢 AdminPanelController.sendCustNotification called');
       console.log('   Request data:', {
         cust_ids: cust_ids || 'none',
         hasMessage: !!message,
-        hasTitle: !!title
+        hasTitle: !!title,
+        zone_code: zone_code || 'none'
       });
 
-      if (!cust_ids || !message || !title) {
+      if (!message || !title) {
         console.error('❌ sendCustNotification: Missing required fields');
         return res.json({
           status: 'error',
-          msg: 'Customer IDs, message, and title are required',
+          msg: 'Message and title are required',
           data: null
         });
       }
 
-      // TODO: Implement actual notification sending logic
-      // This would involve:
-      // 1. Fetching FCM tokens for the cust_ids
-      // 2. Sending notifications via Firebase
-      // 3. Saving notification records to database
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+
+      const zoneEmailMatch = email.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+      const enforcedZone = zoneEmailMatch ? `Z${String(parseInt(zoneEmailMatch[1], 10)).padStart(2, '0')}` : '';
+      const requestedZone = String(zone_code || '').trim().toUpperCase();
+      const zoneFilter = enforcedZone || requestedZone;
+      if (!zoneFilter) {
+        return res.json({
+          status: 'error',
+          msg: 'Zone is required',
+          data: null
+        });
+      }
+
+      const parseCustomerIds = (input) => {
+        if (!input) return [];
+        const raw = Array.isArray(input) ? input : String(input).split(',');
+        return [...new Set(raw
+          .map((id) => (typeof id === 'string' ? id.trim() : id))
+          .map((id) => (typeof id === 'string' && !isNaN(id) ? parseInt(id, 10) : id))
+          .filter((id) => id !== null && id !== undefined && !Number.isNaN(id))
+        )];
+      };
+
+      let targetCustomerIds = parseCustomerIds(cust_ids);
+      const Address = require('../models/Address');
+      const zoneCustomerIds = await Address.findCustomerIdsByZone(zoneFilter);
+      const zoneCustomerSet = new Set((zoneCustomerIds || [])
+        .map((id) => (typeof id === 'string' && !isNaN(id) ? parseInt(id, 10) : id))
+        .filter((id) => id !== null && id !== undefined && !Number.isNaN(id))
+      );
+
+      targetCustomerIds = targetCustomerIds.length > 0
+        ? targetCustomerIds.filter((id) => zoneCustomerSet.has(id))
+        : [...zoneCustomerSet];
+
+      if (targetCustomerIds.length === 0) {
+        return res.json({
+          status: 'error',
+          msg: 'No customer app users found in selected zone.',
+          data: null
+        });
+      }
+
+      const users = await User.findByIds(targetCustomerIds);
+      const targetUsers = (users || []).filter((u) => {
+        const typeOk = String(u.user_type || '').toUpperCase() === 'C';
+        const appOk = String(u.app_type || '').toLowerCase() === 'customer_app';
+        const tokenOk = !!u.fcm_token;
+        return typeOk && appOk && tokenOk;
+      });
+
+      if (targetUsers.length === 0) {
+        return res.json({
+          status: 'error',
+          msg: 'No customer app users with valid push token found in selected zone.',
+          data: null
+        });
+      }
+
+      const { sendCustomerNotification } = require('../utils/fcmNotification');
+      let successCount = 0;
+      let failureCount = 0;
+
+      for (const customer of targetUsers) {
+        try {
+          const pushResult = await sendCustomerNotification(
+            customer.fcm_token,
+            title,
+            message,
+            {
+              type: 'admin_customer_notification',
+              customer_id: customer.id,
+              zone: zoneFilter
+            }
+          );
+
+          if (pushResult && pushResult.success) {
+            successCount += 1;
+          } else {
+            failureCount += 1;
+          }
+        } catch (pushErr) {
+          failureCount += 1;
+          console.error(`❌ Push send failed for customer ${customer.id}:`, pushErr.message);
+        }
+      }
 
       // Invalidate customer notification cache after sending
       try {
@@ -1419,8 +1507,13 @@ class AdminPanelController {
       console.log('✅ sendCustNotification: Notification sent successfully');
       res.json({
         status: 'success',
-        msg: 'Notification sent successfully',
-        data: null
+        msg: `Notification sent. Success: ${successCount}, Failed: ${failureCount}`,
+        data: {
+          targeted_customers: targetUsers.length,
+          success_count: successCount,
+          failure_count: failureCount,
+          zone: zoneFilter
+        }
       });
     } catch (error) {
       console.error('❌ sendCustNotification error:', error);
@@ -1435,29 +1528,129 @@ class AdminPanelController {
 
   static async sendVendorNotification(req, res) {
     try {
-      const { vendor_ids, message, title, criteria } = req.body;
+      const { vendor_ids, message, title, criteria, zone_code } = req.body;
       console.log('🟢 AdminPanelController.sendVendorNotification called');
       console.log('   Request data:', {
         vendor_ids: vendor_ids ? (Array.isArray(vendor_ids) ? vendor_ids.length : 1) : 0,
         hasMessage: !!message,
         hasTitle: !!title,
-        criteria: criteria || 'none'
+        criteria: criteria || 'none',
+        zone_code: zone_code || 'none'
       });
 
-      if (!vendor_ids || !message || !title) {
+      if (!message || !title) {
         console.error('❌ sendVendorNotification: Missing required fields');
         return res.json({
           status: 'error',
-          msg: 'Vendor IDs, message, and title are required',
+          msg: 'Message and title are required',
           data: null
         });
       }
 
-      // TODO: Implement actual notification sending logic
-      // This would involve:
-      // 1. Fetching FCM tokens for the vendor_ids
-      // 2. Sending notifications via Firebase
-      // 3. Saving notification records to database
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+
+      const zoneEmailMatch = email.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+      const enforcedZone = zoneEmailMatch ? `Z${String(parseInt(zoneEmailMatch[1], 10)).padStart(2, '0')}` : '';
+      const requestedZone = String(zone_code || '').trim().toUpperCase();
+      const zoneFilter = enforcedZone || requestedZone;
+      if (!zoneFilter) {
+        return res.json({
+          status: 'error',
+          msg: 'Zone is required',
+          data: null
+        });
+      }
+
+      const parseVendorIds = (input) => {
+        if (!input) return [];
+        const raw = Array.isArray(input) ? input : String(input).split(',');
+        return [...new Set(raw
+          .map((id) => (typeof id === 'string' ? id.trim() : id))
+          .map((id) => (typeof id === 'string' && !isNaN(id) ? parseInt(id, 10) : id))
+          .filter((id) => id !== null && id !== undefined && !Number.isNaN(id))
+        )];
+      };
+
+      let targetVendorIds = parseVendorIds(vendor_ids);
+
+      if (zoneFilter) {
+        const Address = require('../models/Address');
+        const zoneVendorIds = await Address.findCustomerIdsByZone(zoneFilter);
+        const zoneVendorSet = new Set((zoneVendorIds || [])
+          .map((id) => (typeof id === 'string' && !isNaN(id) ? parseInt(id, 10) : id))
+          .filter((id) => id !== null && id !== undefined && !Number.isNaN(id))
+        );
+        targetVendorIds = targetVendorIds.length > 0
+          ? targetVendorIds.filter((id) => zoneVendorSet.has(id))
+          : [...zoneVendorSet];
+      }
+
+      if (targetVendorIds.length === 0 && criteria) {
+        const allWithToken = await User.findWithFcmTokenByUserType('S');
+        targetVendorIds = (allWithToken || []).map((u) => {
+          const id = u?.id;
+          return (typeof id === 'string' && !isNaN(id)) ? parseInt(id, 10) : id;
+        }).filter((id) => id !== null && id !== undefined && !Number.isNaN(id));
+      }
+
+      if (targetVendorIds.length === 0) {
+        return res.json({
+          status: 'error',
+          msg: 'No target vendors found. Select vendors or choose a zone.',
+          data: null
+        });
+      }
+
+      const users = await User.findByIds(targetVendorIds);
+      const targetUsers = (users || []).filter((u) => {
+        const userType = String(u.user_type || '').toUpperCase();
+        const typeOk = ['N', 'R', 'S', 'SR'].includes(userType);
+        const tokenOk = !!u.fcm_token;
+        const appOk = String(u.app_type || '').toLowerCase() === 'vendor_app';
+        return typeOk && tokenOk && appOk;
+      });
+
+      if (targetUsers.length === 0) {
+        return res.json({
+          status: 'error',
+          msg: 'No vendors with valid push token found for the selected target.',
+          data: null
+        });
+      }
+
+      const { sendVendorNotification: sendVendorPush } = require('../utils/fcmNotification');
+      let successCount = 0;
+      let failureCount = 0;
+
+      for (const vendor of targetUsers) {
+        try {
+          const pushResult = await sendVendorPush(
+            vendor.fcm_token,
+            title,
+            message,
+            {
+              type: 'admin_vendor_notification',
+              vendor_id: vendor.id,
+              criteria: criteria || '',
+              zone: zoneFilter || ''
+            }
+          );
+
+          if (pushResult && pushResult.success) {
+            successCount += 1;
+          } else {
+            failureCount += 1;
+          }
+        } catch (pushErr) {
+          failureCount += 1;
+          console.error(`❌ Push send failed for vendor ${vendor.id}:`, pushErr.message);
+        }
+      }
 
       // Invalidate vendor notification cache after sending
       try {
@@ -1470,8 +1663,13 @@ class AdminPanelController {
       console.log('✅ sendVendorNotification: Notification sent successfully');
       res.json({
         status: 'success',
-        msg: 'Notification sent successfully',
-        data: null
+        msg: `Notification sent. Success: ${successCount}, Failed: ${failureCount}`,
+        data: {
+          targeted_vendors: targetUsers.length,
+          success_count: successCount,
+          failure_count: failureCount,
+          zone: zoneFilter || null
+        }
       });
     } catch (error) {
       console.error('❌ sendVendorNotification error:', error);
@@ -5377,6 +5575,7 @@ class AdminPanelController {
       ).trim().toLowerCase();
       const zoneEmailMatch = email.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
       const enforcedZone = zoneEmailMatch ? `zone${parseInt(zoneEmailMatch[1], 10)}` : '';
+      let zoneUserSet = null;
       console.log(`🟢 AdminPanelController.getOrderDetailsWithNotifiedVendors called`, { orderId });
       
       const order = await Order.getById(orderId);
@@ -5391,11 +5590,15 @@ class AdminPanelController {
 
       if (enforcedZone) {
         const zoneCustomerIds = await Address.findCustomerIdsByZone(enforcedZone);
-        const zoneCustomerSet = new Set(zoneCustomerIds);
+        zoneUserSet = new Set(
+          (zoneCustomerIds || []).map(uid =>
+            typeof uid === 'string' && !isNaN(uid) ? parseInt(uid, 10) : uid
+          )
+        );
         const orderCustomerId = typeof order.customer_id === 'string' && !isNaN(order.customer_id)
           ? parseInt(order.customer_id, 10)
           : order.customer_id;
-        if (orderCustomerId === null || orderCustomerId === undefined || !zoneCustomerSet.has(orderCustomerId)) {
+        if (orderCustomerId === null || orderCustomerId === undefined || !zoneUserSet.has(orderCustomerId)) {
           return res.status(403).json({
             status: 'error',
             msg: `This order does not belong to ${Address.normalizeZone(enforcedZone)} scope`
@@ -5589,6 +5792,109 @@ class AdminPanelController {
           }
         }
       }
+
+      // Fetch monthly subscribed vendors (same logic as paid subscriptions).
+      const fetchMonthlySubscribedVendors = async () => {
+        try {
+          const Invoice = require('../models/Invoice');
+          const allInvoices = await Invoice.getAll();
+          const paidInvoices = allInvoices.filter(inv => inv.type === 'Paid' || inv.type === 'paid');
+
+          // Include paid subscriptions even if expired; exclude only rejected and missing user_id.
+          const paidNonRejectedInvoices = paidInvoices.filter((invoice) => {
+            if (!invoice.user_id) return false;
+            const approvalStatus = String(invoice.approval_status || 'pending').toLowerCase();
+            return approvalStatus !== 'rejected';
+          });
+
+          // Keep latest paid invoice per user.
+          const latestInvoiceByUser = new Map();
+          for (const invoice of paidNonRejectedInvoices) {
+            const key = String(invoice.user_id);
+            const current = latestInvoiceByUser.get(key);
+            if (!current) {
+              latestInvoiceByUser.set(key, invoice);
+              continue;
+            }
+
+            const currentTo = new Date(current.to_date || 0).getTime();
+            const incomingTo = new Date(invoice.to_date || 0).getTime();
+            if (incomingTo > currentTo) {
+              latestInvoiceByUser.set(key, invoice);
+              continue;
+            }
+
+            if (incomingTo === currentTo) {
+              const currentCreated = new Date(current.created_at || 0).getTime();
+              const incomingCreated = new Date(invoice.created_at || 0).getTime();
+              if (incomingCreated > currentCreated) {
+                latestInvoiceByUser.set(key, invoice);
+              }
+            }
+          }
+
+          const latestPaidInvoices = [...latestInvoiceByUser.values()];
+          const userIds = [...new Set(latestPaidInvoices.map(inv => inv.user_id).filter(id => id != null))];
+          if (userIds.length === 0) return [];
+
+          const users = await User.findByIds(userIds);
+          const shops = await Shop.findByUserIds(userIds);
+          const shopMap = {};
+          shops.forEach(shop => {
+            if (shop && shop.user_id && !shopMap[shop.user_id]) {
+              shopMap[shop.user_id] = shop;
+            }
+          });
+
+          const monthlySubscribedVendors = users.map(user => {
+            const shop = shopMap[user.id];
+            const latestInvoice = latestInvoiceByUser.get(String(user.id)) || null;
+            return {
+              id: user.id,
+              name: user.name || 'N/A',
+              mobile: user.mob_num || user.mobile || user.phone || 'N/A',
+              email: user.email || 'N/A',
+              user_type: user.user_type || 'N/A',
+              app_version: user.app_version || 'N/A',
+              shop_id: shop?.id || null,
+              shop_name: shop?.shopname || 'N/A',
+              shop_address: shop?.address || '',
+              subscription_ends_at: latestInvoice?.to_date || null,
+              approval_status: latestInvoice?.approval_status || 'pending'
+            };
+          });
+
+          if (enforcedZone && zoneUserSet) {
+            const enforcedZoneNormalized = Address.normalizeZone(enforcedZone);
+            let zoneMappings = null;
+            try {
+              zoneMappings = await loadZoneMappings();
+            } catch (zoneLoadErr) {
+              console.warn(`⚠️ Failed to load zone mappings for monthly subscribed fallback: ${zoneLoadErr.message}`);
+            }
+
+            return monthlySubscribedVendors.filter(vendor => {
+              const vid = typeof vendor.id === 'string' && !isNaN(vendor.id)
+                ? parseInt(vendor.id, 10)
+                : vendor.id;
+              if (zoneUserSet.has(vid)) return true;
+              if (!zoneMappings) return false;
+
+              const shopAddress = String(vendor.shop_address || '').trim();
+              if (!shopAddress) return false;
+
+              const derivedZone = resolveZoneFromAddressText(shopAddress, zoneMappings);
+              return !!derivedZone && Address.normalizeZone(derivedZone) === enforcedZoneNormalized;
+            });
+          }
+
+          return monthlySubscribedVendors;
+        } catch (monthlyErr) {
+          console.error('Error fetching monthly subscribed vendors:', monthlyErr);
+          return [];
+        }
+      };
+      const monthlySubscribedVendors = await fetchMonthlySubscribedVendors();
       
       res.json({
         status: 'success',
@@ -5596,6 +5902,7 @@ class AdminPanelController {
         data: {
           ...order,
           notified_vendors: notifiedVendors,
+          monthly_subscribed_vendors: monthlySubscribedVendors,
           customer_name: customerName,
           customer_address: customerAddress,
           customer_phone: customerPhone

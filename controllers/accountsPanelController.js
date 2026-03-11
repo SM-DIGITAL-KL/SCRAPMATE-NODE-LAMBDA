@@ -2,6 +2,118 @@ const Package = require('../models/Package');
 const Invoice = require('../models/Invoice');
 const Address = require('../models/Address');
 const RedisCache = require('../utils/redisCache');
+const { getDynamoDBClient } = require('../config/dynamodb');
+const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+
+const ZONE_TABLE = 'district_pincode_prefixes';
+const ZONE_CACHE_TTL_MS = 10 * 60 * 1000;
+let zoneMappingsCache = {
+  loadedAt: 0,
+  districtToZone: new Map(),
+  prefixToZones: new Map()
+};
+
+function normalizeZoneLookupText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, '')
+    .trim();
+}
+
+function getPrefix3(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  return digits.length >= 3 ? digits.slice(0, 3) : '';
+}
+
+function extractPincode(address) {
+  const text = String(address || '');
+  const match = text.match(/\b(\d{6})\b/);
+  return match ? match[1] : '';
+}
+
+function zoneCodeFromDistrictItem(item) {
+  if (item.zone) return String(item.zone).trim();
+  if (item.zone_code) return String(item.zone_code).trim();
+  if (item.zone_no !== undefined && item.zone_no !== null && item.zone_no !== '') {
+    const n = Number(item.zone_no);
+    if (!Number.isNaN(n)) return `Z${String(n).padStart(2, '0')}`;
+  }
+  return '';
+}
+
+async function loadZoneMappings() {
+  const now = Date.now();
+  if ((now - zoneMappingsCache.loadedAt) < ZONE_CACHE_TTL_MS && zoneMappingsCache.districtToZone.size > 0) {
+    return zoneMappingsCache;
+  }
+
+  const client = getDynamoDBClient();
+  let lastKey = null;
+  const districtToZone = new Map();
+  const prefixToZones = new Map();
+
+  do {
+    const response = await client.send(new ScanCommand({
+      TableName: ZONE_TABLE,
+      ProjectionExpression: 'district_name, district_slug, pincode_prefixes, #z, zone_code, zone_no',
+      ExpressionAttributeNames: { '#z': 'zone' },
+      ExclusiveStartKey: lastKey || undefined
+    }));
+
+    for (const item of response.Items || []) {
+      const zone = zoneCodeFromDistrictItem(item);
+      if (!zone) continue;
+
+      const districtName = normalizeZoneLookupText(item.district_name);
+      const districtSlug = normalizeZoneLookupText(item.district_slug);
+
+      if (districtName && districtName !== 'all' && districtName !== 'alldistricts') {
+        districtToZone.set(districtName, zone);
+      }
+      if (districtSlug && districtSlug !== 'all' && districtSlug !== 'alldistricts') {
+        districtToZone.set(districtSlug, zone);
+      }
+
+      const prefixes = Array.isArray(item.pincode_prefixes) ? item.pincode_prefixes : [];
+      for (const prefix of prefixes) {
+        const key = getPrefix3(prefix);
+        if (!key) continue;
+        if (!prefixToZones.has(key)) prefixToZones.set(key, new Set());
+        prefixToZones.get(key).add(zone);
+      }
+    }
+
+    lastKey = response.LastEvaluatedKey;
+  } while (lastKey);
+
+  zoneMappingsCache = {
+    loadedAt: now,
+    districtToZone,
+    prefixToZones
+  };
+  return zoneMappingsCache;
+}
+
+function resolveZoneFromAddressText(address, mappings) {
+  const text = String(address || '').trim();
+  if (!text) return '';
+
+  const pincode = extractPincode(text);
+  const prefix = getPrefix3(pincode);
+  if (prefix && mappings.prefixToZones.has(prefix)) {
+    const choices = [...mappings.prefixToZones.get(prefix)].sort();
+    if (choices.length > 0) return choices[0];
+  }
+
+  const normalizedAddress = normalizeZoneLookupText(text);
+  for (const [districtKey, zone] of mappings.districtToZone.entries()) {
+    if (districtKey && normalizedAddress.includes(districtKey)) {
+      return zone;
+    }
+  }
+  return '';
+}
 
 class AccountsPanelController {
   static normalizeNumericId(value) {
@@ -42,6 +154,51 @@ class AccountsPanelController {
       enforcedZone: Address.normalizeZone(enforcedZone),
       zoneUserSet
     };
+  }
+
+  static async enrichZoneScopeWithShopAddressFallback(zoneScope, candidateUserIds) {
+    if (!zoneScope || !zoneScope.enforcedZone) return;
+    const uniqueUserIds = [...new Set((candidateUserIds || [])
+      .map((id) => AccountsPanelController.normalizeNumericId(id))
+      .filter((id) => id !== null)
+    )];
+    if (uniqueUserIds.length === 0) return;
+
+    const pendingUserIds = uniqueUserIds.filter((id) => !zoneScope.zoneUserSet.has(id));
+    if (pendingUserIds.length === 0) return;
+
+    try {
+      const Shop = require('../models/Shop');
+      const shops = await Shop.findByUserIds(pendingUserIds);
+      if (!shops || shops.length === 0) return;
+
+      const zoneMappings = await loadZoneMappings();
+      let matchedCount = 0;
+
+      for (const shop of shops) {
+        const uid = AccountsPanelController.normalizeNumericId(shop?.user_id);
+        if (uid === null || zoneScope.zoneUserSet.has(uid)) continue;
+
+        const addressText = [
+          shop?.address,
+          shop?.place,
+          shop?.state,
+          shop?.pincode
+        ].filter(Boolean).join(', ');
+
+        const derivedZone = resolveZoneFromAddressText(addressText, zoneMappings);
+        if (derivedZone && Address.normalizeZone(derivedZone) === zoneScope.enforcedZone) {
+          zoneScope.zoneUserSet.add(uid);
+          matchedCount += 1;
+        }
+      }
+
+      if (matchedCount > 0) {
+        console.log(`🧭 Zone fallback matched ${matchedCount} users via shop address for ${zoneScope.enforcedZone}`);
+      }
+    } catch (fallbackErr) {
+      console.warn(`⚠️ Zone fallback (shop address) failed: ${fallbackErr.message}`);
+    }
   }
 
   static async subPackages(req, res) {
@@ -200,6 +357,8 @@ class AccountsPanelController {
       const User = require('../models/User');
       let allInvoices = await Invoice.getAll();
       if (zoneScope) {
+        const invoiceUserIds = allInvoices.map((invoice) => invoice.user_id).filter((id) => id !== null && id !== undefined);
+        await AccountsPanelController.enrichZoneScopeWithShopAddressFallback(zoneScope, invoiceUserIds);
         allInvoices = allInvoices.filter((invoice) => {
           const invoiceUserId = AccountsPanelController.normalizeNumericId(invoice.user_id);
           return invoiceUserId !== null && zoneScope.zoneUserSet.has(invoiceUserId);
@@ -558,6 +717,8 @@ class AccountsPanelController {
       
       let paidInvoices = allInvoices.filter(inv => inv.type === 'Paid' || inv.type === 'paid');
       if (zoneScope) {
+        const invoiceUserIds = paidInvoices.map((invoice) => invoice.user_id).filter((id) => id !== null && id !== undefined);
+        await AccountsPanelController.enrichZoneScopeWithShopAddressFallback(zoneScope, invoiceUserIds);
         paidInvoices = paidInvoices.filter((invoice) => {
           const invoiceUserId = AccountsPanelController.normalizeNumericId(invoice.user_id);
           return invoiceUserId !== null && zoneScope.zoneUserSet.has(invoiceUserId);
@@ -566,6 +727,50 @@ class AccountsPanelController {
       }
       
       console.log(`✅ Found ${paidInvoices.length} paid invoices`);
+
+      // For zone dashboard logins only, match v2 monthly subscribed logic:
+      // 1) include paid subscriptions even if expired
+      // 2) exclude rejected
+      // 3) keep one latest paid record per user
+      if (zoneScope) {
+        const validPaidInvoices = paidInvoices.filter((invoice) => {
+          const invoiceUserId = AccountsPanelController.normalizeNumericId(invoice.user_id);
+          if (invoiceUserId === null) return false;
+
+          const approvalStatus = String(invoice.approval_status || 'pending').toLowerCase();
+          if (approvalStatus === 'rejected') return false;
+          return true;
+        });
+
+        const latestPaidByUser = new Map();
+        for (const invoice of validPaidInvoices) {
+          const key = String(AccountsPanelController.normalizeNumericId(invoice.user_id));
+          const current = latestPaidByUser.get(key);
+          if (!current) {
+            latestPaidByUser.set(key, invoice);
+            continue;
+          }
+
+          const currentTo = new Date(current.to_date || 0).getTime();
+          const incomingTo = new Date(invoice.to_date || 0).getTime();
+          if (incomingTo > currentTo) {
+            latestPaidByUser.set(key, invoice);
+            continue;
+          }
+
+          // Tie-breaker: latest created_at wins
+          if (incomingTo === currentTo) {
+            const currentCreated = new Date(current.created_at || 0).getTime();
+            const incomingCreated = new Date(invoice.created_at || 0).getTime();
+            if (incomingCreated > currentCreated) {
+              latestPaidByUser.set(key, invoice);
+            }
+          }
+        }
+
+        paidInvoices = [...latestPaidByUser.values()];
+        console.log(`✅ Zone latest paid subscriptions after dedupe (including expired): ${paidInvoices.length}`);
+      }
       
       // Log invoice IDs and user IDs for debugging
       if (paidInvoices.length > 0) {
@@ -651,14 +856,14 @@ class AccountsPanelController {
         };
       });
       
-      // Sort by created_at descending (newest first) - but return ALL payments
+      // Sort by created_at descending (newest first)
       subscriptions.sort((a, b) => {
         const dateA = new Date(a.created_at || 0);
         const dateB = new Date(b.created_at || 0);
         return dateB - dateA;
       });
       
-      // Return ALL payments in data array - no filtering
+      // Return latest paid subscriptions per user (including expired, excluding rejected for zone scope)
       const response = {
         status: 'success',
         msg: 'Paid subscriptions retrieved',
@@ -823,17 +1028,36 @@ class AccountsPanelController {
             
             // Calculate to_date based on duration type
             if (!toDate && packageData.duration) {
-              if (packageData.duration === 'month') {
+              const durationRaw = String(packageData.duration || '').trim().toLowerCase();
+              if (durationRaw === 'month') {
                 from.setMonth(from.getMonth() + 1);
-              } else if (packageData.duration === 'year') {
+              } else if (durationRaw === 'year') {
                 from.setFullYear(from.getFullYear() + 1);
-              } else if (packageData.duration === 'order') {
+              } else if (durationRaw === 'order') {
                 // Per-order subscriptions - set far future date
                 from.setFullYear(from.getFullYear() + 100);
               } else {
-                // Legacy: treat as days
-                const durationDays = parseInt(packageData.duration) || 30;
-                from.setDate(from.getDate() + durationDays);
+                // Support custom duration strings like "6 months", "2 years", "45 days"
+                const durationMatch = durationRaw.match(/^(\d+)\s*([a-z]+)?$/);
+                if (durationMatch) {
+                  const durationValue = parseInt(durationMatch[1], 10);
+                  const durationUnit = durationMatch[2] || 'days';
+                  if (durationValue > 0) {
+                    if (durationUnit.startsWith('month') || durationUnit === 'mon' || durationUnit === 'm') {
+                      from.setMonth(from.getMonth() + durationValue);
+                    } else if (durationUnit.startsWith('year') || durationUnit === 'yr' || durationUnit === 'y') {
+                      from.setFullYear(from.getFullYear() + durationValue);
+                    } else {
+                      // Default to days for numeric/unknown units
+                      from.setDate(from.getDate() + durationValue);
+                    }
+                  } else {
+                    from.setDate(from.getDate() + 30);
+                  }
+                } else {
+                  // Fallback to 30 days when unparseable
+                  from.setDate(from.getDate() + 30);
+                }
               }
               toDate = from.toISOString().split('T')[0];
             }

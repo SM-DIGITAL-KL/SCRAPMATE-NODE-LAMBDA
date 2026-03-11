@@ -5,6 +5,8 @@ const fs = require('fs');
 const { getFileSize, deleteFile } = require('../utils/fileUpload');
 const RedisCache = require('../utils/redisCache');
 const { getImageUrl } = require('../utils/imageHelper');
+const { resolveRequestZone } = require('../utils/zoneRequestScope');
+const { filterCategoriesForZone } = require('../utils/zoneCategoryScope');
 
 class ProductController {
   // Shop category create
@@ -212,24 +214,29 @@ class ProductController {
     try {
       console.log(`🔍 all_pro_category called`);
       const { shop_id } = req.query;
+      const requestZone = await resolveRequestZone(req, { allowQueryZone: true });
       console.log(`   shop_id: ${shop_id}`);
 
       // Check Redis cache first (only if previously successful)
-      const cacheKey = RedisCache.listKey('all_pro_categories', { shop_id: shop_id || 'all' });
-      const cached = await RedisCache.get(cacheKey);
-      if (cached) {
-        console.log(`⚡ Redis cache hit for all pro categories: ${cacheKey}`);
-        return res.json({
-          status: 'success',
-          msg: 'success',
-          data: cached
-        });
+      const cacheKey = requestZone
+        ? RedisCache.listKey('all_pro_categories', { shop_id: shop_id || 'all', zone: requestZone })
+        : RedisCache.listKey('all_pro_categories', { shop_id: shop_id || 'all' });
+      if (!requestZone) {
+        const cached = await RedisCache.get(cacheKey);
+        if (cached) {
+          console.log(`⚡ Redis cache hit for all pro categories: ${cacheKey}`);
+          return res.json({
+            status: 'success',
+            msg: 'success',
+            data: cached
+          });
+        }
       }
 
       // Use CategoryImgKeywords model to fetch from DynamoDB
       const CategoryImgKeywords = require('../models/CategoryImgKeywords');
       console.log(`🔎 Fetching all categories from DynamoDB`);
-      let allCategories = await CategoryImgKeywords.getAll();
+      let allCategories = filterCategoriesForZone(await CategoryImgKeywords.getAll(), requestZone);
       console.log(`✅ Found ${allCategories.length} category(ies) in DynamoDB`);
 
       // If shop_id is provided, filter out categories already used by this shop
@@ -277,12 +284,14 @@ class ProductController {
       console.log(`✅ Returning ${categoryList.length} formatted categories`);
 
       // Cache the result only on success (365 days TTL)
-      try {
-        await RedisCache.set(cacheKey, categoryList, '365days');
-        console.log(`💾 Redis cache set for all pro categories: ${cacheKey}`);
-      } catch (redisErr) {
-        console.error('Redis cache error:', redisErr);
-        // Continue even if Redis fails
+      if (!requestZone) {
+        try {
+          await RedisCache.set(cacheKey, categoryList, '365days');
+          console.log(`💾 Redis cache set for all pro categories: ${cacheKey}`);
+        } catch (redisErr) {
+          console.error('Redis cache error:', redisErr);
+          // Continue even if Redis fails
+        }
       }
 
       res.json({
@@ -305,16 +314,20 @@ class ProductController {
   static async categoryImgList(req, res) {
     try {
       console.log(`🔍 category_img_list called`);
+      const requestZone = await resolveRequestZone(req, { allowQueryZone: true });
       
       // Check if cache should be bypassed (via clear_cache or bypass_cache parameter)
       const bypassCache = req.query.clear_cache === '1' || req.query.bypass_cache === '1' || req.query.clear_cache === 'true' || req.query.bypass_cache === 'true';
+      const shouldBypassCache = bypassCache || !!requestZone;
 
       // Define cache key outside the if block so it's available for setting cache later
-      const cacheKey = RedisCache.listKey('category_img_list', { version: 's3' });
+      const cacheKey = requestZone
+        ? RedisCache.listKey('category_img_list', { version: 's3', zone: requestZone })
+        : RedisCache.listKey('category_img_list', { version: 's3' });
 
       // Check Redis cache first (only if previously successful and not bypassed)
       // Include version to bust old cache entries that used non-S3 URLs
-      if (!bypassCache) {
+      if (!shouldBypassCache) {
         const cached = await RedisCache.get(cacheKey);
         if (cached) {
           console.log(`⚡ Redis cache hit for category img list: ${cacheKey}`);
@@ -330,8 +343,9 @@ class ProductController {
 
       const CategoryImgKeywords = require('../models/CategoryImgKeywords');
       console.log(`🔎 Fetching category image keywords from DynamoDB`);
-      const categories = await CategoryImgKeywords.getAll();
-      console.log(`✅ Found ${categories.length} category image keyword(s)`);
+      const allCategories = await CategoryImgKeywords.getAll();
+      const categories = filterCategoriesForZone(allCategories, requestZone);
+      console.log(`✅ Found ${categories.length} category image keyword(s) for zone ${requestZone || 'all'}`);
 
       // Format image URLs to ensure they point to S3 (with presigned URLs)
       // Convert S3 URLs to presigned URLs for secure access
@@ -535,17 +549,19 @@ class ProductController {
       console.log(`${'='.repeat(80)}\n`);
 
       // Cache the result only on success (1 hour TTL)
-      try {
-        await RedisCache.set(cacheKey, categoryList, '365days');
-        console.log(`💾 Redis cache set for category img list: ${cacheKey}`);
-      } catch (redisErr) {
-        console.error(`\n❌ Redis cache error:`, redisErr.message);
-        console.error(`   Error details:`, {
-          name: redisErr.name,
-          message: redisErr.message,
-          stack: redisErr.stack
-        });
-        // Continue even if Redis fails
+      if (!shouldBypassCache) {
+        try {
+          await RedisCache.set(cacheKey, categoryList, '365days');
+          console.log(`💾 Redis cache set for category img list: ${cacheKey}`);
+        } catch (redisErr) {
+          console.error(`\n❌ Redis cache error:`, redisErr.message);
+          console.error(`   Error details:`, {
+            name: redisErr.name,
+            message: redisErr.message,
+            stack: redisErr.stack
+          });
+          // Continue even if Redis fails
+        }
       }
 
       console.log(`\n✅ [SUCCESS] Returning category image list to client`);
@@ -940,4 +956,3 @@ class ProductController {
 }
 
 module.exports = ProductController;
-

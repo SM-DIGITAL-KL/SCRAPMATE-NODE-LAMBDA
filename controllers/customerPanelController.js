@@ -2,6 +2,118 @@ const Customer = require('../models/Customer');
 const Order = require('../models/Order');
 const User = require('../models/User');
 const RedisCache = require('../utils/redisCache');
+const { getDynamoDBClient } = require('../config/dynamodb');
+const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+
+const ZONE_TABLE = 'district_pincode_prefixes';
+const ZONE_CACHE_TTL_MS = 10 * 60 * 1000;
+let zoneMappingsCache = {
+  loadedAt: 0,
+  districtToZone: new Map(),
+  prefixToZones: new Map()
+};
+
+function normalizeZoneLookupText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, '')
+    .trim();
+}
+
+function getPrefix3(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  return digits.length >= 3 ? digits.slice(0, 3) : '';
+}
+
+function extractPincode(address) {
+  const text = String(address || '');
+  const match = text.match(/\b(\d{6})\b/);
+  return match ? match[1] : '';
+}
+
+function zoneCodeFromDistrictItem(item) {
+  if (item.zone) return String(item.zone).trim();
+  if (item.zone_code) return String(item.zone_code).trim();
+  if (item.zone_no !== undefined && item.zone_no !== null && item.zone_no !== '') {
+    const n = Number(item.zone_no);
+    if (!Number.isNaN(n)) return `Z${String(n).padStart(2, '0')}`;
+  }
+  return '';
+}
+
+async function loadZoneMappings() {
+  const now = Date.now();
+  if ((now - zoneMappingsCache.loadedAt) < ZONE_CACHE_TTL_MS && zoneMappingsCache.districtToZone.size > 0) {
+    return zoneMappingsCache;
+  }
+
+  const client = getDynamoDBClient();
+  let lastKey = null;
+  const districtToZone = new Map();
+  const prefixToZones = new Map();
+
+  do {
+    const response = await client.send(new ScanCommand({
+      TableName: ZONE_TABLE,
+      ProjectionExpression: 'district_name, district_slug, pincode_prefixes, #z, zone_code, zone_no',
+      ExpressionAttributeNames: { '#z': 'zone' },
+      ExclusiveStartKey: lastKey || undefined
+    }));
+
+    for (const item of response.Items || []) {
+      const zone = zoneCodeFromDistrictItem(item);
+      if (!zone) continue;
+
+      const districtName = normalizeZoneLookupText(item.district_name);
+      const districtSlug = normalizeZoneLookupText(item.district_slug);
+
+      if (districtName && districtName !== 'all' && districtName !== 'alldistricts') {
+        districtToZone.set(districtName, zone);
+      }
+      if (districtSlug && districtSlug !== 'all' && districtSlug !== 'alldistricts') {
+        districtToZone.set(districtSlug, zone);
+      }
+
+      const prefixes = Array.isArray(item.pincode_prefixes) ? item.pincode_prefixes : [];
+      for (const prefix of prefixes) {
+        const key = getPrefix3(prefix);
+        if (!key) continue;
+        if (!prefixToZones.has(key)) prefixToZones.set(key, new Set());
+        prefixToZones.get(key).add(zone);
+      }
+    }
+
+    lastKey = response.LastEvaluatedKey;
+  } while (lastKey);
+
+  zoneMappingsCache = {
+    loadedAt: now,
+    districtToZone,
+    prefixToZones
+  };
+  return zoneMappingsCache;
+}
+
+function resolveZoneFromAddressText(address, mappings) {
+  const text = String(address || '').trim();
+  if (!text) return '';
+
+  const pincode = extractPincode(text);
+  const prefix = getPrefix3(pincode);
+  if (prefix && mappings.prefixToZones.has(prefix)) {
+    const choices = [...mappings.prefixToZones.get(prefix)].sort();
+    if (choices.length > 0) return choices[0];
+  }
+
+  const normalizedAddress = normalizeZoneLookupText(text);
+  for (const [districtKey, zone] of mappings.districtToZone.entries()) {
+    if (districtKey && normalizedAddress.includes(districtKey)) {
+      return zone;
+    }
+  }
+  return '';
+}
 
 class CustomerPanelController {
   static _isZoneUser(req) {
@@ -299,6 +411,32 @@ class CustomerPanelController {
     try {
       const { id } = req.params;
       console.log('🟢 CustomerPanelController.viewOrderDetails called', { id });
+
+      // Zone scope from logged-in admin session (zone1..zone48@scrapmate.co.in).
+      const email = String(
+        req.user?.email ||
+        req.session?.userEmail ||
+        req.headers['x-user-email'] ||
+        ''
+      ).trim().toLowerCase();
+      const zoneEmailMatch = email.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+      const enforcedZone = zoneEmailMatch ? `zone${parseInt(zoneEmailMatch[1], 10)}` : '';
+      let zoneUserSet = null;
+      if (enforcedZone) {
+        try {
+          const Address = require('../models/Address');
+          const zoneUserIds = await Address.findCustomerIdsByZone(enforcedZone);
+          zoneUserSet = new Set(
+            (zoneUserIds || []).map(uid =>
+              typeof uid === 'string' && !isNaN(uid) ? parseInt(uid, 10) : uid
+            )
+          );
+          console.log(`🧭 viewOrderDetails scope: ${enforcedZone} (${zoneUserSet.size} users)`);
+        } catch (zoneErr) {
+          console.error(`❌ Failed to resolve zone scope (${enforcedZone}):`, zoneErr.message);
+          zoneUserSet = new Set();
+        }
+      }
       
       // Helper function to enrich customer details
       const enrichOrderCustomerDetails = async (order) => {
@@ -837,38 +975,44 @@ class CustomerPanelController {
           const paidInvoices = allInvoices.filter(inv => inv.type === 'Paid' || inv.type === 'paid');
           console.log(`✅ Found ${paidInvoices.length} paid invoices`);
           
-          // Filter for active subscriptions (to_date > now) and approved status
-          const now = new Date();
-          const activePaidInvoices = paidInvoices.filter(invoice => {
-            // Must have user_id
-            if (!invoice.user_id) {
-              return false;
-            }
-            
-            // Check if approved (or pending - include both for now)
-            const approvalStatus = invoice.approval_status || 'pending';
-            if (approvalStatus === 'rejected') {
-              return false; // Exclude rejected subscriptions
-            }
-            
-            // Check if subscription is still active (to_date > now)
-            if (!invoice.to_date) {
-              return false; // No end date means not active
-            }
-            
-            try {
-              const toDate = new Date(invoice.to_date);
-              return toDate > now;
-            } catch (e) {
-              console.warn(`⚠️  Invalid to_date for invoice ${invoice.id}:`, invoice.to_date);
-              return false;
-            }
+          // Include paid subscriptions even if expired; exclude only rejected and missing user_id.
+          const paidNonRejectedInvoices = paidInvoices.filter((invoice) => {
+            if (!invoice.user_id) return false;
+            const approvalStatus = String(invoice.approval_status || 'pending').toLowerCase();
+            return approvalStatus !== 'rejected';
           });
+
+          // Keep latest paid invoice per user (for consistent list/count across screens).
+          const latestInvoiceByUser = new Map();
+          for (const invoice of paidNonRejectedInvoices) {
+            const key = String(invoice.user_id);
+            const current = latestInvoiceByUser.get(key);
+            if (!current) {
+              latestInvoiceByUser.set(key, invoice);
+              continue;
+            }
+
+            const currentTo = new Date(current.to_date || 0).getTime();
+            const incomingTo = new Date(invoice.to_date || 0).getTime();
+            if (incomingTo > currentTo) {
+              latestInvoiceByUser.set(key, invoice);
+              continue;
+            }
+
+            if (incomingTo === currentTo) {
+              const currentCreated = new Date(current.created_at || 0).getTime();
+              const incomingCreated = new Date(invoice.created_at || 0).getTime();
+              if (incomingCreated > currentCreated) {
+                latestInvoiceByUser.set(key, invoice);
+              }
+            }
+          }
+
+          const latestPaidInvoices = [...latestInvoiceByUser.values()];
+          console.log(`✅ Found ${latestPaidInvoices.length} latest paid subscriptions (including expired, excluding rejected)`);
           
-          console.log(`✅ Found ${activePaidInvoices.length} active paid subscriptions (approved/pending, to_date > now)`);
-          
-          // Get unique user IDs from active paid invoices
-          const userIds = [...new Set(activePaidInvoices.map(inv => inv.user_id).filter(id => id != null))];
+          // Get unique user IDs from latest paid invoices
+          const userIds = [...new Set(latestPaidInvoices.map(inv => inv.user_id).filter(id => id != null))];
           
           if (userIds.length === 0) {
             return [];
@@ -893,13 +1037,7 @@ class CustomerPanelController {
           // Map users to include shop info and subscription details
           const monthlySubscribedVendors = users.map(user => {
             const shop = shopMap[user.id];
-            const userInvoices = activePaidInvoices.filter(inv => inv.user_id === user.id);
-            // Get the latest invoice (by to_date)
-            const latestInvoice = userInvoices.sort((a, b) => {
-              const dateA = new Date(a.to_date);
-              const dateB = new Date(b.to_date);
-              return dateB - dateA; // Sort descending (latest first)
-            })[0];
+            const latestInvoice = latestInvoiceByUser.get(String(user.id)) || null;
             
             return {
               id: user.id,
@@ -910,10 +1048,46 @@ class CustomerPanelController {
               app_version: user.app_version || 'N/A',
               shop_id: shop?.id || null,
               shop_name: shop?.shopname || 'N/A',
+              shop_address: shop?.address || '',
               subscription_ends_at: latestInvoice?.to_date || null,
               approval_status: latestInvoice?.approval_status || 'pending'
             };
           });
+
+          // For zone dashboard logins, only return monthly subscribed vendors belonging to the same zone.
+          if (enforcedZone && zoneUserSet) {
+            const beforeCount = monthlySubscribedVendors.length;
+            const Address = require('../models/Address');
+            const enforcedZoneNormalized = Address.normalizeZone(enforcedZone);
+            let zoneMappings = null;
+            try {
+              zoneMappings = await loadZoneMappings();
+            } catch (zoneLoadErr) {
+              console.warn(`⚠️ Failed to load zone mappings for monthly subscribed fallback: ${zoneLoadErr.message}`);
+            }
+
+            const filteredVendors = monthlySubscribedVendors.filter(vendor => {
+              const vid = typeof vendor.id === 'string' && !isNaN(vendor.id)
+                ? parseInt(vendor.id, 10)
+                : vendor.id;
+              if (zoneUserSet.has(vid)) {
+                return true;
+              }
+
+              // Fallback for vendors missing addresses entry: derive zone from shop address/pincode mapping.
+              if (!zoneMappings) {
+                return false;
+              }
+              const shopAddress = String(vendor.shop_address || '').trim();
+              if (!shopAddress) {
+                return false;
+              }
+              const derivedZone = resolveZoneFromAddressText(shopAddress, zoneMappings);
+              return !!derivedZone && Address.normalizeZone(derivedZone) === enforcedZoneNormalized;
+            });
+            console.log(`🧭 Filtered monthly subscribed vendors by ${enforcedZone}: ${beforeCount} -> ${filteredVendors.length}`);
+            return filteredVendors;
+          }
           
           console.log(`✅ Fetched ${monthlySubscribedVendors.length} monthly subscribed vendors`);
           
@@ -955,6 +1129,20 @@ class CustomerPanelController {
       console.log(`✅ viewOrderDetails: Found order:`, orderData ? 'Yes' : 'No');
       if (orderData) {
         console.log(`   Database notified_vendor_ids: ${orderData.notified_vendor_ids ? (typeof orderData.notified_vendor_ids === 'string' ? orderData.notified_vendor_ids.substring(0, 100) : JSON.stringify(orderData.notified_vendor_ids).substring(0, 100)) : 'N/A'}`);
+      }
+
+      // Zone users can access only orders whose customer belongs to their zone.
+      if (orderData && enforcedZone && zoneUserSet) {
+        const orderCustomerId = typeof orderData.customer_id === 'string' && !isNaN(orderData.customer_id)
+          ? parseInt(orderData.customer_id, 10)
+          : orderData.customer_id;
+        if (orderCustomerId === null || orderCustomerId === undefined || !zoneUserSet.has(orderCustomerId)) {
+          return res.status(403).json({
+            status: 'error',
+            msg: `This order does not belong to ${enforcedZone.toUpperCase()} scope`,
+            data: null
+          });
+        }
       }
       
       // Enrich customer details if needed

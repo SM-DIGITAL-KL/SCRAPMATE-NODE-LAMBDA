@@ -1,6 +1,8 @@
 const CategoryImgKeywords = require('../models/CategoryImgKeywords');
 const Subcategory = require('../models/Subcategory');
 const RedisCache = require('../utils/redisCache');
+const { resolveRequestZone } = require('../utils/zoneRequestScope');
+const { filterCategoriesForZone, filterSubcategoriesForZone } = require('../utils/zoneCategoryScope');
 
 /**
  * V2 Category Controller
@@ -20,27 +22,33 @@ class V2CategoryController {
       console.log('📋 [V2 Categories API] Request received');
       console.log('   Query params:', req.query);
       const { userType } = req.query;
+      const requestZone = await resolveRequestZone(req, { allowQueryZone: true });
+      const shouldUseCache = !requestZone;
       
       // Check Redis cache first
-      const cacheKey = RedisCache.listKey('categories', { userType: userType || 'all' });
-      try {
-        const cached = await RedisCache.get(cacheKey);
-        if (cached !== null && cached !== undefined) {
-          console.log('⚡ Categories cache hit');
-          const duration = Date.now() - startTime;
-          console.log(`✅ [V2 Categories API] Cache hit - returned in ${duration}ms`);
-          return res.json({
-            ...cached,
-            hitBy: 'Redis'
-          });
+      const cacheKey = requestZone
+        ? RedisCache.listKey('categories', { userType: userType || 'all', zone: requestZone })
+        : RedisCache.listKey('categories', { userType: userType || 'all' });
+      if (shouldUseCache) {
+        try {
+          const cached = await RedisCache.get(cacheKey);
+          if (cached !== null && cached !== undefined) {
+            console.log('⚡ Categories cache hit');
+            const duration = Date.now() - startTime;
+            console.log(`✅ [V2 Categories API] Cache hit - returned in ${duration}ms`);
+            return res.json({
+              ...cached,
+              hitBy: 'Redis'
+            });
+          }
+        } catch (err) {
+          console.error('Redis get error:', err);
         }
-      } catch (err) {
-        console.error('Redis get error:', err);
       }
       
       // Get all categories
       console.log('🔍 [V2 Categories API] Fetching categories from DynamoDB...');
-      const categories = await CategoryImgKeywords.getAll();
+      const categories = filterCategoriesForZone(await CategoryImgKeywords.getAll(), requestZone);
       console.log(`✅ [V2 Categories API] Found ${categories.length} categories`);
       
       // Get B2B/B2C availability from cache (optimized - no full table scan)
@@ -123,17 +131,19 @@ class V2CategoryController {
       };
 
       // Cache the result (cache for 1 hour - categories don't change often)
-      console.log(`💾 [V2 Categories API] Attempting to cache with key: ${cacheKey}`);
-      try {
-        const setResult = await RedisCache.set(cacheKey, response, 'static');
-        console.log(`💾 [V2 Categories API] Cache set result: ${setResult ? 'SUCCESS ✅' : 'FAILED ❌'}`);
-        if (!setResult) {
-          console.error('⚠️  [V2 Categories API] Cache set returned false - check Redis connection');
+      if (shouldUseCache) {
+        console.log(`💾 [V2 Categories API] Attempting to cache with key: ${cacheKey}`);
+        try {
+          const setResult = await RedisCache.set(cacheKey, response, 'static');
+          console.log(`💾 [V2 Categories API] Cache set result: ${setResult ? 'SUCCESS ✅' : 'FAILED ❌'}`);
+          if (!setResult) {
+            console.error('⚠️  [V2 Categories API] Cache set returned false - check Redis connection');
+          }
+        } catch (err) {
+          console.error('❌ [V2 Categories API] Redis cache set error:', err);
+          console.error('   Error message:', err.message);
+          console.error('   Error stack:', err.stack);
         }
-      } catch (err) {
-        console.error('❌ [V2 Categories API] Redis cache set error:', err);
-        console.error('   Error message:', err.message);
-        console.error('   Error stack:', err.stack);
       }
       
       return res.json(response);
@@ -161,37 +171,44 @@ class V2CategoryController {
   static async getSubcategories(req, res) {
     try {
       const { categoryId, userType } = req.query;
+      const requestZone = await resolveRequestZone(req, { allowQueryZone: true });
+      const shouldUseCache = !requestZone;
       
       // Check Redis cache first
       const cacheKey = RedisCache.listKey('subcategories', { 
         categoryId: categoryId || 'all',
-        userType: userType || 'all' 
+        userType: userType || 'all',
+        ...(requestZone ? { zone: requestZone } : {})
       });
-      try {
-        const cached = await RedisCache.get(cacheKey);
-        if (cached !== null && cached !== undefined) {
-          console.log('⚡ Subcategories cache hit');
-          return res.json({
-            ...cached,
-            hitBy: 'Redis'
-          });
+      if (shouldUseCache) {
+        try {
+          const cached = await RedisCache.get(cacheKey);
+          if (cached !== null && cached !== undefined) {
+            console.log('⚡ Subcategories cache hit');
+            return res.json({
+              ...cached,
+              hitBy: 'Redis'
+            });
+          }
+        } catch (err) {
+          console.error('Redis get error:', err);
         }
-      } catch (err) {
-        console.error('Redis get error:', err);
       }
       
       // Get subcategories (only approved ones for regular users)
       // Admins can use includePending=true query param to see pending requests
       const includePending = req.query.includePending === 'true' && req.user?.isAdmin;
-      let subcategories;
+      let subcategoriesRaw;
       if (categoryId) {
-        subcategories = await Subcategory.findByMainCategoryId(categoryId, includePending);
+        subcategoriesRaw = await Subcategory.findByMainCategoryId(categoryId, includePending);
       } else {
-        subcategories = await Subcategory.getAll(includePending);
+        subcategoriesRaw = await Subcategory.getAll(includePending);
       }
       
       // Get main categories for enrichment
-      const categories = await CategoryImgKeywords.getAll();
+      const categories = filterCategoriesForZone(await CategoryImgKeywords.getAll(), requestZone);
+      const allowedCategoryIds = new Set(categories.map(cat => cat.id));
+      const subcategories = filterSubcategoriesForZone(subcategoriesRaw, requestZone, allowedCategoryIds);
       const categoryMap = {};
       categories.forEach(cat => {
         categoryMap[cat.id] = {
@@ -247,11 +264,13 @@ class V2CategoryController {
       };
 
       // Cache the result (cache for 1 hour - subcategories don't change often)
-      try {
-        await RedisCache.set(cacheKey, response, 'static');
-        console.log('💾 Subcategories cached');
-      } catch (err) {
-        console.error('Redis cache set error:', err);
+      if (shouldUseCache) {
+        try {
+          await RedisCache.set(cacheKey, response, 'static');
+          console.log('💾 Subcategories cached');
+        } catch (err) {
+          console.error('Redis cache set error:', err);
+        }
       }
       
       return res.json(response);
@@ -274,27 +293,33 @@ class V2CategoryController {
   static async getCategoriesWithSubcategories(req, res) {
     try {
       const { userType } = req.query;
+      const requestZone = await resolveRequestZone(req, { allowQueryZone: true });
+      const shouldUseCache = !requestZone;
       
       // Check Redis cache first
       const cacheKey = RedisCache.listKey('categories_with_subcategories', { 
-        userType: userType || 'all' 
+        userType: userType || 'all',
+        ...(requestZone ? { zone: requestZone } : {})
       });
-      try {
-        const cached = await RedisCache.get(cacheKey);
-        if (cached !== null && cached !== undefined) {
-          console.log('⚡ Categories with subcategories cache hit');
-          return res.json({
-            ...cached,
-            hitBy: 'Redis'
-          });
+      if (shouldUseCache) {
+        try {
+          const cached = await RedisCache.get(cacheKey);
+          if (cached !== null && cached !== undefined) {
+            console.log('⚡ Categories with subcategories cache hit');
+            return res.json({
+              ...cached,
+              hitBy: 'Redis'
+            });
+          }
+        } catch (err) {
+          console.error('Redis get error:', err);
         }
-      } catch (err) {
-        console.error('Redis get error:', err);
       }
       
       // Get all categories and subcategories
-      const categories = await CategoryImgKeywords.getAll();
-      const subcategories = await Subcategory.getAll();
+      const categories = filterCategoriesForZone(await CategoryImgKeywords.getAll(), requestZone);
+      const allowedCategoryIds = new Set(categories.map(cat => cat.id));
+      const subcategories = filterSubcategoriesForZone(await Subcategory.getAll(), requestZone, allowedCategoryIds);
       
       // Get B2B/B2C availability from cache (optimized - no full table scan)
       const { hasB2B, hasB2C } = await V2CategoryController._getShopAvailability();
@@ -374,11 +399,13 @@ class V2CategoryController {
       };
 
       // Cache the result (cache for 1 hour - categories don't change often)
-      try {
-        await RedisCache.set(cacheKey, response, 'static');
-        console.log('💾 Categories with subcategories cached');
-      } catch (err) {
-        console.error('Redis cache set error:', err);
+      if (shouldUseCache) {
+        try {
+          await RedisCache.set(cacheKey, response, 'static');
+          console.log('💾 Categories with subcategories cached');
+        } catch (err) {
+          console.error('Redis cache set error:', err);
+        }
       }
       
       return res.json(response);
@@ -402,6 +429,7 @@ class V2CategoryController {
   static async getIncrementalUpdates(req, res) {
     try {
       const { userType, lastUpdatedOn, userId, type = 'customer' } = req.query;
+      const requestZone = await resolveRequestZone(req, { allowQueryZone: true });
       
       console.log(`\n🔄 [getIncrementalUpdates] Request received:`);
       console.log(`   userType: ${userType || 'all'}`);
@@ -420,8 +448,23 @@ class V2CategoryController {
       }
       
       // Get updated categories and subcategories
-      const updatedCategories = await CategoryImgKeywords.getUpdatedAfter(lastUpdatedOn);
-      const updatedSubcategories = await Subcategory.getUpdatedAfter(lastUpdatedOn);
+      const updatedCategories = filterCategoriesForZone(
+        await CategoryImgKeywords.getUpdatedAfter(lastUpdatedOn),
+        requestZone,
+        { includeDeleted: true }
+      );
+      const visibleCategories = filterCategoriesForZone(
+        await CategoryImgKeywords.getAll(),
+        requestZone,
+        { includeDeleted: true }
+      );
+      const allowedCategoryIds = new Set(visibleCategories.map(cat => cat.id));
+      const updatedSubcategories = filterSubcategoriesForZone(
+        await Subcategory.getUpdatedAfter(lastUpdatedOn),
+        requestZone,
+        allowedCategoryIds,
+        { includeDeleted: true }
+      );
       
       console.log(`📊 [getIncrementalUpdates] Found updates:`);
       console.log(`   Categories: ${updatedCategories.length}`);

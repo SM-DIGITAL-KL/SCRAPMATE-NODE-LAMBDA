@@ -8,6 +8,7 @@ const Order = require('../models/Order');
 const User = require('../models/User');
 const Shop = require('../models/Shop');
 const Customer = require('../models/Customer');
+const Address = require('../models/Address');
 const RedisCache = require('../utils/redisCache');
 const { sendVendorNotification } = require('../utils/fcmNotification');
 
@@ -154,6 +155,68 @@ class V2OrderController {
         });
       }
 
+      // Determine customer zone and enforce vendor notifications within that zone only.
+      // For zone admin logins (zone1..zone48@scrapmate.co.in), enforce that exact zone scope.
+      let customerZone = '';
+      let zoneVendorSet = null;
+      try {
+        const requestEmail = String(
+          req.user?.email ||
+          req.session?.userEmail ||
+          req.headers['x-user-email'] ||
+          ''
+        ).trim().toLowerCase();
+        const zoneEmailMatch = requestEmail.match(/^zone(\d{1,2})@scrapmate\.co\.in$/i);
+        const enforcedZone = zoneEmailMatch ? `zone${parseInt(zoneEmailMatch[1], 10)}` : '';
+
+        if (enforcedZone) {
+          customerZone = Address.normalizeZone(enforcedZone);
+          const zoneVendorIds = await Address.findCustomerIdsByZone(enforcedZone);
+          zoneVendorSet = new Set(
+            (zoneVendorIds || []).map((id) => (
+              typeof id === 'string' && !isNaN(id) ? parseInt(id, 10) : id
+            ))
+          );
+
+          const selectedCustomerId = typeof customer_id === 'string' && !isNaN(customer_id)
+            ? parseInt(customer_id, 10)
+            : customer_id;
+          if (selectedCustomerId === null || selectedCustomerId === undefined || !zoneVendorSet.has(selectedCustomerId)) {
+            return res.status(403).json({
+              status: 'error',
+              msg: `Selected customer is outside ${customerZone || enforcedZone.toUpperCase()} scope`,
+              data: null
+            });
+          }
+
+          console.log(`🧭 Zone admin request scope enforced: ${customerZone} (${zoneVendorSet.size} zone users)`);
+        } else {
+          const addresses = await Address.findByCustomerId(parseInt(customer_id));
+          if (Array.isArray(addresses) && addresses.length > 0) {
+            const latestAddress = [...addresses].sort((a, b) => {
+              const aTs = new Date(a.updated_at || a.created_at || 0).getTime();
+              const bTs = new Date(b.updated_at || b.created_at || 0).getTime();
+              return bTs - aTs;
+            })[0];
+            customerZone = Address.normalizeZone(latestAddress?.zone || '');
+          }
+
+          if (customerZone) {
+            const zoneVendorIds = await Address.findCustomerIdsByZone(customerZone);
+            zoneVendorSet = new Set(
+              (zoneVendorIds || []).map((id) => (
+                typeof id === 'string' && !isNaN(id) ? parseInt(id, 10) : id
+              ))
+            );
+            console.log(`🧭 Zone-scoped notifications enabled: ${customerZone} (${zoneVendorSet.size} zone users)`);
+          } else {
+            console.log('🧭 No customer zone found. Zone filter skipped for pickup notifications.');
+          }
+        }
+      } catch (zoneError) {
+        console.error('❌ Failed to resolve customer zone for pickup notification scoping:', zoneError.message);
+      }
+
       // Get last order number and generate new one in standard format
       const lastOrderNumber = await Order.getLastOrderNumber();
       let orderNumber = 10000;
@@ -189,6 +252,49 @@ class V2OrderController {
           let allVendors = [];
           let currentRadius = 15; // Start with 15km
           let finalSearchRadius = 15;
+          const vendorZoneEligibilityCache = new Map();
+
+          const isVendorEligibleForCustomerZone = async (vendorUserId) => {
+            const normalizedCustomerZone = Address.normalizeZone(customerZone);
+            if (!normalizedCustomerZone || !zoneVendorSet) {
+              return true;
+            }
+
+            const uid = typeof vendorUserId === 'string' && !isNaN(vendorUserId)
+              ? parseInt(vendorUserId, 10)
+              : vendorUserId;
+
+            if (uid === null || uid === undefined || isNaN(uid)) {
+              return false;
+            }
+
+            if (zoneVendorSet.has(uid)) {
+              return true;
+            }
+
+            if (vendorZoneEligibilityCache.has(uid)) {
+              return vendorZoneEligibilityCache.get(uid);
+            }
+
+            try {
+              // Fallback: check vendor's own address zone. If vendor has no zone data,
+              // keep them in list (nearby + unknown zone) instead of dropping silently.
+              const vendorAddresses = await Address.findByCustomerId(uid);
+              const vendorZones = [...new Set(
+                (vendorAddresses || [])
+                  .map(addr => Address.normalizeZone(addr?.zone || ''))
+                  .filter(Boolean)
+              )];
+
+              const eligible = vendorZones.length === 0 || vendorZones.includes(normalizedCustomerZone);
+              vendorZoneEligibilityCache.set(uid, eligible);
+              return eligible;
+            } catch (zoneLookupErr) {
+              console.warn(`⚠️  Zone lookup failed for vendor ${uid}; keeping vendor as fallback: ${zoneLookupErr.message}`);
+              vendorZoneEligibilityCache.set(uid, true);
+              return true;
+            }
+          };
           
           console.log(`🔍 Finding B2C vendors with progressive radius expansion starting at ${currentRadius}km for pickup request at ${latitude}, ${longitude}`);
 
@@ -357,6 +463,38 @@ class V2OrderController {
             // Convert to array, sort by distance
             allVendors = Array.from(allVendorsMap.values())
               .sort((a, b) => (a.distance || 999) - (b.distance || 999));
+
+            // Enforce same-zone notification delivery (customer zone -> vendor zone).
+            if (customerZone && zoneVendorSet) {
+              const beforeZoneFilterCount = allVendors.length;
+              let strictZoneMatches = 0;
+              let fallbackZoneMatches = 0;
+              let excludedVendors = 0;
+              const filteredVendors = [];
+
+              for (const vendor of allVendors) {
+                const vendorUserId = typeof vendor.user_id === 'string' && !isNaN(vendor.user_id)
+                  ? parseInt(vendor.user_id, 10)
+                  : vendor.user_id;
+
+                if (zoneVendorSet.has(vendorUserId)) {
+                  strictZoneMatches++;
+                  filteredVendors.push(vendor);
+                  continue;
+                }
+
+                const fallbackEligible = await isVendorEligibleForCustomerZone(vendorUserId);
+                if (fallbackEligible) {
+                  fallbackZoneMatches++;
+                  filteredVendors.push(vendor);
+                } else {
+                  excludedVendors++;
+                }
+              }
+
+              allVendors = filteredVendors;
+              console.log(`🧭 Zone filter ${customerZone}: ${beforeZoneFilterCount} -> ${allVendors.length} vendors within ${currentRadius}km (strict=${strictZoneMatches}, fallback=${fallbackZoneMatches}, excluded=${excludedVendors})`);
+            }
 
             // CRITICAL: If at least one vendor found, STOP and use only those vendors
             // Do NOT expand to 30km, 45km, etc. if vendors are already found
