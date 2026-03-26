@@ -66,6 +66,7 @@ router.post('/admin/b2c-users/:userId/approval-status', AdminController.updateB2
 router.post('/admin/b2c-users/:userId/contacted-status', AdminController.updateB2CContactedStatus);
 
 router.get('/admin/new-users', AdminController.newUsers);
+router.get('/admin/marketplace-users', AdminController.marketplaceUsers);
 router.get('/admin/sr-users', AdminController.srUsers);
 router.get('/admin/sr-users/:userId', AdminController.getSRUserDetails);
 router.post('/admin/sr-users/:userId/approval-status', AdminController.updateSRApprovalStatus);
@@ -253,16 +254,20 @@ router.get('/accounts/paid-subscriptions', AccountsController.getPaidSubscriptio
 router.post('/accounts/subscription-approval', AccountsController.updateSubscriptionApproval);
 router.get('/accounts/pending-bulk-buy-orders', AccountsController.getPendingBulkBuyOrders);
 router.post('/accounts/pending-bulk-buy-order-approval', AccountsController.updatePendingBulkBuyOrderApproval);
+router.get('/accounts/marketplace-bulk-buy-posts', AccountsController.getMarketplaceBulkBuyPosts);
 
 // Pending Bulk Sell Orders Routes
 router.get('/accounts/pending-bulk-sell-orders', AccountsController.getPendingBulkSellOrders);
 router.post('/accounts/pending-bulk-sell-order-cancel', AccountsController.cancelPendingBulkSellOrder);
 router.post('/accounts/pending-bulk-sell-order-status', AccountsController.updatePendingBulkSellOrderStatus);
 router.post('/accounts/marketplace-post-review', AccountsController.updateMarketplacePostReview);
+router.post('/accounts/marketplace-post-delete', AccountsController.deleteMarketplacePost);
 router.post('/accounts/tenders-existing-check', AccountsController.checkExistingTenders);
 router.post('/accounts/tenders-sync', AccountsController.syncTendersToAws);
 router.get('/accounts/tenders-fetch-kerala-scraps', AccountsController.fetchKeralaScrapTenders);
 router.get('/accounts/tenders-saved', AccountsController.getSavedTenders);
+router.get('/accounts/tender-requests', AccountsController.getMarketplaceTenderRequests);
+router.post('/accounts/tender-requests/fulfill', AccountsController.fulfillMarketplaceTenderRequest);
 
 router.get('/accounts/subscribers', AccountsController.subscribersList);
 router.get('/accounts/view-subscribers', AccountsController.viewSubscribersList);

@@ -10,6 +10,150 @@ const { PutCommand, QueryCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb
 const TABLE_NAME = 'bulk_sell_requests';
 
 class BulkSellRequest {
+  static async fetchRequestsByStatuses(statuses = ['active', 'approved']) {
+    const client = getDynamoDBClient();
+    const normalizedStatuses = [...new Set((statuses || [])
+      .map((s) => String(s || '').trim().toLowerCase())
+      .filter(Boolean))];
+    const allItems = [];
+    const seenIds = new Set();
+    const gsiCandidates = ['status-created_at-index', 'status-status_created_at-index'];
+
+    const pushUnique = (items) => {
+      for (const item of items || []) {
+        const idKey = String(item?.id ?? '');
+        if (!idKey || seenIds.has(idKey)) continue;
+        seenIds.add(idKey);
+        allItems.push(item);
+      }
+    };
+
+    for (const status of normalizedStatuses) {
+      let fetchedByGsi = false;
+      for (const indexName of gsiCandidates) {
+        let lastKey = null;
+        try {
+          do {
+            const command = new QueryCommand({
+              TableName: TABLE_NAME,
+              IndexName: indexName,
+              KeyConditionExpression: '#status = :status',
+              ExpressionAttributeNames: { '#status': 'status' },
+              ExpressionAttributeValues: { ':status': status },
+              ExclusiveStartKey: lastKey || undefined
+            });
+            const response = await client.send(command);
+            pushUnique(response?.Items || []);
+            lastKey = response?.LastEvaluatedKey || null;
+          } while (lastKey);
+
+          fetchedByGsi = true;
+          break;
+        } catch (queryErr) {
+          const message = String(queryErr?.message || '');
+          const isIndexError =
+            queryErr?.name === 'ValidationException' ||
+            message.includes('index') ||
+            message.includes('Index');
+          if (!isIndexError) throw queryErr;
+        }
+      }
+
+      if (fetchedByGsi) continue;
+
+      let lastKey = null;
+      do {
+        const command = new ScanCommand({
+          TableName: TABLE_NAME,
+          FilterExpression: '#status = :status',
+          ExpressionAttributeNames: { '#status': 'status' },
+          ExpressionAttributeValues: { ':status': status },
+          ExclusiveStartKey: lastKey || undefined
+        });
+        const response = await client.send(command);
+        pushUnique(response?.Items || []);
+        lastKey = response?.LastEvaluatedKey || null;
+      } while (lastKey);
+    }
+
+    return allItems;
+  }
+
+  static async fetchRequestsByStateAndStatuses(stateKey, statuses = ['active', 'approved'], options = {}) {
+    const client = getDynamoDBClient();
+    const normalizedStateKey = String(stateKey || '').trim().toLowerCase();
+    const normalizedStatuses = [...new Set((statuses || [])
+      .map((s) => String(s || '').trim().toLowerCase())
+      .filter(Boolean))];
+    if (!normalizedStateKey || normalizedStatuses.length === 0) return [];
+
+    const allItems = [];
+    const seenIds = new Set();
+    const gsiCandidates = ['state_key-created_at-index', 'state_key-status_created_at-index'];
+    const latestFirst = options?.latestFirst !== false;
+
+    const pushUnique = (items) => {
+      for (const item of items || []) {
+        const idKey = String(item?.id ?? '');
+        if (!idKey || seenIds.has(idKey)) continue;
+        const itemStatus = String(item?.status || '').trim().toLowerCase();
+        if (!normalizedStatuses.includes(itemStatus)) continue;
+        seenIds.add(idKey);
+        allItems.push(item);
+      }
+    };
+
+    let fetchedByGsi = false;
+    for (const indexName of gsiCandidates) {
+      let lastKey = null;
+      try {
+        do {
+          const command = new QueryCommand({
+            TableName: TABLE_NAME,
+            IndexName: indexName,
+            KeyConditionExpression: '#state_key = :state_key',
+            ExpressionAttributeNames: { '#state_key': 'state_key' },
+            ExpressionAttributeValues: { ':state_key': normalizedStateKey },
+            ExclusiveStartKey: lastKey || undefined,
+            ScanIndexForward: !latestFirst
+          });
+          const response = await client.send(command);
+          pushUnique(response?.Items || []);
+          lastKey = response?.LastEvaluatedKey || null;
+        } while (lastKey);
+
+        fetchedByGsi = true;
+        break;
+      } catch (queryErr) {
+        const message = String(queryErr?.message || '');
+        const isIndexError =
+          queryErr?.name === 'ValidationException' ||
+          message.includes('index') ||
+          message.includes('Index');
+        if (!isIndexError) throw queryErr;
+      }
+    }
+
+    if (!fetchedByGsi) {
+      let lastKey = null;
+      do {
+        const command = new ScanCommand({
+          TableName: TABLE_NAME,
+          FilterExpression: '#state_key = :state_key',
+          ExpressionAttributeNames: { '#state_key': 'state_key' },
+          ExpressionAttributeValues: { ':state_key': normalizedStateKey },
+          ExclusiveStartKey: lastKey || undefined
+        });
+        const response = await client.send(command);
+        pushUnique(response?.Items || []);
+        lastKey = response?.LastEvaluatedKey || null;
+      } while (lastKey);
+    }
+
+    allItems.sort((a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime());
+    return allItems;
+  }
+
   /**
    * Create a new bulk sell request
    */
@@ -90,55 +234,42 @@ class BulkSellRequest {
    * Returns requests where the user's shop is within the request's preferred_distance
    * Both 'S' and 'R' type users can see these requests
    */
-  static async findForUser(userId, userLat, userLng, userType) {
+  static async findForUser(userId, userLat, userLng, userType, options = {}) {
     try {
-      // Both 'S' and 'R' type users can see bulk sell requests
-      if (userType !== 'S' && userType !== 'R') {
-        console.log(`⚠️  User type ${userType} cannot see bulk sell requests. Only 'S' and 'R' type users allowed.`);
+      // Marketplace feed must support S/R/SR/M users.
+      if (!['S', 'R', 'SR', 'M'].includes(String(userType || '').toUpperCase())) {
+        console.log(`⚠️  User type ${userType} cannot see bulk sell requests. Allowed: S, R, SR, M.`);
         return [];
       }
 
-      const client = getDynamoDBClient();
+      const includeAll = options && options.includeAll === true;
+      let sourceRequests = [];
+      try {
+        const marketplaceVisibleStatuses = includeAll
+          ? ['active', 'approved', 'order_full_filled', 'pickup_started', 'arrived', 'completed']
+          : ['active', 'approved'];
+        sourceRequests = await BulkSellRequest.fetchRequestsByStatuses(marketplaceVisibleStatuses);
+      } catch (scanError) {
+        if (scanError.name === 'ResourceNotFoundException' || scanError.__type === 'com.amazonaws.dynamodb.v20120810#ResourceNotFoundException') {
+          console.warn(`⚠️  Table "${TABLE_NAME}" does not exist yet. Returning empty array.`);
+          return [];
+        }
+        throw scanError;
+      }
+
       const allRequests = [];
-      let lastKey = null;
-
-      // Scan all active bulk sell requests
-      do {
-        const params = {
-          TableName: TABLE_NAME,
-          FilterExpression: '#status = :status',
-          ExpressionAttributeNames: {
-            '#status': 'status'
-          },
-          ExpressionAttributeValues: {
-            ':status': 'active'
-          }
-        };
-
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
-        }
-
-        const command = new ScanCommand(params);
-        let response;
-        try {
-          response = await client.send(command);
-        } catch (scanError) {
-          if (scanError.name === 'ResourceNotFoundException' || scanError.__type === 'com.amazonaws.dynamodb.v20120810#ResourceNotFoundException') {
-            console.warn(`⚠️  Table "${TABLE_NAME}" does not exist yet. Returning empty array.`);
-            return [];
-          }
-          throw scanError;
-        }
-
-        if (response && response.Items) {
-          // Calculate distance and filter by preferred_distance
-          const filteredRequests = response.Items.filter((request) => {
+      if (sourceRequests && sourceRequests.length > 0) {
+        // Calculate distance and filter by preferred_distance
+        const filteredRequests = sourceRequests.filter((request) => {
             // Skip if seller is the same as the user
             const sellerId = typeof request.seller_id === 'string' ? parseInt(request.seller_id) : (typeof request.seller_id === 'number' ? request.seller_id : parseInt(String(request.seller_id)));
             const userIdNum = typeof userId === 'string' ? parseInt(userId) : (typeof userId === 'number' ? userId : parseInt(String(userId)));
-            if (sellerId === userIdNum) {
+            if (!includeAll && sellerId === userIdNum) {
               return false;
+            }
+
+            if (includeAll) {
+              return true;
             }
 
             // Calculate distance using Haversine formula
@@ -159,8 +290,8 @@ class BulkSellRequest {
             return true; // Include if no location data
           });
 
-          // Format each request to include total_committed_quantity and distance
-          const formattedRequests = filteredRequests.map((request) => {
+        // Format each request to include total_committed_quantity and distance
+        const formattedRequests = filteredRequests.map((request) => {
             // Parse accepted_buyers to calculate total_committed_quantity
             let parsedAcceptedBuyers = [];
             if (request.accepted_buyers) {
@@ -205,11 +336,8 @@ class BulkSellRequest {
             };
           });
 
-          allRequests.push(...formattedRequests);
-        }
-
-        lastKey = response ? response.LastEvaluatedKey : null;
-      } while (lastKey);
+        allRequests.push(...formattedRequests);
+      }
 
       // Sort by distance (nearest first)
       allRequests.sort((a, b) => {
@@ -413,6 +541,3 @@ class BulkSellRequest {
 }
 
 module.exports = BulkSellRequest;
-
-
-

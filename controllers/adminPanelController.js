@@ -3743,6 +3743,46 @@ class AdminPanelController {
     }
   }
 
+  // Get Marketplace users (user_type 'M') list - no shop dependency
+  static async marketplaceUsers(req, res) {
+    try {
+      console.log('✅ AdminPanelController.marketplaceUsers called');
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 10;
+      const search = req.query.search || null;
+      const appVersion = req.query.app_version || null;
+
+      const result = await User.getMarketplaceUsers(page, limit, search, appVersion);
+
+      res.json({
+        status: 'success',
+        msg: 'Marketplace users retrieved',
+        data: {
+          users: result.users || [],
+          total: result.total || 0,
+          page: result.page || page,
+          limit: result.limit || limit,
+          totalPages: result.totalPages || 0,
+          hasMore: result.hasMore || false
+        }
+      });
+    } catch (error) {
+      console.error('❌ marketplaceUsers error:', error);
+      res.status(500).json({
+        status: 'error',
+        msg: 'Error fetching marketplace users',
+        data: {
+          users: [],
+          total: 0,
+          page: 1,
+          limit: 10,
+          totalPages: 0,
+          hasMore: false
+        }
+      });
+    }
+  }
+
   // Get Delivery users (door buyers) list
   static async deliveryUsers(req, res) {
     try {

@@ -1,7 +1,7 @@
 /**
  * V2 Bulk Sell Request Controller
  * Handles bulk scrap sell requests from B2B users
- * Only 'S' type users can see and accept these requests
+ * S/R/SR/M users can participate in buy-side actions
  */
 
 const User = require('../models/User');
@@ -11,6 +11,7 @@ const { getDynamoDBClient } = require('../config/dynamodb');
 const { ScanCommand, GetCommand, UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 const { sendMulticastNotification, sendVendorNotification } = require('../utils/fcmNotification');
 const { uploadBufferToS3 } = require('../utils/s3Upload');
+const RedisCache = require('../utils/redisCache');
 const path = require('path');
 
 const resolveUploadMeta = (file, sellerId) => {
@@ -49,13 +50,47 @@ const extractStateFromLocation = (location) => {
   const text = String(location || '').trim();
   if (!text) return '';
   const parts = text.split(',').map((part) => String(part || '').trim()).filter(Boolean);
-  return parts.length > 0 ? parts[parts.length - 1] : '';
+  if (parts.length === 0) return '';
+
+  // Walk backwards and pick the first meaningful alphabetic segment.
+  // This avoids returning pincode tails like "695001".
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    const segment = parts[i];
+    if (!segment) continue;
+    const compact = segment.replace(/\s+/g, '');
+    if (/^\d{5,7}$/.test(compact)) continue; // likely pincode
+    if (/^[0-9\s-]+$/.test(segment)) continue; // numeric tail
+    if (/[a-zA-Z]/.test(segment)) return segment;
+  }
+
+  return parts[parts.length - 1] || '';
 };
 
 const toNumberOrNull = (value) => {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const isInvalidStateLike = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return true;
+  const compact = text.replace(/\s+/g, '');
+  if (/^\d{5,7}$/.test(compact)) return true; // pincode-like
+  if (/^[0-9\s-]+$/.test(text)) return true; // numeric-only segment
+  return false;
+};
+
+const resolveRequestStateLabel = (request) => {
+  const explicit = String(request?.state || request?.state_name || '').trim();
+  if (!isInvalidStateLike(explicit)) return explicit;
+  return extractStateFromLocation(request?.location || '');
+};
+
+const resolveRequestStateKey = (request) => {
+  const explicitKey = normalizeStateKey(request?.state_key || '');
+  if (explicitKey && !/^\d+$/.test(explicitKey)) return explicitKey;
+  return normalizeStateKey(resolveRequestStateLabel(request));
 };
 
 // Helper function to find nearby users by type (reused from v2BulkScrapController)
@@ -479,6 +514,7 @@ class V2BulkSellController {
         user_type,
         latitude,
         longitude,
+        include_all,
         page,
         limit,
         state,
@@ -498,18 +534,41 @@ class V2BulkSellController {
         });
       }
 
-      // Both 'S' and 'R' type users can see bulk sell requests
-      if (user_type !== 'S' && user_type !== 'R') {
+      // S/R/SR/M users can see bulk sell requests
+      if (!['S', 'R', 'SR', 'M'].includes(String(user_type))) {
         return res.json({
           status: 'success',
           msg: 'Bulk sell requests retrieved successfully',
-          data: [] // Return empty array for non-S and non-R users
+          data: [] // Return empty array for non-supported users
         });
       }
 
       const userIdNum = typeof user_id === 'string' ? parseInt(user_id) : (typeof user_id === 'number' ? user_id : parseInt(String(user_id)));
       const userLat = latitude ? parseFloat(latitude) : null;
       const userLng = longitude ? parseFloat(longitude) : null;
+      const includeAllExplicit = ['1', 'true', 'yes'].includes(String(include_all || '').trim().toLowerCase());
+      const hasMarketplaceFeedParams =
+        page !== undefined ||
+        limit !== undefined ||
+        state !== undefined ||
+        sort_by !== undefined ||
+        sort_order !== undefined ||
+        min_star !== undefined ||
+        max_star !== undefined ||
+        min_price !== undefined ||
+        max_price !== undefined;
+      const includeAll = includeAllExplicit || hasMarketplaceFeedParams;
+
+      // Hide bulk sell feed from regular B2C dashboard (user_type=R).
+      // Marketplace feed calls include query params (or include_all) and remains enabled.
+      if (user_type === 'R' && !includeAll) {
+        return res.json({
+          status: 'success',
+          msg: 'Bulk sell requests hidden for B2C dashboard',
+          data: []
+        });
+      }
+
       const pageNum = Math.max(1, parseInt(String(page || '1'), 10) || 1);
       const limitNum = Math.max(1, Math.min(100, parseInt(String(limit || '20'), 10) || 20));
       const requestedStateKey = normalizeStateKey(state);
@@ -519,8 +578,61 @@ class V2BulkSellController {
       const maxStar = toNumberOrNull(max_star);
       const minPrice = toNumberOrNull(min_price);
       const maxPrice = toNumberOrNull(max_price);
+      const cacheEnabled = includeAll;
+      const cacheKey = cacheEnabled
+        ? RedisCache.listKey('marketplace_feed_sell', {
+            user_id: userIdNum,
+            user_type: user_type,
+            lat: Number.isFinite(userLat) ? userLat.toFixed(4) : 'na',
+            lng: Number.isFinite(userLng) ? userLng.toFixed(4) : 'na',
+            page: pageNum,
+            limit: limitNum,
+            state: requestedStateKey || 'all',
+            sort_by: sortBy,
+            sort_order: sortOrder,
+            min_star: minStar ?? 'na',
+            max_star: maxStar ?? 'na',
+            min_price: minPrice ?? 'na',
+            max_price: maxPrice ?? 'na'
+          })
+        : null;
 
-      const requests = await BulkSellRequest.findForUser(userIdNum, userLat, userLng, user_type);
+      if (cacheEnabled && cacheKey) {
+        const cached = await RedisCache.get(cacheKey);
+        if (cached && typeof cached === 'object' && cached.status === 'success' && Array.isArray(cached.data)) {
+          return res.json(cached);
+        }
+      }
+
+      const marketplaceVisibleStatuses = [
+        'active',
+        'approved',
+        'order_full_filled',
+        'pickup_started',
+        'arrived',
+        'completed'
+      ];
+      let requests = [];
+      if (includeAll && requestedStateKey) {
+        const stateScoped = await BulkSellRequest.fetchRequestsByStateAndStatuses(
+          requestedStateKey,
+          marketplaceVisibleStatuses,
+          { latestFirst: true }
+        );
+        // Merge GSI result with legacy feed to include older rows where state_key is missing/wrong.
+        const legacyFeed = await BulkSellRequest.findForUser(userIdNum, userLat, userLng, user_type, { includeAll });
+        const byId = new Map();
+        [...stateScoped, ...legacyFeed].forEach((item) => {
+          const key = String(item?.id || '');
+          if (!key) return;
+          if (!byId.has(key)) byId.set(key, item);
+        });
+        requests = Array.from(byId.values());
+      } else {
+        requests = await BulkSellRequest.findForUser(userIdNum, userLat, userLng, user_type, {
+          includeAll,
+        });
+      }
 
       // Format requests
       const formattedRequests = requests.map(request => {
@@ -556,12 +668,14 @@ class V2BulkSellController {
           preferred_distance: typeof request.preferred_distance === 'string' ? parseFloat(request.preferred_distance) : (typeof request.preferred_distance === 'number' ? request.preferred_distance : parseFloat(String(request.preferred_distance || 50))),
           when_available: request.when_available || null,
           location: request.location || null,
-          state: request.state || extractStateFromLocation(request.location) || null,
-          state_key: request.state_key || normalizeStateKey(request.state || extractStateFromLocation(request.location)) || null,
+          state: resolveRequestStateLabel(request) || null,
+          state_key: resolveRequestStateKey(request) || null,
           additional_notes: request.additional_notes || null,
           documents: parsedDocuments,
           post_star: request.post_star ? (typeof request.post_star === 'string' ? parseInt(request.post_star) : request.post_star) : 0,
           status: request.status || 'active',
+          review_status: request.review_status || null,
+          approval_status: request.approval_status || null,
           accepted_buyers: request.accepted_buyers || [],
           rejected_buyers: request.rejected_buyers || [],
           total_committed_quantity: request.total_committed_quantity || 0,
@@ -573,7 +687,25 @@ class V2BulkSellController {
       });
 
       const filteredRequests = formattedRequests.filter((request) => {
-        const requestStateKey = normalizeStateKey(request.state || extractStateFromLocation(request.location));
+        if (includeAll) {
+          const reviewState = String(request.review_status || request.approval_status || '').trim().toLowerCase();
+          const statusState = String(request.status || '').trim().toLowerCase();
+          const reviewApproved = reviewState === 'approved' || reviewState === 'approve';
+          const legacyApproved = !reviewState && [
+            'active',
+            'approved',
+            'payment_approved',
+            'published',
+            'live',
+            'order_full_filled',
+            'pickup_started',
+            'arrived',
+            'completed'
+          ].includes(statusState);
+          if (!reviewApproved && !legacyApproved) return false;
+        }
+
+        const requestStateKey = resolveRequestStateKey(request);
         if (requestedStateKey && requestStateKey !== requestedStateKey) return false;
 
         const stars = toNumberOrNull(request.post_star) || 0;
@@ -612,7 +744,7 @@ class V2BulkSellController {
       const startIndex = (pageNum - 1) * limitNum;
       const pagedData = filteredRequests.slice(startIndex, startIndex + limitNum);
 
-      return res.json({
+      const responsePayload = {
         status: 'success',
         msg: 'Bulk sell requests retrieved successfully',
         data: pagedData,
@@ -624,7 +756,13 @@ class V2BulkSellController {
           has_next: pageNum < totalPages,
           has_prev: pageNum > 1
         }
-      });
+      };
+
+      if (cacheEnabled && cacheKey) {
+        await RedisCache.set(cacheKey, responsePayload, 'short');
+      }
+
+      return res.json(responsePayload);
     } catch (error) {
       console.error('❌ V2BulkSellController.getBulkSellRequests error:', error);
       return res.status(500).json({
@@ -794,7 +932,7 @@ class V2BulkSellController {
    * POST /api/v2/bulk-sell/requests/:requestId/accept
    * Accept/buy from a bulk sell request
    * Body: { buyer_id: number, user_type: string, committed_quantity: number, images?: File[] }
-   * Only 'S' type users can accept
+   * Allowed buyer user types: S, R, SR, M
    */
   static async acceptBulkSellRequest(req, res) {
     try {
@@ -816,11 +954,11 @@ class V2BulkSellController {
         });
       }
 
-      // Only 'S' type users can accept bulk sell requests
-      if (user_type !== 'S') {
+      // Allow S/R/SR/M users to accept bulk sell requests
+      if (!['S', 'R', 'SR', 'M'].includes(String(user_type))) {
         return res.status(403).json({
           status: 'error',
-          msg: 'Only S type users can accept bulk sell requests',
+          msg: 'Only S, R, SR, and M type users can accept bulk sell requests',
           data: null
         });
       }
@@ -865,15 +1003,6 @@ class V2BulkSellController {
 
       const request = response.Item;
 
-      // Check if request is active
-      if (request.status !== 'active') {
-        return res.status(400).json({
-          status: 'error',
-          msg: 'This bulk sell request is no longer active',
-          data: null
-        });
-      }
-
       // Get buyer info
       const buyer = await User.findById(parseInt(buyer_id));
       if (!buyer) {
@@ -907,17 +1036,21 @@ class V2BulkSellController {
         }
       }
 
-      // Check if buyer already accepted
+      // Check if buyer already accepted (edit participation support)
       const buyerIdNum = typeof buyer_id === 'string' ? parseInt(buyer_id) : (typeof buyer_id === 'number' ? buyer_id : parseInt(String(buyer_id)));
-      const alreadyAccepted = acceptedBuyers.some(b => {
+      const existingBuyerIndex = acceptedBuyers.findIndex(b => {
         const bid = typeof b.user_id === 'string' ? parseInt(b.user_id) : (typeof b.user_id === 'number' ? b.user_id : parseInt(String(b.user_id)));
         return bid === buyerIdNum;
       });
+      const isUpdate = existingBuyerIndex !== -1;
+      const requestStatus = String(request.status || '').toLowerCase();
+      const allowUpdateOnClosed = isUpdate && ['sold', 'order_full_filled'].includes(requestStatus);
 
-      if (alreadyAccepted) {
+      // New accepts only for active requests; existing participant can update on sold/full-filled.
+      if (requestStatus !== 'active' && !allowUpdateOnClosed) {
         return res.status(400).json({
           status: 'error',
-          msg: 'You have already accepted this bulk sell request',
+          msg: 'This bulk sell request is no longer active',
           data: null
         });
       }
@@ -940,20 +1073,40 @@ class V2BulkSellController {
         }
       }
 
-      // Add buyer to accepted_buyers
+      // Add/update buyer in accepted_buyers
       const committedQty = typeof committed_quantity === 'string' ? parseFloat(committed_quantity) : (typeof committed_quantity === 'number' ? committed_quantity : parseFloat(String(committed_quantity)));
       const bidPrice = bidding_price ? (typeof bidding_price === 'string' ? parseFloat(bidding_price) : (typeof bidding_price === 'number' ? bidding_price : parseFloat(String(bidding_price)))) : null;
+      const buyerShopId = buyerShop.id ? (typeof buyerShop.id === 'string' ? parseInt(buyerShop.id) : (typeof buyerShop.id === 'number' ? buyerShop.id : parseInt(String(buyerShop.id)))) : null;
+      const nowIso = new Date().toISOString();
 
-      acceptedBuyers.push({
-        user_id: buyerIdNum,
-        user_type: user_type,
-        shop_id: buyerShop.id ? (typeof buyerShop.id === 'string' ? parseInt(buyerShop.id) : (typeof buyerShop.id === 'number' ? buyerShop.id : parseInt(String(buyerShop.id)))) : null,
-        committed_quantity: committedQty,
-        bidding_price: bidPrice,
-        accepted_at: new Date().toISOString(),
-        status: 'accepted',
-        images: imageUrls.length > 0 ? imageUrls : null
-      });
+      if (isUpdate) {
+        const existingBuyer = acceptedBuyers[existingBuyerIndex] || {};
+        acceptedBuyers[existingBuyerIndex] = {
+          ...existingBuyer,
+          user_id: buyerIdNum,
+          user_type: user_type,
+          shop_id: buyerShopId,
+          committed_quantity: committedQty,
+          bidding_price: bidPrice,
+          accepted_at: existingBuyer.accepted_at || nowIso,
+          updated_at: nowIso,
+          status: existingBuyer.status || 'accepted',
+          images: imageUrls.length > 0
+            ? imageUrls
+            : (Array.isArray(existingBuyer.images) ? existingBuyer.images : null)
+        };
+      } else {
+        acceptedBuyers.push({
+          user_id: buyerIdNum,
+          user_type: user_type,
+          shop_id: buyerShopId,
+          committed_quantity: committedQty,
+          bidding_price: bidPrice,
+          accepted_at: nowIso,
+          status: 'accepted',
+          images: imageUrls.length > 0 ? imageUrls : null
+        });
+      }
 
       // Calculate total committed quantity
       let totalCommittedQuantity = 0;
@@ -1007,17 +1160,18 @@ class V2BulkSellController {
         console.error('❌ Error sending notification to seller:', notifErr);
       }
 
-      console.log(`✅ Buyer ${buyerIdNum} accepted bulk sell request ${requestIdNum}`);
+      console.log(`✅ Buyer ${buyerIdNum} ${isUpdate ? 'updated' : 'accepted'} bulk sell request ${requestIdNum}`);
 
       return res.json({
         status: 'success',
-        msg: 'Bulk sell request accepted successfully',
+        msg: isUpdate ? 'Bulk sell participation updated successfully' : 'Bulk sell request accepted successfully',
         data: {
           request_id: requestIdNum,
           buyer_id: buyerIdNum,
           committed_quantity: committedQty,
           total_committed_quantity: totalCommittedQuantity,
-          request_status: newStatus
+          request_status: newStatus,
+          updated: isUpdate
         }
       });
     } catch (error) {
@@ -1123,6 +1277,172 @@ class V2BulkSellController {
       });
     } catch (error) {
       console.error('❌ V2BulkSellController.rejectBulkSellRequest error:', error);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Internal server error',
+        data: null
+      });
+    }
+  }
+
+  /**
+   * POST /api/v2/bulk-sell/requests/:requestId/accept/remove-buyer
+   * Remove a buyer from accepted buyers list (only seller can do this)
+   * Body: { seller_id: number, buyer_user_id: number, reason?: string }
+   */
+  static async removeBuyerFromBulkSellRequest(req, res) {
+    try {
+      const { requestId } = req.params;
+      const { seller_id, buyer_user_id, reason } = req.body;
+
+      if (!seller_id || !buyer_user_id) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Missing required fields: seller_id, buyer_user_id',
+          data: null
+        });
+      }
+
+      const requestIdNum = typeof requestId === 'string' ? parseInt(requestId) : (typeof requestId === 'number' ? requestId : parseInt(String(requestId)));
+      if (isNaN(requestIdNum)) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Invalid request ID',
+          data: null
+        });
+      }
+
+      const sellerIdNum = typeof seller_id === 'string' ? parseInt(seller_id) : (typeof seller_id === 'number' ? seller_id : parseInt(String(seller_id)));
+      const buyerUserIdNum = typeof buyer_user_id === 'string' ? parseInt(buyer_user_id) : (typeof buyer_user_id === 'number' ? buyer_user_id : parseInt(String(buyer_user_id)));
+      if (isNaN(sellerIdNum) || isNaN(buyerUserIdNum)) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'Invalid seller_id or buyer_user_id',
+          data: null
+        });
+      }
+
+      const client = getDynamoDBClient();
+      const getCommand = new GetCommand({
+        TableName: 'bulk_sell_requests',
+        Key: { id: requestIdNum }
+      });
+
+      const response = await client.send(getCommand);
+      if (!response.Item) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Bulk sell request not found',
+          data: null
+        });
+      }
+
+      const request = response.Item;
+      const requestSellerId = typeof request.seller_id === 'string'
+        ? parseInt(request.seller_id)
+        : (typeof request.seller_id === 'number' ? request.seller_id : parseInt(String(request.seller_id)));
+
+      if (sellerIdNum !== requestSellerId) {
+        return res.status(403).json({
+          status: 'error',
+          msg: 'Only the seller can remove buyers from this request',
+          data: null
+        });
+      }
+
+      let acceptedBuyers = [];
+      if (request.accepted_buyers) {
+        try {
+          acceptedBuyers = typeof request.accepted_buyers === 'string'
+            ? JSON.parse(request.accepted_buyers)
+            : request.accepted_buyers;
+        } catch (e) {
+          console.warn('⚠️  Could not parse accepted_buyers:', e.message);
+        }
+      }
+
+      const buyerIndex = acceptedBuyers.findIndex((b) =>
+        (b.user_id === buyerUserIdNum) || (typeof b.user_id === 'string' && parseInt(b.user_id) === buyerUserIdNum)
+      );
+
+      if (buyerIndex === -1) {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Buyer not found in accepted buyers list',
+          data: null
+        });
+      }
+
+      const removedBuyer = acceptedBuyers.splice(buyerIndex, 1)[0];
+
+      let totalCommittedQuantity = 0;
+      acceptedBuyers.forEach((b) => {
+        const committedQty = b.committed_quantity || 0;
+        totalCommittedQuantity += typeof committedQty === 'string'
+          ? parseFloat(committedQty)
+          : (typeof committedQty === 'number' ? committedQty : parseFloat(String(committedQty)) || 0);
+      });
+
+      const requestedQuantity = typeof request.quantity === 'string'
+        ? parseFloat(request.quantity)
+        : (typeof request.quantity === 'number' ? request.quantity : parseFloat(String(request.quantity)));
+      const currentStatus = String(request.status || 'active');
+      const newStatus = totalCommittedQuantity < requestedQuantity && currentStatus === 'sold' ? 'active' : currentStatus;
+
+      let rejectedBuyers = [];
+      if (request.rejected_buyers) {
+        try {
+          rejectedBuyers = typeof request.rejected_buyers === 'string'
+            ? JSON.parse(request.rejected_buyers)
+            : request.rejected_buyers;
+        } catch (e) {
+          console.warn('⚠️  Could not parse rejected_buyers:', e.message);
+        }
+      }
+      const alreadyRejected = rejectedBuyers.some((b) => {
+        const bid = typeof b.user_id === 'string' ? parseInt(b.user_id) : (typeof b.user_id === 'number' ? b.user_id : parseInt(String(b.user_id)));
+        return bid === buyerUserIdNum;
+      });
+      if (!alreadyRejected) {
+        rejectedBuyers.push({
+          user_id: buyerUserIdNum,
+          user_type: removedBuyer?.user_type || null,
+          rejected_at: new Date().toISOString(),
+          rejection_reason: reason || null
+        });
+      }
+
+      const updateCommand = new UpdateCommand({
+        TableName: 'bulk_sell_requests',
+        Key: { id: requestIdNum },
+        UpdateExpression: 'SET accepted_buyers = :acceptedBuyers, rejected_buyers = :rejectedBuyers, total_committed_quantity = :totalCommittedQuantity, #status = :status, updated_at = :updatedAt',
+        ExpressionAttributeNames: {
+          '#status': 'status'
+        },
+        ExpressionAttributeValues: {
+          ':acceptedBuyers': JSON.stringify(acceptedBuyers),
+          ':rejectedBuyers': JSON.stringify(rejectedBuyers),
+          ':totalCommittedQuantity': totalCommittedQuantity,
+          ':status': newStatus,
+          ':updatedAt': new Date().toISOString()
+        }
+      });
+
+      await client.send(updateCommand);
+
+      return res.json({
+        status: 'success',
+        msg: 'Buyer removed from accepted buyers list',
+        data: {
+          request_id: requestIdNum,
+          buyer_removed: true,
+          removed_buyer_id: buyerUserIdNum,
+          total_committed_quantity: totalCommittedQuantity,
+          request_status: newStatus
+        }
+      });
+    } catch (error) {
+      console.error('❌ V2BulkSellController.removeBuyerFromBulkSellRequest error:', error);
       return res.status(500).json({
         status: 'error',
         msg: 'Internal server error',

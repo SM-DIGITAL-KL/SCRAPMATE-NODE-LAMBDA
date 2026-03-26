@@ -1,6 +1,7 @@
 const Package = require('../models/Package');
 const Invoice = require('../models/Invoice');
 const Address = require('../models/Address');
+const MarketplaceTenderRequest = require('../models/MarketplaceTenderRequest');
 const RedisCache = require('../utils/redisCache');
 const { getDynamoDBClient } = require('../config/dynamodb');
 const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
@@ -1454,6 +1455,159 @@ class AccountsPanelController {
   }
 
   /**
+   * Get marketplace bulk buy posts for admin panel.
+   * GET /accounts/marketplace-bulk-buy-posts
+   */
+  static async getMarketplaceBulkBuyPosts(req, res) {
+    try {
+      console.log('🟢 AccountsPanelController.getMarketplaceBulkBuyPosts called');
+
+      const User = require('../models/User');
+      const Shop = require('../models/Shop');
+      const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
+      const { getDynamoDBClient } = require('../config/dynamodb');
+      const client = getDynamoDBClient();
+
+      const allRequests = [];
+      let lastKey = null;
+
+      do {
+        const params = {
+          TableName: 'bulk_scrap_requests'
+        };
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const response = await client.send(new ScanCommand(params));
+        if (response.Items) {
+          allRequests.push(...response.Items);
+        }
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      console.log(`📊 Found ${allRequests.length} total bulk buy posts in database`);
+
+      const buyerIds = [...new Set(allRequests.map((r) => r.buyer_id).filter(Boolean))];
+
+      let users = [];
+      let shops = [];
+      if (buyerIds.length > 0) {
+        users = await User.findByIds(buyerIds);
+        shops = await Shop.findByUserIds(buyerIds);
+      }
+
+      const userMap = {};
+      users.forEach((u) => { userMap[u.id] = u; });
+      const shopMap = {};
+      shops.forEach((s) => { shopMap[s.user_id] = s; });
+
+      const requestsWithDetails = allRequests.map((request) => {
+        const user = request.buyer_id ? userMap[request.buyer_id] : null;
+        const shop = request.buyer_id ? shopMap[request.buyer_id] : null;
+
+        let subcategories = [];
+        if (request.subcategories) {
+          try {
+            subcategories = typeof request.subcategories === 'string'
+              ? JSON.parse(request.subcategories)
+              : request.subcategories;
+          } catch (e) {
+            console.error('Error parsing buy post subcategories:', e);
+          }
+        }
+
+        let acceptedUsers = [];
+        if (request.accepted_users) {
+          try {
+            acceptedUsers = typeof request.accepted_users === 'string'
+              ? JSON.parse(request.accepted_users)
+              : request.accepted_users;
+          } catch (e) {
+            console.error('Error parsing accepted_users:', e);
+          }
+        }
+
+        let documents = [];
+        if (request.documents) {
+          try {
+            documents = typeof request.documents === 'string'
+              ? JSON.parse(request.documents)
+              : request.documents;
+          } catch (e) {
+            console.error('Error parsing buy post documents:', e);
+          }
+        }
+
+        return {
+          id: request.id,
+          buyer_id: request.buyer_id,
+          buyer_name: request.buyer_name || (user ? (user.name || user.username) : `Buyer ${request.buyer_id}`),
+          quantity: request.quantity,
+          preferred_price: request.preferred_price,
+          scrap_type: request.scrap_type,
+          subcategories,
+          location: request.location,
+          preferred_distance: request.preferred_distance,
+          when_needed: request.when_needed,
+          additional_notes: request.additional_notes,
+          status: request.status || 'active',
+          accepted_users: acceptedUsers,
+          total_committed_quantity: request.total_committed_quantity || 0,
+          documents,
+          created_at: request.created_at,
+          updated_at: request.updated_at,
+          username: user ? (user.name || user.username || `User ${request.buyer_id}`) : `User ${request.buyer_id}`,
+          user_type: user ? (user.user_type || null) : null,
+          user_email: user ? (user.email || null) : null,
+          user_profile_image: user ? (user.profile_image || null) : null,
+          user_phone: user ? user.mob_num : null,
+          shopname: shop ? shop.shopname : null,
+          shop_id: shop ? (shop.id || null) : null,
+          shop_documents: shop ? {
+            aadhar_card: shop.aadhar_card || null,
+            driving_license: shop.driving_license || null,
+            business_license_url: shop.business_license_url || null,
+            gst_certificate_url: shop.gst_certificate_url || null,
+            address_proof_url: shop.address_proof_url || null,
+            kyc_owner_url: shop.kyc_owner_url || null
+          } : {},
+          payment_status: request.payment_status || 'pending',
+          payment_amount: request.payment_amount,
+          payment_moj_id: request.payment_moj_id,
+          payment_req_id: request.payment_req_id,
+          invoice_id: request.invoice_id,
+          order_value: request.order_value,
+          review_status: request.review_status || 'pending',
+          review_reason: request.review_reason || null,
+          reviewed_at: request.reviewed_at || null
+        };
+      });
+
+      requestsWithDetails.sort((a, b) => {
+        const dateA = new Date(a.created_at || 0);
+        const dateB = new Date(b.created_at || 0);
+        return dateB - dateA;
+      });
+
+      res.json({
+        status: 'success',
+        msg: 'Marketplace bulk buy posts retrieved',
+        data: requestsWithDetails,
+        total: requestsWithDetails.length
+      });
+    } catch (error) {
+      console.error('❌ getMarketplaceBulkBuyPosts error:', error);
+      console.error('   Error stack:', error.stack);
+      res.status(500).json({
+        status: 'error',
+        msg: 'Error fetching marketplace bulk buy posts: ' + (error.message || 'Unknown error'),
+        data: []
+      });
+    }
+  }
+
+  /**
    * Get pending bulk sell orders for admin panel
    * GET /accounts/pending-bulk-sell-orders
    */
@@ -1717,6 +1871,71 @@ class AccountsPanelController {
       return res.status(500).json({
         status: 'error',
         msg: 'Error updating marketplace review status',
+        data: null
+      });
+    }
+  }
+
+  /**
+   * Delete marketplace post.
+   * Body: { post_id, post_type: 'sell'|'buy' }
+   */
+  static async deleteMarketplacePost(req, res) {
+    try {
+      const { post_id, post_type } = req.body || {};
+
+      if (!post_id || !post_type) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'post_id and post_type are required',
+          data: null
+        });
+      }
+
+      const normalizedType = String(post_type).trim().toLowerCase();
+      if (!['sell', 'buy'].includes(normalizedType)) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'post_type must be sell or buy',
+          data: null
+        });
+      }
+
+      const { getDynamoDBClient } = require('../config/dynamodb');
+      const { DeleteCommand } = require('@aws-sdk/lib-dynamodb');
+      const client = getDynamoDBClient();
+      const tableName = normalizedType === 'sell' ? 'bulk_sell_requests' : 'bulk_scrap_requests';
+      const postIdNum = typeof post_id === 'string' && !isNaN(post_id) ? parseInt(post_id, 10) : post_id;
+
+      const command = new DeleteCommand({
+        TableName: tableName,
+        Key: { id: postIdNum },
+        ConditionExpression: 'attribute_exists(id)'
+      });
+
+      await client.send(command);
+
+      return res.json({
+        status: 'success',
+        msg: 'Marketplace post deleted successfully',
+        data: {
+          post_id: postIdNum,
+          post_type: normalizedType
+        }
+      });
+    } catch (error) {
+      if (error && error.name === 'ConditionalCheckFailedException') {
+        return res.status(404).json({
+          status: 'error',
+          msg: 'Marketplace post not found',
+          data: null
+        });
+      }
+
+      console.error('❌ deleteMarketplacePost error:', error);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Error deleting marketplace post',
         data: null
       });
     }
@@ -2523,7 +2742,8 @@ class AccountsPanelController {
         return deriveStateFromLocation(tender?.location);
       };
 
-      const scanAll = async (tableName) => {
+      const scanAll = async (tableName, options = {}) => {
+        const maxItems = Number(options.maxItems || 0);
         const items = [];
         let lastEvaluatedKey = undefined;
         do {
@@ -2533,6 +2753,9 @@ class AccountsPanelController {
           }));
           if (Array.isArray(response.Items)) {
             items.push(...response.Items);
+          }
+          if (maxItems > 0 && items.length >= maxItems) {
+            return items.slice(0, maxItems);
           }
           lastEvaluatedKey = response.LastEvaluatedKey;
         } while (lastEvaluatedKey);
@@ -2648,7 +2871,16 @@ class AccountsPanelController {
             tenders = await scanAll(tendersTable);
           }
         } else {
-          tenders = await scanAll(tendersTable);
+          // Unfiltered "all states" can be very large and timeout on Lambda.
+          // Keep a bounded window to ensure fast responses for vendor app feed.
+          const ALL_STATES_SCAN_LIMIT = Number(process.env.TENDERS_ALL_STATES_SCAN_LIMIT || 1200);
+          tenders = await scanAll(tendersTable, { maxItems: ALL_STATES_SCAN_LIMIT });
+          stateQueryMeta = {
+            mode: 'scan_limited',
+            index_name: null,
+            index_key: null,
+            query_value: null,
+          };
         }
       } catch (e) {
         if (e && e.name === 'ResourceNotFoundException') {
@@ -2744,6 +2976,13 @@ class AccountsPanelController {
         return bTime - aTime;
       });
 
+      // For all-states feed, cap response size to avoid Lambda 6MB payload overflow (502).
+      // State-specific calls continue to return full matching list.
+      const ALL_STATES_RESPONSE_LIMIT = Number(process.env.TENDERS_ALL_STATES_RESPONSE_LIMIT || 60);
+      const responseTenders = requestedStateNormalized
+        ? normalized
+        : normalized.slice(0, Math.max(1, ALL_STATES_RESPONSE_LIMIT));
+
       return res.json({
         status: 'success',
         msg: 'Saved tenders fetched successfully',
@@ -2756,8 +2995,9 @@ class AccountsPanelController {
           state_query_index_name: stateQueryMeta.index_name,
           state_query_index_key: stateQueryMeta.index_key,
           state_query_value: stateQueryMeta.query_value,
-          total: normalized.length,
-          tenders: normalized
+          total: responseTenders.length,
+          total_available: normalized.length,
+          tenders: responseTenders
         }
       });
     } catch (error) {
@@ -2766,6 +3006,145 @@ class AccountsPanelController {
         status: 'error',
         msg: 'Error fetching saved tenders',
         data: null
+      });
+    }
+  }
+
+  /**
+   * Fetch marketplace tender requests created by users.
+   * GET /accounts/tender-requests
+   * Query: state?, status?
+   */
+  static async getMarketplaceTenderRequests(req, res) {
+    try {
+      const state = String(req?.query?.state || '').trim();
+      const status = String(req?.query?.status || '').trim().toLowerCase();
+
+      const requests = await MarketplaceTenderRequest.findAll({
+        state,
+        status,
+      });
+
+      return res.json({
+        status: 'success',
+        msg: 'Marketplace tender requests fetched successfully',
+        data: {
+          total: requests.length,
+          state_filter: state || null,
+          status_filter: status || null,
+          requests,
+        },
+      });
+    } catch (error) {
+      console.error('❌ getMarketplaceTenderRequests error:', error);
+      if (error.name === 'ResourceNotFoundException') {
+        return res.json({
+          status: 'success',
+          msg: 'No tender requests found',
+          data: {
+            total: 0,
+            requests: [],
+          },
+        });
+      }
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Error fetching marketplace tender requests',
+        data: null,
+      });
+    }
+  }
+
+  /**
+   * Fulfill (remove) a marketplace tender request and notify requester.
+   * POST /accounts/tender-requests/fulfill
+   * Body: { request_id, user_id, requested_state? }
+   */
+  static async fulfillMarketplaceTenderRequest(req, res) {
+    try {
+      const requestId = String(req?.body?.request_id || '').trim();
+      const userId = Number(req?.body?.user_id || 0);
+      const requestedState = String(req?.body?.requested_state || '').trim();
+
+      if (!requestId || !Number.isFinite(userId) || userId <= 0) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'request_id and valid user_id are required',
+          data: null,
+        });
+      }
+
+      const requestRow = await MarketplaceTenderRequest.findById(requestId);
+      if (!requestRow) {
+        return res.json({
+          status: 'success',
+          msg: 'Tender request already removed',
+          data: {
+            removed: false,
+            request_id: requestId,
+          },
+        });
+      }
+
+      if (Number(requestRow.user_id || 0) !== userId) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'request_id does not belong to the provided user_id',
+          data: null,
+        });
+      }
+
+      await MarketplaceTenderRequest.deleteById(requestId);
+
+      let notificationSent = false;
+      let notificationMsg = 'User not found';
+      try {
+        const User = require('../models/User');
+        const { sendVendorNotification } = require('../utils/fcmNotification');
+        const user = await User.findById(userId);
+        const stateText = requestedState || String(requestRow.requested_state || requestRow.requested_state_normalized || '').trim();
+
+        if (user && String(user.app_type || '').toLowerCase() === 'vendor_app' && user.fcm_token) {
+          const pushResult = await sendVendorNotification(
+            user.fcm_token,
+            'Requested Tender Added',
+            `Your requested scrap tender on ${stateText} is added`,
+            {
+              type: 'marketplace_requested_tender_added',
+              request_id: requestId,
+              requested_state: stateText,
+              user_id: String(userId),
+            }
+          );
+          notificationSent = !!(pushResult && pushResult.success);
+          notificationMsg = notificationSent ? 'Notification sent' : (pushResult?.message || 'Push send failed');
+        } else if (user && String(user.app_type || '').toLowerCase() !== 'vendor_app') {
+          notificationMsg = `Skipped: app_type=${String(user.app_type || '')}`;
+        } else if (user && !user.fcm_token) {
+          notificationMsg = 'Skipped: no_fcm_token';
+        }
+      } catch (notifyErr) {
+        notificationMsg = notifyErr.message || 'Notification error';
+      }
+
+      return res.json({
+        status: 'success',
+        msg: 'Tender request fulfilled and removed',
+        data: {
+          removed: true,
+          request_id: requestId,
+          user_id: userId,
+          requested_state: requestedState || requestRow.requested_state || null,
+          notification_sent: notificationSent,
+          notification_msg: notificationMsg,
+        },
+      });
+    } catch (error) {
+      console.error('❌ fulfillMarketplaceTenderRequest error:', error);
+      return res.status(500).json({
+        status: 'error',
+        msg: 'Error fulfilling marketplace tender request',
+        data: null,
       });
     }
   }

@@ -9,6 +9,150 @@ const { PutCommand, QueryCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb
 const TABLE_NAME = 'bulk_scrap_requests';
 
 class BulkScrapRequest {
+  static async fetchRequestsByStatuses(statuses = ['active', 'approved']) {
+    const client = getDynamoDBClient();
+    const normalizedStatuses = [...new Set((statuses || [])
+      .map((s) => String(s || '').trim().toLowerCase())
+      .filter(Boolean))];
+    const allItems = [];
+    const seenIds = new Set();
+    const gsiCandidates = ['status-created_at-index', 'status-status_created_at-index'];
+
+    const pushUnique = (items) => {
+      for (const item of items || []) {
+        const idKey = String(item?.id ?? '');
+        if (!idKey || seenIds.has(idKey)) continue;
+        seenIds.add(idKey);
+        allItems.push(item);
+      }
+    };
+
+    for (const status of normalizedStatuses) {
+      let fetchedByGsi = false;
+      for (const indexName of gsiCandidates) {
+        let lastKey = null;
+        try {
+          do {
+            const command = new QueryCommand({
+              TableName: TABLE_NAME,
+              IndexName: indexName,
+              KeyConditionExpression: '#status = :status',
+              ExpressionAttributeNames: { '#status': 'status' },
+              ExpressionAttributeValues: { ':status': status },
+              ExclusiveStartKey: lastKey || undefined
+            });
+            const response = await client.send(command);
+            pushUnique(response?.Items || []);
+            lastKey = response?.LastEvaluatedKey || null;
+          } while (lastKey);
+
+          fetchedByGsi = true;
+          break;
+        } catch (queryErr) {
+          const message = String(queryErr?.message || '');
+          const isIndexError =
+            queryErr?.name === 'ValidationException' ||
+            message.includes('index') ||
+            message.includes('Index');
+          if (!isIndexError) throw queryErr;
+        }
+      }
+
+      if (fetchedByGsi) continue;
+
+      let lastKey = null;
+      do {
+        const command = new ScanCommand({
+          TableName: TABLE_NAME,
+          FilterExpression: '#status = :status',
+          ExpressionAttributeNames: { '#status': 'status' },
+          ExpressionAttributeValues: { ':status': status },
+          ExclusiveStartKey: lastKey || undefined
+        });
+        const response = await client.send(command);
+        pushUnique(response?.Items || []);
+        lastKey = response?.LastEvaluatedKey || null;
+      } while (lastKey);
+    }
+
+    return allItems;
+  }
+
+  static async fetchRequestsByStateAndStatuses(stateKey, statuses = ['active', 'approved'], options = {}) {
+    const client = getDynamoDBClient();
+    const normalizedStateKey = String(stateKey || '').trim().toLowerCase();
+    const normalizedStatuses = [...new Set((statuses || [])
+      .map((s) => String(s || '').trim().toLowerCase())
+      .filter(Boolean))];
+    if (!normalizedStateKey || normalizedStatuses.length === 0) return [];
+
+    const allItems = [];
+    const seenIds = new Set();
+    const gsiCandidates = ['state_key-created_at-index', 'state_key-status_created_at-index'];
+    const latestFirst = options?.latestFirst !== false;
+
+    const pushUnique = (items) => {
+      for (const item of items || []) {
+        const idKey = String(item?.id ?? '');
+        if (!idKey || seenIds.has(idKey)) continue;
+        const itemStatus = String(item?.status || '').trim().toLowerCase();
+        if (!normalizedStatuses.includes(itemStatus)) continue;
+        seenIds.add(idKey);
+        allItems.push(item);
+      }
+    };
+
+    let fetchedByGsi = false;
+    for (const indexName of gsiCandidates) {
+      let lastKey = null;
+      try {
+        do {
+          const command = new QueryCommand({
+            TableName: TABLE_NAME,
+            IndexName: indexName,
+            KeyConditionExpression: '#state_key = :state_key',
+            ExpressionAttributeNames: { '#state_key': 'state_key' },
+            ExpressionAttributeValues: { ':state_key': normalizedStateKey },
+            ExclusiveStartKey: lastKey || undefined,
+            ScanIndexForward: !latestFirst
+          });
+          const response = await client.send(command);
+          pushUnique(response?.Items || []);
+          lastKey = response?.LastEvaluatedKey || null;
+        } while (lastKey);
+
+        fetchedByGsi = true;
+        break;
+      } catch (queryErr) {
+        const message = String(queryErr?.message || '');
+        const isIndexError =
+          queryErr?.name === 'ValidationException' ||
+          message.includes('index') ||
+          message.includes('Index');
+        if (!isIndexError) throw queryErr;
+      }
+    }
+
+    if (!fetchedByGsi) {
+      let lastKey = null;
+      do {
+        const command = new ScanCommand({
+          TableName: TABLE_NAME,
+          FilterExpression: '#state_key = :state_key',
+          ExpressionAttributeNames: { '#state_key': 'state_key' },
+          ExpressionAttributeValues: { ':state_key': normalizedStateKey },
+          ExclusiveStartKey: lastKey || undefined
+        });
+        const response = await client.send(command);
+        pushUnique(response?.Items || []);
+        lastKey = response?.LastEvaluatedKey || null;
+      } while (lastKey);
+    }
+
+    allItems.sort((a, b) => new Date(b?.created_at || 0).getTime() - new Date(a?.created_at || 0).getTime());
+    return allItems;
+  }
+
   /**
    * Create a new bulk scrap purchase request
    */
@@ -83,49 +227,18 @@ class BulkScrapRequest {
    */
   static async findForUser(userId, userLat, userLng, userType) {
     try {
-      const client = getDynamoDBClient();
-      const allRequests = [];
-      let lastKey = null;
-
-      // Scan all active bulk scrap requests
-      // Note: 'status' is a reserved keyword in DynamoDB, so we use ExpressionAttributeNames
-      do {
-        const params = {
-          TableName: TABLE_NAME,
-          FilterExpression: '#status = :status',
-          ExpressionAttributeNames: {
-            '#status': 'status'
-          },
-          ExpressionAttributeValues: {
-            ':status': 'active'
-          }
-        };
-
-        if (lastKey) {
-          params.ExclusiveStartKey = lastKey;
+      let allRequests = [];
+      try {
+        allRequests = await BulkScrapRequest.fetchRequestsByStatuses(['active', 'approved']);
+      } catch (scanError) {
+        if (scanError.name === 'ResourceNotFoundException' || scanError.__type === 'com.amazonaws.dynamodb.v20120810#ResourceNotFoundException') {
+          console.warn(`⚠️  Table "${TABLE_NAME}" does not exist yet. Returning empty array.`);
+          return [];
         }
+        throw scanError;
+      }
 
-        const command = new ScanCommand(params);
-        let response;
-        try {
-          response = await client.send(command);
-        } catch (scanError) {
-          // Handle case where table doesn't exist
-          if (scanError.name === 'ResourceNotFoundException' || scanError.__type === 'com.amazonaws.dynamodb.v20120810#ResourceNotFoundException') {
-            console.warn(`⚠️  Table "${TABLE_NAME}" does not exist yet. Returning empty array.`);
-            return [];
-          }
-          throw scanError;
-        }
-
-        if (response.Items) {
-          allRequests.push(...response.Items);
-        }
-
-        lastKey = response.LastEvaluatedKey;
-      } while (lastKey);
-
-      console.log(`   Found ${allRequests.length} active bulk scrap requests`);
+      console.log(`   Found ${allRequests.length} marketplace-visible bulk scrap requests`);
 
       // Filter requests where user is within preferred_distance
       const userRequests = [];
@@ -228,6 +341,8 @@ class BulkScrapRequest {
             documents: parsedDocuments,
             post_star: request.post_star ? (typeof request.post_star === 'string' ? parseInt(request.post_star) : request.post_star) : 0,
             status: request.status || 'active',
+            review_status: request.review_status || null,
+            approval_status: request.approval_status || null,
             accepted_vendors: parsedAcceptedVendors,
             rejected_vendors: request.rejected_vendors ? (typeof request.rejected_vendors === 'string' ? JSON.parse(request.rejected_vendors) : request.rejected_vendors) : [],
             total_committed_quantity: totalCommittedQuantity,
@@ -414,7 +529,7 @@ class BulkScrapRequest {
         }
 
         // Calculate distance if location is available
-        let distance = Infinity;
+        let distance = null;
         if (request.latitude && request.longitude && userLat && userLng) {
           const dLat = (request.latitude - userLat) * Math.PI / 180;
           const dLng = (request.longitude - userLng) * Math.PI / 180;
@@ -497,7 +612,7 @@ class BulkScrapRequest {
           created_at: request.created_at || new Date().toISOString(),
           updated_at: request.updated_at || new Date().toISOString(),
           distance: distance,
-          distance_km: parseFloat(distance.toFixed(2))
+          distance_km: Number.isFinite(distance) ? parseFloat(distance.toFixed(2)) : null
         };
 
         acceptedRequests.push(formattedRequest);

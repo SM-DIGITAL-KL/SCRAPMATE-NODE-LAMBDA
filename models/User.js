@@ -1963,6 +1963,93 @@ class User {
     }
   }
 
+  // Get Marketplace users with pagination (user_type = 'M') - no shop dependency
+  static async getMarketplaceUsers(page = 1, limit = 10, search = null, appVersion = null) {
+    try {
+      const client = getDynamoDBClient();
+      const pageNumber = parseInt(page) || 1;
+      const pageSize = parseInt(limit) || 20;
+      const skip = (pageNumber - 1) * pageSize;
+
+      let lastKey = null;
+      const allUsers = [];
+      const searchTerm = (search || '').toString().trim().toLowerCase();
+
+      console.log('🔍 Scanning users for user_type = "M" (Marketplace Users)...');
+      do {
+        const params = {
+          TableName: TABLE_NAME
+        };
+
+        if (lastKey) {
+          params.ExclusiveStartKey = lastKey;
+        }
+
+        const command = new ScanCommand(params);
+        const response = await client.send(command);
+
+        if (response.Items) {
+          let marketplaceUsers = response.Items.filter(user => {
+            if (user.user_type !== 'M') return false;
+            if (user.del_status === 2) return false;
+
+            if (appVersion && (appVersion === 'v1' || appVersion === 'v2')) {
+              const userAppVersion = user.app_version || 'v1';
+              if (userAppVersion !== appVersion) return false;
+            }
+
+            if (searchTerm) {
+              const name = (user.name || '').toString().toLowerCase();
+              const mobile = (user.mob_num || '').toString().toLowerCase();
+              const email = (user.email || '').toString().toLowerCase();
+              return name.includes(searchTerm) || mobile.includes(searchTerm) || email.includes(searchTerm);
+            }
+
+            return true;
+          });
+
+          allUsers.push(...marketplaceUsers);
+        }
+
+        lastKey = response.LastEvaluatedKey;
+      } while (lastKey);
+
+      // Sort by app_version first (v2 first), then newest first.
+      allUsers.sort((a, b) => {
+        const aIsV2 = a.app_version === 'v2' ? 1 : 0;
+        const bIsV2 = b.app_version === 'v2' ? 1 : 0;
+        if (aIsV2 !== bIsV2) {
+          return bIsV2 - aIsV2;
+        }
+
+        let dateA = a.created_at ? new Date(a.created_at) : null;
+        let dateB = b.created_at ? new Date(b.created_at) : null;
+        if (!dateA || isNaN(dateA.getTime())) dateA = a.updated_at ? new Date(a.updated_at) : new Date(0);
+        if (!dateB || isNaN(dateB.getTime())) dateB = b.updated_at ? new Date(b.updated_at) : new Date(0);
+        return dateB.getTime() - dateA.getTime();
+      });
+
+      const total = allUsers.length;
+      const paginatedUsers = pageSize >= 999999 ? allUsers : allUsers.slice(skip, skip + pageSize);
+      const usersWithoutPassword = paginatedUsers.map(user => {
+        const { password: _, ...userWithoutPassword } = user;
+        return userWithoutPassword;
+      });
+
+      return {
+        users: usersWithoutPassword,
+        total: total,
+        page: pageNumber,
+        limit: pageSize,
+        totalPages: Math.ceil(total / pageSize),
+        hasMore: skip + pageSize < total
+      };
+    } catch (err) {
+      console.error('User.getMarketplaceUsers error:', err);
+      throw err;
+    }
+  }
+
   // Get Delivery users with pagination (user_type = 'D')
   static async getDeliveryUsers(page = 1, limit = 10, search = null) {
     try {

@@ -37,6 +37,7 @@ router.post('/admin/b2b-users/:userId/approval-status', AdminPanelController.upd
 router.get('/admin/b2c-users', AdminPanelController.b2cUsers);
 router.get('/admin/b2c-users/:userId', AdminPanelController.getB2CUserDetails);
 router.post('/admin/b2c-users/:userId/approval-status', AdminPanelController.updateB2CApprovalStatus);
+router.get('/admin/marketplace-users', AdminPanelController.marketplaceUsers);
 router.get('/admin/sr-users', AdminPanelController.srUsers);
 router.get('/admin/sr-users/:userId', AdminPanelController.getSRUserDetails);
 router.post('/admin/sr-users/:userId/approval-status', AdminPanelController.updateSRApprovalStatus);
@@ -286,4 +287,3 @@ router.get('/view_subcribersList', async (req, res) => {
 });
 
 module.exports = router;
-

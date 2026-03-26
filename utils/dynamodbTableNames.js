@@ -78,7 +78,9 @@ function getAllTableNames() {
     'per_pages',
     'order_rating',
     'notifications',
-    'food_waste_enquiries'
+    'food_waste_enquiries',
+    'marketplace_post_interests',
+    'marketplace_tender_requests'
   ];
   
   const tableMap = {};
@@ -112,5 +114,4 @@ module.exports = {
   isDevelopment,
   isProduction
 };
-
 

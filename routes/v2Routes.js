@@ -19,6 +19,8 @@ const V2InstamojoOrderController = require('../controllers/v2InstamojoOrderContr
 const V2BulkMessageController = require('../controllers/v2BulkMessageController');
 const V2LivePriceController = require('../controllers/v2LivePriceController');
 const V2MediaController = require('../controllers/v2MediaController');
+const V2MarketplaceInterestController = require('../controllers/v2MarketplaceInterestController');
+const V2MarketplaceTenderRequestController = require('../controllers/v2MarketplaceTenderRequestController');
 const SubcategoryController = require('../controllers/subcategoryController');
 const UtilityController = require('../controllers/utilityController');
 const SitePanelController = require('../controllers/sitePanelController');
@@ -844,6 +846,30 @@ router.get('/addresses/marketplace/customer/:customerId', V2AddressController.ge
 router.post('/addresses/marketplace/upsert', V2AddressController.upsertMarketplaceAddress);
 
 /**
+ * POST /api/v2/marketplace/interests
+ * Mark a marketplace post as interested for a user
+ */
+router.post('/marketplace/interests', V2MarketplaceInterestController.markInterested);
+
+/**
+ * GET /api/v2/marketplace/interests?user_id=...
+ * Get marketplace interested posts for a user
+ */
+router.get('/marketplace/interests', V2MarketplaceInterestController.getInterestedPosts);
+
+/**
+ * POST /api/v2/marketplace/tender-requests
+ * Save tender request from marketplace user
+ */
+router.post('/marketplace/tender-requests', V2MarketplaceTenderRequestController.createRequest);
+
+/**
+ * GET /api/v2/marketplace/tender-requests?user_id=...
+ * Get tender requests by user
+ */
+router.get('/marketplace/tender-requests', V2MarketplaceTenderRequestController.getRequestsByUser);
+
+/**
  * PUT /api/v2/addresses/:addressId
  * Update an address
  * Body: {
@@ -1180,6 +1206,12 @@ router.post('/bulk-sell/requests/:requestId/accept',
   ])),
   V2BulkSellController.acceptBulkSellRequest
 );
+
+/**
+ * POST /api/v2/bulk-sell/requests/:requestId/accept/remove-buyer
+ * Remove a buyer from accepted buyers list (seller only)
+ */
+router.post('/bulk-sell/requests/:requestId/accept/remove-buyer', V2BulkSellController.removeBuyerFromBulkSellRequest);
 
 /**
  * POST /api/v2/bulk-sell/requests/:requestId/reject

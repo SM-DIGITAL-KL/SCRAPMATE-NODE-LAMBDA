@@ -11,6 +11,7 @@ const { getDynamoDBClient } = require('../config/dynamodb');
 const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
 const { sendMulticastNotification } = require('../utils/fcmNotification');
 const { uploadBufferToS3 } = require('../utils/s3Upload');
+const RedisCache = require('../utils/redisCache');
 const path = require('path');
 
 const normalizeStateKey = (value) =>
@@ -24,13 +25,47 @@ const extractStateFromLocation = (location) => {
   const text = String(location || '').trim();
   if (!text) return '';
   const parts = text.split(',').map((part) => String(part || '').trim()).filter(Boolean);
-  return parts.length > 0 ? parts[parts.length - 1] : '';
+  if (parts.length === 0) return '';
+
+  // Walk backwards and pick the first meaningful alphabetic segment.
+  // This avoids returning pincode tails like "695001".
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    const segment = parts[i];
+    if (!segment) continue;
+    const compact = segment.replace(/\s+/g, '');
+    if (/^\d{5,7}$/.test(compact)) continue; // likely pincode
+    if (/^[0-9\s-]+$/.test(segment)) continue; // numeric tail
+    if (/[a-zA-Z]/.test(segment)) return segment;
+  }
+
+  return parts[parts.length - 1] || '';
 };
 
 const toNumberOrNull = (value) => {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const isInvalidStateLike = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return true;
+  const compact = text.replace(/\s+/g, '');
+  if (/^\d{5,7}$/.test(compact)) return true; // pincode-like
+  if (/^[0-9\s-]+$/.test(text)) return true; // numeric-only segment
+  return false;
+};
+
+const resolveRequestStateLabel = (request) => {
+  const explicit = String(request?.state || request?.state_name || '').trim();
+  if (!isInvalidStateLike(explicit)) return explicit;
+  return extractStateFromLocation(request?.location || '');
+};
+
+const resolveRequestStateKey = (request) => {
+  const explicitKey = normalizeStateKey(request?.state_key || '');
+  if (explicitKey && !/^\d+$/.test(explicitKey)) return explicitKey;
+  return normalizeStateKey(resolveRequestStateLabel(request));
 };
 
 class V2BulkScrapController {
@@ -647,6 +682,7 @@ class V2BulkScrapController {
         state,
         sort_by,
         sort_order,
+        include_all,
         min_star,
         max_star,
         min_price,
@@ -655,6 +691,29 @@ class V2BulkScrapController {
 
       console.log('📦 V2BulkScrapController.getBulkScrapRequests called');
       console.log('   Query params:', { user_id, latitude, longitude, user_type, page, limit, state, sort_by, sort_order });
+
+      const includeAllExplicit = ['1', 'true', 'yes'].includes(String(include_all || '').trim().toLowerCase());
+      const hasMarketplaceFeedParams =
+        page !== undefined ||
+        limit !== undefined ||
+        state !== undefined ||
+        sort_by !== undefined ||
+        sort_order !== undefined ||
+        min_star !== undefined ||
+        max_star !== undefined ||
+        min_price !== undefined ||
+        max_price !== undefined;
+      const includeAll = includeAllExplicit || hasMarketplaceFeedParams;
+
+      // Hide bulk buy feed from regular B2C dashboard (user_type=R).
+      // Marketplace feed includes query params (or include_all) and stays enabled.
+      if (user_type === 'R' && !includeAll) {
+        return res.json({
+          status: 'success',
+          msg: 'Bulk scrap requests hidden for B2C dashboard',
+          data: []
+        });
+      }
 
       // Validate required fields
       if (!user_id) {
@@ -788,13 +847,19 @@ class V2BulkScrapController {
         }
       }
 
-      if (!lat || !lng) {
+      const allowMarketplaceIncludeAll = includeAll;
+
+      if ((!lat || !lng) && !allowMarketplaceIncludeAll) {
         console.warn(`⚠️  No location found for user ${user_id}. Returning empty array.`);
         return res.json({
           status: 'success',
           msg: 'Bulk scrap requests retrieved successfully (no location available)',
           data: []
         });
+      }
+
+      if (allowMarketplaceIncludeAll) {
+        console.log(`✅ Marketplace include_all feed for user_type=${String(user_type || '').toUpperCase() || 'N/A'}: returning approved buy posts without distance filter.`);
       }
 
       // For SR users: Only return bulk requests if they're using B2C shop (b2c dashboard)
@@ -808,10 +873,43 @@ class V2BulkScrapController {
         });
       }
 
+      const requestedStateKey = normalizeStateKey(state);
+
       // Get bulk scrap requests for this user
       let requests = [];
       try {
-        requests = await BulkScrapRequest.findForUser(user_id, lat, lng, user_type);
+        if (allowMarketplaceIncludeAll) {
+          const marketplaceVisibleStatuses = [
+            'active',
+            'approved',
+            'order_full_filled',
+            'pickup_started',
+            'arrived',
+            'completed'
+          ];
+          const stateScoped = requestedStateKey
+            ? await BulkScrapRequest.fetchRequestsByStateAndStatuses(
+                requestedStateKey,
+                marketplaceVisibleStatuses,
+                { latestFirst: true }
+              )
+            : [];
+          const legacyFeed = await BulkScrapRequest.fetchRequestsByStatuses(marketplaceVisibleStatuses);
+          if (requestedStateKey) {
+            // Merge GSI result with legacy feed to include older rows where state_key is missing/wrong.
+            const byId = new Map();
+            [...stateScoped, ...legacyFeed].forEach((item) => {
+              const key = String(item?.id || '');
+              if (!key) return;
+              if (!byId.has(key)) byId.set(key, item);
+            });
+            requests = Array.from(byId.values());
+          } else {
+            requests = legacyFeed;
+          }
+        } else {
+          requests = await BulkScrapRequest.findForUser(user_id, lat, lng, user_type);
+        }
         console.log(`✅ Returning ${requests.length} bulk scrap requests`);
         if (requests.length > 0) {
           console.log('   Sample request:', JSON.stringify(requests[0], null, 2));
@@ -829,22 +927,64 @@ class V2BulkScrapController {
 
       const pageNum = Math.max(1, parseInt(String(page || '1'), 10) || 1);
       const limitNum = Math.max(1, Math.min(100, parseInt(String(limit || '20'), 10) || 20));
-      const requestedStateKey = normalizeStateKey(state);
       const sortBy = String(sort_by || 'created_at').trim().toLowerCase();
       const sortOrder = String(sort_order || 'desc').trim().toLowerCase() === 'asc' ? 'asc' : 'desc';
       const minStar = toNumberOrNull(min_star);
       const maxStar = toNumberOrNull(max_star);
       const minPrice = toNumberOrNull(min_price);
       const maxPrice = toNumberOrNull(max_price);
+      const cacheEnabled = includeAll;
+      const cacheKey = cacheEnabled
+        ? RedisCache.listKey('marketplace_feed_buy', {
+            user_id: user_id,
+            user_type: user_type,
+            lat: Number.isFinite(lat) ? lat.toFixed(4) : 'na',
+            lng: Number.isFinite(lng) ? lng.toFixed(4) : 'na',
+            page: pageNum,
+            limit: limitNum,
+            state: requestedStateKey || 'all',
+            sort_by: sortBy,
+            sort_order: sortOrder,
+            min_star: minStar ?? 'na',
+            max_star: maxStar ?? 'na',
+            min_price: minPrice ?? 'na',
+            max_price: maxPrice ?? 'na'
+          })
+        : null;
+
+      if (cacheEnabled && cacheKey) {
+        const cached = await RedisCache.get(cacheKey);
+        if (cached && typeof cached === 'object' && cached.status === 'success' && Array.isArray(cached.data)) {
+          return res.json(cached);
+        }
+      }
 
       const normalizedRequests = (requests || []).map((request) => ({
         ...request,
-        state: request.state || extractStateFromLocation(request.location) || null,
-        state_key: request.state_key || normalizeStateKey(request.state || extractStateFromLocation(request.location)) || null
+        state: resolveRequestStateLabel(request) || null,
+        state_key: resolveRequestStateKey(request) || null
       }));
 
       const filteredRequests = normalizedRequests.filter((request) => {
-        const requestStateKey = normalizeStateKey(request.state || extractStateFromLocation(request.location));
+        if (includeAll) {
+          const reviewState = String(request.review_status || request.approval_status || '').trim().toLowerCase();
+          const statusState = String(request.status || '').trim().toLowerCase();
+          const reviewApproved = reviewState === 'approved' || reviewState === 'approve';
+          const legacyApproved = !reviewState && [
+            'active',
+            'approved',
+            'payment_approved',
+            'published',
+            'live',
+            'order_full_filled',
+            'pickup_started',
+            'arrived',
+            'completed'
+          ].includes(statusState);
+          if (!reviewApproved && !legacyApproved) return false;
+        }
+
+        const requestStateKey = resolveRequestStateKey(request);
         if (requestedStateKey && requestStateKey !== requestedStateKey) return false;
 
         const stars = toNumberOrNull(request.post_star) || 0;
@@ -883,7 +1023,7 @@ class V2BulkScrapController {
       const startIndex = (pageNum - 1) * limitNum;
       const pagedData = filteredRequests.slice(startIndex, startIndex + limitNum);
 
-      return res.json({
+      const responsePayload = {
         status: 'success',
         msg: 'Bulk scrap requests retrieved successfully',
         data: pagedData,
@@ -895,7 +1035,13 @@ class V2BulkScrapController {
           has_next: pageNum < totalPages,
           has_prev: pageNum > 1
         }
-      });
+      };
+
+      if (cacheEnabled && cacheKey) {
+        await RedisCache.set(cacheKey, responsePayload, 'short');
+      }
+
+      return res.json(responsePayload);
     } catch (error) {
       console.error('❌ V2BulkScrapController.getBulkScrapRequests error:', error);
       return res.status(500).json({
@@ -913,10 +1059,28 @@ class V2BulkScrapController {
    */
   static async getAcceptedBulkScrapRequests(req, res) {
     try {
-      const { user_id, latitude, longitude, user_type } = req.query;
+      const { user_id, latitude, longitude, user_type, include_all, page, limit, state, sort_by, sort_order } = req.query;
 
       console.log('📦 V2BulkScrapController.getAcceptedBulkScrapRequests called');
       console.log('   Query params:', { user_id, latitude, longitude, user_type });
+
+      const includeAllExplicit = ['1', 'true', 'yes'].includes(String(include_all || '').trim().toLowerCase());
+      const hasMarketplaceFeedParams =
+        page !== undefined ||
+        limit !== undefined ||
+        state !== undefined ||
+        sort_by !== undefined ||
+        sort_order !== undefined;
+      const includeAll = includeAllExplicit || hasMarketplaceFeedParams;
+
+      // Hide accepted bulk buy feed from regular B2C dashboard (user_type=R).
+      if (user_type === 'R' && !includeAll) {
+        return res.json({
+          status: 'success',
+          msg: 'Accepted bulk scrap requests hidden for B2C dashboard',
+          data: []
+        });
+      }
 
       // Validate required fields
       if (!user_id) {
@@ -1051,12 +1215,7 @@ class V2BulkScrapController {
       }
 
       if (!lat || !lng) {
-        console.warn(`⚠️  No location found for user ${user_id}. Returning empty array.`);
-        return res.json({
-          status: 'success',
-          msg: 'Accepted bulk scrap requests retrieved successfully (no location available)',
-          data: []
-        });
+        console.log(`ℹ️  No location found for user ${user_id}. Fetching accepted requests without distance context.`);
       }
 
       // For SR users: Only return bulk requests if they're using B2C shop (b2c dashboard)
@@ -1107,7 +1266,7 @@ class V2BulkScrapController {
   /**
    * POST /api/v2/bulk-scrap/requests/:requestId/accept
    * Accept a bulk scrap purchase request (R, S, SR users)
-   * Body: { user_id: number, user_type: 'R'|'S'|'SR', quantity?: number (in kgs, optional - defaults to remaining quantity), bidding_price?: number (in ₹/kg, optional) }
+   * Body: { user_id: number, user_type: 'R'|'S'|'SR'|'M', quantity?: number (in kgs, optional - defaults to remaining quantity), bidding_price?: number (in ₹/kg, optional) }
    */
   static async acceptBulkScrapRequest(req, res) {
     try {
@@ -1151,12 +1310,28 @@ class V2BulkScrapController {
         });
       }
 
+      if (quantity === undefined || quantity === null || String(quantity).trim() === '') {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'quantity is required and must be greater than 0',
+          data: null
+        });
+      }
+
+      if (imageUrls.length === 0) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'At least one participation image is required',
+          data: null
+        });
+      }
+
       // Validate user type
-      const validTypes = ['R', 'S', 'SR'];
+      const validTypes = ['R', 'S', 'SR', 'M'];
       if (!validTypes.includes(user_type)) {
         return res.status(400).json({
           status: 'error',
-          msg: 'Invalid user_type. Must be R, S, or SR',
+          msg: 'Invalid user_type. Must be R, S, SR, or M',
           data: null
         });
       }
@@ -1232,6 +1407,27 @@ class V2BulkScrapController {
       const existingVendorIndex = acceptedVendors.findIndex((v) => 
         (v.user_id === parseInt(user_id)) || (v.shop_id && v.shop_id === vendorShopId)
       );
+      const existingCommittedQuantity = existingVendorIndex >= 0
+        ? (() => {
+            const existingQty = acceptedVendors[existingVendorIndex]?.committed_quantity || 0;
+            const parsedExisting = typeof existingQty === 'string'
+              ? parseFloat(existingQty)
+              : (typeof existingQty === 'number' ? existingQty : parseFloat(String(existingQty)) || 0);
+            return Number.isFinite(parsedExisting) ? parsedExisting : 0;
+          })()
+        : 0;
+      const isUpdate = existingVendorIndex >= 0;
+      const requestStatus = String(request.status || '').toLowerCase();
+      const allowUpdateOnClosed = isUpdate && ['order_full_filled', 'sold'].includes(requestStatus);
+      if (requestStatus !== 'active' && !allowUpdateOnClosed) {
+        return res.status(400).json({
+          status: 'error',
+          msg: 'This bulk scrap request is no longer active',
+          data: null
+        });
+      }
+      // While editing participation, allow this user to use their previous committed quantity window.
+      const effectiveRemainingQuantity = Math.max(0, requestedQuantity - (totalCommittedQuantity - existingCommittedQuantity));
 
       // Parse and validate quantity
       let committedQuantity = 0;
@@ -1246,23 +1442,21 @@ class V2BulkScrapController {
         }
       } else {
         // If no quantity provided, use remaining quantity
-        const remainingQuantity = requestedQuantity - totalCommittedQuantity;
-        if (remainingQuantity <= 0) {
+        if (effectiveRemainingQuantity <= 0) {
           return res.status(400).json({
             status: 'error',
             msg: 'No remaining quantity available. This request is fully committed.',
             data: null
           });
         }
-        committedQuantity = remainingQuantity;
+        committedQuantity = effectiveRemainingQuantity;
       }
 
       // Check if committed quantity exceeds remaining quantity
-      const remainingQuantity = requestedQuantity - totalCommittedQuantity;
-      if (committedQuantity > remainingQuantity) {
+      if (committedQuantity > effectiveRemainingQuantity) {
         return res.status(400).json({
           status: 'error',
-          msg: `Cannot commit ${committedQuantity} kg. Only ${remainingQuantity.toFixed(2)} kg remaining.`,
+          msg: `Cannot commit ${committedQuantity} kg. Only ${effectiveRemainingQuantity.toFixed(2)} kg remaining.`,
           data: null
         });
       }
@@ -1382,10 +1576,13 @@ class V2BulkScrapController {
 
       return res.json({
         status: 'success',
-        msg: 'Bulk scrap request accepted successfully',
+        msg: isUpdate
+          ? 'Bulk scrap request participation updated successfully'
+          : 'Bulk scrap request accepted successfully',
         data: {
           request_id: request.id,
           accepted: true,
+          updated_existing_participation: isUpdate,
           accepted_vendors_count: acceptedVendors.length,
           committed_quantity: committedQuantity,
           total_committed_quantity: totalCommittedQuantity,

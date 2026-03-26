@@ -31,13 +31,34 @@ function applyZoneOverrides(packages, zoneCode) {
 }
 
 async function invalidateSubscriptionPackageCaches(zoneCode = '') {
-  await RedisCache.delete(RedisCache.listKey('subscription_packages'));
-  await RedisCache.delete(RedisCache.listKey('subscription_packages', { zone: 'all' }));
+  const zones = ['all'];
   if (zoneCode) {
-    await RedisCache.delete(RedisCache.listKey('subscription_packages', { zone: zoneCode }));
+    zones.push(zoneCode);
+  } else {
+    for (let i = 1; i <= 48; i += 1) {
+      zones.push(`Z${String(i).padStart(2, '0')}`);
+    }
   }
-  await RedisCache.delete(RedisCache.listKey('subscription_packages_b2b'));
-  await RedisCache.delete(RedisCache.listKey('subscription_packages_b2c'));
+
+  const userTypes = ['b2b', 'b2c'];
+  const languages = ['en', 'hi', 'ta', 'te', 'ml', 'kn'];
+  const keysToDelete = new Set([
+    RedisCache.listKey('subscription_packages'),
+    RedisCache.listKey('subscription_packages', { zone: 'all' }),
+    RedisCache.listKey('subscription_packages_b2b'),
+    RedisCache.listKey('subscription_packages_b2c'),
+  ]);
+
+  zones.forEach((zone) => {
+    keysToDelete.add(RedisCache.listKey('subscription_packages', { zone }));
+    userTypes.forEach((userType) => {
+      languages.forEach((lang) => {
+        keysToDelete.add(RedisCache.listKey(`subscription_packages_${userType}_${lang}`, { zone }));
+      });
+    });
+  });
+
+  await Promise.all(Array.from(keysToDelete).map((key) => RedisCache.delete(key)));
 }
 
 /**

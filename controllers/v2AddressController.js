@@ -1,5 +1,6 @@
 const Address = require('../models/Address');
 const User = require('../models/User');
+const V2AuthService = require('../services/auth/v2AuthService');
 const { getDynamoDBClient } = require('../config/dynamodb');
 const { ScanCommand } = require('@aws-sdk/lib-dynamodb');
 
@@ -405,13 +406,6 @@ class V2AddressController {
         });
       }
 
-      if (!address || String(address).trim() === '') {
-        return res.status(400).json({
-          status: 'error',
-          msg: 'address is required'
-        });
-      }
-
       let parsedLatitude = undefined;
       let parsedLongitude = undefined;
       if (latitude !== undefined && latitude !== null && latitude !== '') {
@@ -429,54 +423,76 @@ class V2AddressController {
           ? `${parsedLatitude},${parsedLongitude}`
           : '');
 
-      const normalizedAddress = String(address).trim();
-      const derivedGeo = await deriveAddressGeoFields({
-        address: normalizedAddress,
-        latitude: parsedLatitude,
-        longitude: parsedLongitude
-      });
-
       const cid = parseInt(customer_id, 10);
-      const existingAddresses = await Address.findByCustomerId(cid);
-      const latestExistingAddress = (existingAddresses || [])
-        .sort((a, b) => {
-          const aTime = new Date(a.updated_at || a.created_at || 0).getTime();
-          const bTime = new Date(b.updated_at || b.created_at || 0).getTime();
-          return bTime - aTime;
-        })[0];
-
-      const addressData = {
-        customer_id: cid,
-        address: normalizedAddress,
-        addres_type: STANDARD_ADDRESS_TYPES.includes(req.body?.addres_type) ? req.body.addres_type : 'Other',
-        district: derivedGeo.district,
-        state: derivedGeo.state,
-        pincode: derivedGeo.pincode,
-        zone: derivedGeo.zone,
-        building_no: building_no ? String(building_no).trim() : '',
-        landmark: landmark ? String(landmark).trim() : '',
-        lat_log: finalLatLog,
-        latitude: parsedLatitude,
-        longitude: parsedLongitude
-      };
-
       let savedAddress = null;
-      if (latestExistingAddress?.id) {
-        savedAddress = await Address.update(latestExistingAddress.id, addressData);
-      } else {
-        savedAddress = await Address.create(addressData);
+      const normalizedAddress = String(address || '').trim();
+      const hasAddressPayload = normalizedAddress !== '';
+      if (hasAddressPayload) {
+        const derivedGeo = await deriveAddressGeoFields({
+          address: normalizedAddress,
+          latitude: parsedLatitude,
+          longitude: parsedLongitude
+        });
+
+        const existingAddresses = await Address.findByCustomerId(cid);
+        const latestExistingAddress = (existingAddresses || [])
+          .sort((a, b) => {
+            const aTime = new Date(a.updated_at || a.created_at || 0).getTime();
+            const bTime = new Date(b.updated_at || b.created_at || 0).getTime();
+            return bTime - aTime;
+          })[0];
+
+        const addressData = {
+          customer_id: cid,
+          address: normalizedAddress,
+          addres_type: STANDARD_ADDRESS_TYPES.includes(req.body?.addres_type) ? req.body.addres_type : 'Other',
+          district: derivedGeo.district,
+          state: derivedGeo.state,
+          pincode: derivedGeo.pincode,
+          zone: derivedGeo.zone,
+          building_no: building_no ? String(building_no).trim() : '',
+          landmark: landmark ? String(landmark).trim() : '',
+          lat_log: finalLatLog,
+          latitude: parsedLatitude,
+          longitude: parsedLongitude
+        };
+
+        if (latestExistingAddress?.id) {
+          savedAddress = await Address.update(latestExistingAddress.id, addressData);
+        } else {
+          savedAddress = await Address.create(addressData);
+        }
       }
 
-      // Additive marketplace role flag: any user type can also be M.
+      // Additive marketplace role flag on current user.
       try {
         await User.updateProfile(cid, { marketplace_user_type: 'M' });
       } catch (userUpdateErr) {
         console.warn(`⚠️ Failed to set marketplace_user_type='M' for user ${cid}:`, userUpdateErr.message);
       }
 
+      // Ensure a dedicated vendor_app marketplace profile exists (user_type='M')
+      // while preserving existing R/S/SR users for the same mobile number.
+      try {
+        const baseUser = await User.findById(cid);
+        const phone = String(baseUser?.mob_num || '').replace(/\D/g, '');
+        if (phone.length === 10) {
+          const marketplaceUser = await V2AuthService.findOrCreateMarketplaceUser(phone);
+          if (marketplaceUser?.id) {
+            console.log(`✅ Ensured marketplace user for phone ${phone}: user_id=${marketplaceUser.id}, type=${marketplaceUser.user_type}`);
+          }
+        } else {
+          console.warn(`⚠️ Could not ensure marketplace user: invalid phone for user ${cid}`);
+        }
+      } catch (marketplaceEnsureErr) {
+        console.warn(`⚠️ Failed to ensure dedicated marketplace user for base user ${cid}:`, marketplaceEnsureErr.message);
+      }
+
       return res.status(200).json({
         status: 'success',
-        msg: 'Marketplace address saved successfully',
+        msg: hasAddressPayload
+          ? 'Marketplace address saved successfully'
+          : 'Marketplace profile ensured successfully',
         data: savedAddress
       });
     } catch (error) {
