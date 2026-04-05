@@ -21,6 +21,10 @@ provider:
     S3_BUCKET_NAME: ${env:S3_BUCKET_NAME, 'scrapmate-images'}
     REDIS_URL: ${env:REDIS_URL, ''}
     REDIS_TOKEN: ${env:REDIS_TOKEN, ''}
+    CASHFREE_ENV: ${env:CASHFREE_ENV, 'production'}
+    CASHFREE_BASE_URL: ${env:CASHFREE_BASE_URL, ''}
+    CASHFREE_CLIENT_ID: ${env:CASHFREE_CLIENT_ID, ''}
+    CASHFREE_CLIENT_SECRET: ${env:CASHFREE_CLIENT_SECRET, ''}
   iam:
     role:
       statements:
@@ -610,4 +614,3 @@ package:
     - '!nodemon.json'
   individually: true
   excludeDevDependencies: true
-

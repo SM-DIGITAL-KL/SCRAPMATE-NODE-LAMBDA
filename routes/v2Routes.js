@@ -16,6 +16,7 @@ const V2BulkScrapController = require('../controllers/v2BulkScrapController');
 const V2BulkSellController = require('../controllers/v2BulkSellController');
 const V2FoodWasteController = require('../controllers/v2FoodWasteController');
 const V2InstamojoOrderController = require('../controllers/v2InstamojoOrderController');
+const V2CashfreeOrderController = require('../controllers/v2CashfreeOrderController');
 const V2BulkMessageController = require('../controllers/v2BulkMessageController');
 const V2LivePriceController = require('../controllers/v2LivePriceController');
 const V2MediaController = require('../controllers/v2MediaController');
@@ -406,6 +407,19 @@ router.get('/instamojo/payment-request/:paymentRequestId', V2InstamojoOrderContr
  * Note: The WebView will detect this redirect and extract payment details
  */
 router.get('/instamojo/payment-redirect', V2InstamojoOrderController.handlePaymentRedirect);
+
+// ==================== CASHFREE PAYMENT ROUTES ====================
+/**
+ * POST /api/v2/cashfree/create-order
+ * Create Cashfree order and return payment_session_id.
+ */
+router.post('/cashfree/create-order', V2CashfreeOrderController.createOrder);
+
+/**
+ * GET /api/v2/cashfree/orders/:orderId
+ * Fetch Cashfree order and payment status for server-side verification.
+ */
+router.get('/cashfree/orders/:orderId', V2CashfreeOrderController.getOrderStatus);
 
 // ==================== GENERAL CATEGORY ROUTES ====================
 /**

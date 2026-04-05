@@ -5935,12 +5935,89 @@ class AdminPanelController {
         }
       };
       const monthlySubscribedVendors = await fetchMonthlySubscribedVendors();
+
+      // Enrich accepted vendor/delivery details for order details modal.
+      // This keeps UI accurate even when legacy `shopdetails` field is empty.
+      let acceptedVendor = null;
+      try {
+        if (order.shop_id) {
+          const shop = await Shop.findById(order.shop_id);
+          if (shop) {
+            let vendorUser = null;
+            const vendorUserId = (typeof shop.user_id === 'string' && !isNaN(shop.user_id))
+              ? parseInt(shop.user_id, 10)
+              : shop.user_id;
+
+            if (vendorUserId) {
+              try {
+                vendorUser = await User.findById(vendorUserId);
+              } catch (_) {
+                vendorUser = null;
+              }
+            }
+
+            acceptedVendor = {
+              type: 'shop',
+              shop_id: shop.id || order.shop_id,
+              shop_name: shop.shopname || shop.shop_name || shop.name || 'N/A',
+              shop_contact: shop.contact || shop.phone || 'N/A',
+              shop_address: shop.address || '',
+              shop_place: shop.place || '',
+              shop_state: shop.state || '',
+              shop_pincode: shop.pincode || '',
+              user_id: vendorUser?.id || vendorUserId || null,
+              user_name: vendorUser?.name || 'N/A',
+              user_mobile: vendorUser?.mob_num || vendorUser?.mobile || vendorUser?.phone || shop.contact || 'N/A',
+              user_email: vendorUser?.email || 'N/A',
+              user_type: vendorUser?.user_type || 'N/A',
+              app_version: vendorUser?.app_version || 'N/A',
+              accepted_at: order.accepted_at || null
+            };
+          } else {
+            acceptedVendor = {
+              type: 'shop',
+              shop_id: order.shop_id,
+              shop_name: 'N/A',
+              shop_not_found: true,
+              accepted_at: order.accepted_at || null
+            };
+          }
+        } else if (order.delv_id || order.delv_boy_id) {
+          const deliveryId = order.delv_id || order.delv_boy_id;
+          let deliveryBoy = null;
+          let deliveryUser = null;
+
+          try {
+            const parsedDeliveryId = typeof deliveryId === 'string' && !isNaN(deliveryId)
+              ? parseInt(deliveryId, 10)
+              : deliveryId;
+            deliveryBoy = await DeliveryBoy.findByUserId(parsedDeliveryId);
+            deliveryUser = await User.findById(parsedDeliveryId);
+          } catch (_) {
+            // best-effort enrichment
+          }
+
+          acceptedVendor = {
+            type: 'delivery',
+            user_id: deliveryBoy?.user_id || deliveryUser?.id || deliveryId || null,
+            user_name: deliveryBoy?.name || deliveryUser?.name || 'N/A',
+            user_mobile: deliveryBoy?.contact || deliveryUser?.mob_num || deliveryUser?.mobile || deliveryUser?.phone || 'N/A',
+            user_email: deliveryUser?.email || 'N/A',
+            user_type: deliveryUser?.user_type || 'D',
+            app_version: deliveryUser?.app_version || 'N/A',
+            accepted_at: order.accepted_at || null
+          };
+        }
+      } catch (acceptedVendorErr) {
+        console.error('Error enriching accepted vendor details:', acceptedVendorErr);
+      }
       
       res.json({
         status: 'success',
         msg: 'Order details retrieved',
         data: {
           ...order,
+          accepted_vendor: acceptedVendor,
           notified_vendors: notifiedVendors,
           monthly_subscribed_vendors: monthlySubscribedVendors,
           customer_name: customerName,

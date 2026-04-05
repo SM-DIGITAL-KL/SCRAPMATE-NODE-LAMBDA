@@ -57,6 +57,12 @@ provider:
     # Alternative names for backward compatibility (same values)
     INSTAMOJO_CLIENT_ID: ${env:INSTAMOJO_CLIENT_ID, ''}
     INSTAMOJO_CLIENT_SECRET: ${env:INSTAMOJO_CLIENT_SECRET, ''}
+
+    # Cashfree Payment Gateway Configuration
+    CASHFREE_ENV: ${env:CASHFREE_ENV, 'production'}
+    CASHFREE_BASE_URL: ${env:CASHFREE_BASE_URL, ''}
+    CASHFREE_CLIENT_ID: ${env:CASHFREE_CLIENT_ID, ''}
+    CASHFREE_CLIENT_SECRET: ${env:CASHFREE_CLIENT_SECRET, ''}
     
     # Option: Use SSM Parameter Store (uncomment after setting up parameters)
     # API_KEY: ${ssm:/scrapmate/${self:provider.stage}/API_KEY~true}
@@ -150,4 +156,3 @@ package:
     - 'scrapmate-partner-android-firebase-adminsdk-fbsvc-94a2c243ee.json'
   individually: false
   excludeDevDependencies: true
-
